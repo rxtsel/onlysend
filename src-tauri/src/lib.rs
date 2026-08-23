@@ -1,4 +1,5 @@
 mod config;
+mod domains;
 mod email;
 mod oauth;
 mod permissions;
@@ -59,10 +60,17 @@ pub fn run() {
             store::save_api_key,
             store::get_api_key,
             store::delete_api_key,
+            store::save_selected_domain,
+            store::get_selected_domain,
             oauth::connect_resend,
             oauth::disconnect_resend,
             permissions::probe_full_access,
             email::send_email,
+            domains::list_domains,
+            domains::create_domain,
+            domains::get_domain,
+            domains::verify_domain,
+            domains::set_domain_receiving,
             config::list_from_emails,
             config::create_from_email,
             config::update_from_email,

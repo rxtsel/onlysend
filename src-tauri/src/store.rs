@@ -9,6 +9,7 @@ const AUTH_FILE: &str = "auth.json";
 const API_KEY_RECORD: &str = "resend_api_key";
 const OAUTH_RECORD: &str = "resend_oauth";
 const CLIENT_ID_KEY: &str = "resend_oauth_client_id";
+const SELECTED_DOMAIN_KEY: &str = "selected_domain";
 const FROM_EMAILS_KEY: &str = "from_emails";
 const PROFILE_KEY: &str = "profile";
 
@@ -209,6 +210,38 @@ pub fn is_authenticated(app: AppHandle<Wry>) -> Result<bool, String> {
     let has_oauth = load_oauth(&app)?;
 
     Ok(has_key.is_some() || has_oauth.is_some())
+}
+
+// Selected domain
+#[tauri::command]
+pub fn save_selected_domain(app: AppHandle<Wry>, domain: String) -> Result<(), String> {
+    let store = app
+        .store(STORE_FILE)
+        .map_err(|e| format!("[ERROR] Failed to load store: {}", e))?;
+
+    store.set(SELECTED_DOMAIN_KEY, json!(domain));
+
+    store
+        .save()
+        .map_err(|e| format!("[ERROR] Failed to save store: {}", e))?;
+
+    Ok(())
+}
+
+pub(crate) fn load_selected_domain(app: &AppHandle<Wry>) -> Result<Option<String>, String> {
+    let store = app
+        .store(STORE_FILE)
+        .map_err(|e| format!("[ERROR] Failed to load store: {}", e))?;
+
+    match store.get(SELECTED_DOMAIN_KEY) {
+        Some(value) => Ok(value.as_str().map(|s| s.to_string())),
+        None => Ok(None),
+    }
+}
+
+#[tauri::command]
+pub fn get_selected_domain(app: AppHandle<Wry>) -> Result<Option<String>, String> {
+    load_selected_domain(&app)
 }
 
 // From emails management

@@ -51,3 +51,66 @@ export async function probeFullAccess(credential: string): Promise<ProbeResult> 
   return await invoke<ProbeResult>("probe_full_access", { credential });
 }
 
+/* ---------------------------------------------------------
+ * DOMAINS
+ * --------------------------------------------------------- */
+export interface DomainRecord {
+  recordType: string;
+  name: string;
+  value: string;
+  status: string;
+}
+
+export interface DomainSummary {
+  id: string;
+  name: string;
+  status: string;
+}
+
+export interface DomainCapabilities {
+  sending: string;
+  receiving: string;
+}
+
+export interface DomainDetail extends DomainSummary {
+  capabilities: DomainCapabilities;
+  records: DomainRecord[];
+}
+
+export async function listDomains(): Promise<DomainSummary[]> {
+  return await invoke<DomainSummary[]>("list_domains");
+}
+
+export async function createDomain(name: string): Promise<DomainDetail> {
+  return await invoke<DomainDetail>("create_domain", { name });
+}
+
+export async function getDomain(domainId: string): Promise<DomainDetail> {
+  return await invoke<DomainDetail>("get_domain", { domainId });
+}
+
+export async function verifyDomain(domainId: string): Promise<DomainDetail> {
+  return await invoke<DomainDetail>("verify_domain", { domainId });
+}
+
+export async function setDomainReceiving(
+  domainId: string,
+  enable: boolean,
+): Promise<DomainDetail> {
+  return await invoke<DomainDetail>("set_domain_receiving", {
+    domainId,
+    enable,
+  });
+}
+
+/* ---------------------------------------------------------
+ * SELECTED DOMAIN
+ * --------------------------------------------------------- */
+export async function saveSelectedDomain(domain: string): Promise<void> {
+  await invoke("save_selected_domain", { domain });
+}
+
+export async function getSelectedDomain(): Promise<string | null> {
+  return await invoke<string | null>("get_selected_domain");
+}
+
