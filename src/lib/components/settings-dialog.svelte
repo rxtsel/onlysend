@@ -3,12 +3,13 @@
   import { Button, buttonVariants } from "@/lib/components/ui/button";
   import * as Dialog from "@/lib/components/ui/dialog";
   import * as Sidebar from "@/lib/components/ui/sidebar";
-  import { Mail, User, Settings, SquarePen, Trash } from "@lucide/svelte";
+  import { Mail, User, Settings, SquarePen, Trash, Plug } from "@lucide/svelte";
   import * as Field from "@/lib/components/ui/field";
   import { Input } from "@/lib/components/ui/input";
   import type { FromEmail, Profile } from "../types";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
   import { onMount } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
   import {
     createFromEmail,
     updateFromEmail,
@@ -21,11 +22,18 @@
   import type { ZodError } from "zod/v4";
   import { profileSchema } from "../schemas/profile.schema";
   import { emailOptionSchema } from "../schemas/email-option.schema";
+  import {
+    connectResend,
+    disconnectResend,
+    getConnectionStatus,
+    type ConnectionStatus,
+  } from "../commom/store";
 
   const data = {
     nav: [
       { name: "Profile", icon: User },
       { name: "Email sender options", icon: Mail },
+      { name: "Connection", icon: Plug },
     ],
   };
 
@@ -52,6 +60,9 @@
     username: "",
     domain: "",
   });
+  let connection = $state<ConnectionStatus>({ method: null });
+  let isConnecting = $state(false);
+  let isDisconnecting = $state(false);
 
   function handleZodError(error: ZodError): Record<string, string> {
     const errors: Record<string, string> = {};
@@ -64,17 +75,60 @@
 
   async function loadData() {
     try {
-      const [profileData, fromEmailsData] = await Promise.all([
+      const [profileData, fromEmailsData, connectionData] = await Promise.all([
         getProfile(),
         listFromEmails(),
+        getConnectionStatus(),
       ]);
       if (profileData) {
         profile = profileData;
       }
       fromEmails = fromEmailsData;
+      connection = connectionData;
     } catch (error) {
       console.error("Error loading data:", error);
       toast.error("Failed to load data");
+    }
+  }
+
+  // Connection handlers
+  async function handleConnectResend(e: Event) {
+    e.preventDefault();
+    try {
+      isConnecting = true;
+      await connectResend();
+    } catch (error) {
+      isConnecting = false;
+      console.error("Error connecting with Resend:", error);
+      toast.error("Failed to start the connection");
+    }
+  }
+
+  async function handleDisconnect(e: Event) {
+    e.preventDefault();
+    try {
+      isDisconnecting = true;
+      await disconnectResend();
+      toast.success("Disconnected from Resend");
+      await loadData();
+    } catch (error) {
+      console.error("Error disconnecting:", error);
+      toast.error("Failed to disconnect");
+    } finally {
+      isDisconnecting = false;
+    }
+  }
+
+  async function refreshConnection() {
+    try {
+      connection = await getConnectionStatus();
+      isConnecting = false;
+
+      if (connection.method === "oauth") {
+        toast.success("Connected with Resend");
+      }
+    } catch (error) {
+      console.error("Error refreshing connection status:", error);
     }
   }
 
@@ -182,8 +236,24 @@
     }
   }
 
-  onMount(async () => {
-    await loadData();
+  onMount(() => {
+    let unlisten: (() => void) | undefined;
+
+    loadData();
+
+    listen<{ success: boolean; error?: string }>(
+      "oauth://done",
+      (event) => {
+        if (event.payload.success) {
+          refreshConnection();
+        } else {
+          isConnecting = false;
+          toast.error(event.payload.error ?? "Failed to connect with Resend");
+        }
+      },
+    ).then((fn) => (unlisten = fn));
+
+    return () => unlisten?.();
   });
 </script>
 
@@ -252,6 +322,8 @@
             {@render profileComponent()}
           {:else if activeItem === "Email sender options"}
             {@render emailSenderOptions()}
+          {:else if activeItem === "Connection"}
+            {@render connectionSection()}
           {/if}
         </div>
       </main>
@@ -462,6 +534,58 @@
           {/each}
         </tbody>
       </table>
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet connectionSection()}
+  <div class="w-full max-w-md">
+    <h3 class="text-sm font-medium mb-2">Resend account</h3>
+    {#if connection.method === "oauth"}
+      <div class="flex items-center justify-between border rounded-md px-4 py-3">
+        <div>
+          <p class="text-sm">Connected with Resend</p>
+          <p class="text-xs text-muted-foreground">
+            Authorized via OAuth. Tokens refresh automatically.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="destructive"
+          size="sm"
+          disabled={isDisconnecting}
+          onclick={handleDisconnect}
+        >
+          {isDisconnecting ? "Disconnecting..." : "Disconnect"}
+        </Button>
+      </div>
+    {:else if connection.method === "api_key"}
+      <div class="border rounded-md px-4 py-3">
+        <p class="text-sm">Connected with an API key</p>
+        <p class="text-xs text-muted-foreground mb-3">
+          You can also connect your account securely via OAuth.
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          disabled={isConnecting}
+          onclick={handleConnectResend}
+        >
+          {isConnecting ? "Waiting for authorization..." : "Connect with Resend"}
+        </Button>
+      </div>
+    {:else}
+      <div class="border rounded-md px-4 py-3">
+        <p class="text-sm text-muted-foreground mb-3">Not connected.</p>
+        <Button
+          type="button"
+          size="sm"
+          disabled={isConnecting}
+          onclick={handleConnectResend}
+        >
+          {isConnecting ? "Waiting for authorization..." : "Connect with Resend"}
+        </Button>
+      </div>
     {/if}
   </div>
 {/snippet}

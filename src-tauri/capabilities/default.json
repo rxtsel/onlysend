@@ -7,7 +7,9 @@
   ],
   "permissions": [
     "core:default",
+    "core:event:default",
     "opener:default",
-    "store:default"
+    "store:default",
+    "deep-link:default"
   ]
 }

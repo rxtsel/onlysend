@@ -1,4 +1,5 @@
-use crate::store;
+use crate::oauth;
+use crate::permissions;
 use resend_rs::{list_opts::ListOptions, Resend};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Wry};
@@ -24,10 +25,10 @@ pub async fn list_sent_emails(
     limit: Option<usize>,
     offset: Option<usize>,
 ) -> Result<Vec<SentEmail>, String> {
-    let api_key = store::get_api_key(app.clone())?
-        .ok_or_else(|| "[ERROR] API key not configured".to_string())?;
+    // Bearer credential: API key or OAuth access token
+    let credential = oauth::get_credential(&app).await?;
 
-    let resend = Resend::new(&api_key);
+    let resend = Resend::new(&credential);
 
     let lim = limit.unwrap_or(12);
     let off = offset.unwrap_or(0);
@@ -40,7 +41,7 @@ pub async fn list_sent_emails(
         .emails
         .list(list_opts)
         .await
-        .map_err(|e| format!("[ERROR] Failed to fetch sent emails: {}", e))?;
+        .map_err(|e| permissions::map_resend_error("Failed to fetch sent emails", e))?;
 
     let sent_emails: Vec<SentEmail> = response
         .data
@@ -71,18 +72,17 @@ pub async fn list_sent_emails(
 
 #[tauri::command]
 pub async fn get_sent_email(app: AppHandle<Wry>, email_id: String) -> Result<SentEmail, String> {
-    // Get API key from storage
-    let api_key = store::get_api_key(app.clone())?
-        .ok_or_else(|| "[ERROR] API key not configured".to_string())?;
+    // Bearer credential: API key or OAuth access token
+    let credential = oauth::get_credential(&app).await?;
 
-    let resend = Resend::new(&api_key);
+    let resend = Resend::new(&credential);
 
     // Get specific email by ID
     let email = resend
         .emails
         .get(&email_id)
         .await
-        .map_err(|e| format!("[ERROR] Failed to fetch email: {}", e))?;
+        .map_err(|e| permissions::map_resend_error("Failed to fetch email", e))?;
 
     Ok(SentEmail {
         id: email.id.to_string(),
