@@ -7,4 +7,4 @@
 
 {@render children()}
 
-<Toaster richColors duration={6000} position="bottom-right" />
+<Toaster richColors duration={6000} position="bottom-right" closeButton />
