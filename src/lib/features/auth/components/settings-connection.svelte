@@ -5,13 +5,8 @@
   import * as AlertDialog from "@/lib/components/ui/alert-dialog";
   import ReceivingSetup from "@/lib/features/setup/components/receiving-setup.svelte";
   import { inboundStatus } from "@/lib/shared/inbound-status.svelte";
-  import {
-    connectResend,
-    disconnectResend,
-    getConnectionStatus,
-    getOnboardingState,
-    type ConnectionStatus,
-  } from "@/lib/shared/api/auth";
+import { disconnectResend } from "@/lib/shared/api/auth";
+  import { ConnectionStore } from "@/lib/features/auth/connection-store.svelte";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { listen } from "@tauri-apps/api/event";
@@ -24,12 +19,14 @@
   } = $props();
 
   // Connection state
-  let connection = $state<ConnectionStatus>({ method: null });
+  const connectionStore = new ConnectionStore();
   let isConnecting = $state(false);
   let isDisconnecting = $state(false);
   let inboxEnabled = $state(false);
   let showInboxSetup = $state(false);
   let showDisconnectConfirm = $state(false);
+
+  const connection = $derived(connectionStore.status);
 
   // The embedded setup flow flips the shared readiness signal.
   $effect(() => {
@@ -41,12 +38,8 @@
 
   async function loadData() {
     try {
-      const [status, onboarding] = await Promise.all([
-        getConnectionStatus(),
-        getOnboardingState(),
-      ]);
-      connection = status;
-      inboxEnabled = onboarding.inboxEnabled;
+      await connectionStore.load();
+      inboxEnabled = connectionStore.inboxEnabled;
     } catch (error) {
       console.error("Error loading connection data:", error);
       toast.error("Failed to load connection");
@@ -55,26 +48,16 @@
 
   async function handleConnectResend(e: Event) {
     e.preventDefault();
-    try {
-      isConnecting = true;
-      await connectResend();
-    } catch (error) {
-      isConnecting = false;
-      console.error("Error connecting with Resend:", error);
-      toast.error("Failed to start the connection");
-    }
+    const result = await connectionStore.connect();
+    if (!result.ok) toast.error(result.error);
   }
 
   async function refreshConnection() {
-    try {
-      connection = await getConnectionStatus();
-      isConnecting = false;
+    await loadData();
+    isConnecting = false;
 
-      if (connection.method === "oauth") {
-        toast.success("Connected with Resend");
-      }
-    } catch (error) {
-      console.error("Error refreshing connection status:", error);
+    if (connection.method === "oauth") {
+      toast.success("Connected with Resend");
     }
   }
 

@@ -13,12 +13,14 @@
   import { goto } from "$app/navigation";
   import { toast } from "svelte-sonner";
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import { ConnectionStore } from "@/lib/features/auth/connection-store.svelte";
 
   import * as AlertDialog from "@/lib/components/ui/alert-dialog";
 
   const sidebar = useSidebar();
 
-  let activeDomain = $state<string | null>(null);
+  const connection = new ConnectionStore();
+  const activeDomain = $derived(connection.activeDomain);
   let method = $state<ConnectionMethod>(null);
   let isDisconnecting = $state(false);
   let showDisconnectConfirm = $state(false);
@@ -33,32 +35,23 @@
   );
 
   async function loadData() {
-    try {
-      const [domain, status] = await Promise.all([
-        getActiveDomain(),
-        getConnectionStatus(),
-      ]);
-      activeDomain = domain;
-      method = status.method;
-    } catch (err) {
-      console.error(err);
-    }
+    await connection.load();
+    method = connection.status.method;
   }
 
   async function handleDisconnect() {
     if (isDisconnecting) return;
 
-    try {
-      isDisconnecting = true;
-      await disconnectResend();
+    isDisconnecting = true;
+    const result = await connection.disconnect();
+    isDisconnecting = false;
+
+    if (result.ok) {
       toast.success("Disconnected from Resend");
       showDisconnectConfirm = false;
       goto("/");
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to disconnect");
-    } finally {
-      isDisconnecting = false;
+    } else {
+      toast.error(result.error);
     }
   }
 
