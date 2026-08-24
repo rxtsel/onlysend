@@ -3,7 +3,6 @@ mod domains;
 mod email;
 mod oauth;
 mod permissions;
-mod profile;
 mod sent;
 mod store;
 
@@ -62,6 +61,7 @@ pub fn run() {
             store::get_api_key,
             store::delete_api_key,
             store::save_selected_domain,
+            store::get_active_domain,
             oauth::connect_resend,
             oauth::disconnect_resend,
             permissions::probe_full_access,
@@ -75,8 +75,6 @@ pub fn run() {
             config::create_from_email,
             config::update_from_email,
             config::delete_from_email,
-            profile::get_profile,
-            profile::save_profile_command,
             sent::list_sent_emails,
             sent::get_sent_email
         ])

@@ -119,3 +119,7 @@ export async function saveSelectedDomain(domain: string): Promise<void> {
   await invoke("save_selected_domain", { domain });
 }
 
+export async function getActiveDomain(): Promise<string | null> {
+  return await invoke<string | null>("get_active_domain");
+}
+

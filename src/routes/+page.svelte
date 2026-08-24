@@ -13,7 +13,6 @@
   import { toast } from "svelte-sonner";
 
   import { Skeleton } from "@/lib/components/ui/skeleton";
-  import { saveProfile } from "@/lib/commom/profile";
   import { createFromEmail } from "@/lib/commom/from-emails";
   import StepConnect from "@/lib/components/setup/step-connect.svelte";
   import StepDomains from "@/lib/components/setup/step-domains.svelte";
@@ -108,12 +107,6 @@
       await Promise.all([
         saveSelectedDomain(selectedDomain),
         markSetupComplete(),
-        saveProfile({
-          firstName: "",
-          lastName: "",
-          username: selectedDomain.split(".")[0] ?? "user",
-          domain: selectedDomain,
-        }),
         ...emailOptions.map((opt, i) =>
           createFromEmail({
             label: opt.label,

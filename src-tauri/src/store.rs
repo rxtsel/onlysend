@@ -12,9 +12,9 @@ const OAUTH_RECORD: &str = "resend_oauth";
 const CLIENT_ID_KEY: &str = "resend_oauth_client_id";
 const SELECTED_DOMAIN_KEY: &str = "selected_domain";
 const SETUP_COMPLETE_KEY: &str = "setup_complete";
-/// Obsolete key from older builds, removed on startup.
-const ONBOARDING_STEP_KEY: &str = "onboarding_step";
 const FROM_EMAILS_KEY: &str = "from_emails";
+/// Obsolete keys from older builds, removed on startup.
+const ONBOARDING_STEP_KEY: &str = "onboarding_step";
 const PROFILE_KEY: &str = "profile";
 
 /* ---------------------------------------------------------
@@ -252,9 +252,11 @@ pub fn get_onboarding_state(app: AppHandle<Wry>) -> Result<OnboardingState, Stri
         complete = migrate_legacy_onboarding(&app)?;
     }
 
-    // Drop the obsolete wizard-step key from older builds.
-    if read_raw_key(&app, STORE_FILE, ONBOARDING_STEP_KEY)?.is_some() {
-        delete_key(&app, STORE_FILE, ONBOARDING_STEP_KEY)?;
+    // Drop obsolete keys from older builds.
+    for legacy_key in [ONBOARDING_STEP_KEY, PROFILE_KEY] {
+        if read_raw_key(&app, STORE_FILE, legacy_key)?.is_some() {
+            delete_key(&app, STORE_FILE, legacy_key)?;
+        }
     }
 
     let authenticated = load_api_key(&app)?.is_some() || load_oauth(&app)?.is_some();
@@ -278,6 +280,11 @@ pub fn save_selected_domain(app: AppHandle<Wry>, domain: String) -> Result<(), S
     write_key(&app, STORE_FILE, SELECTED_DOMAIN_KEY, json!(domain))
 }
 
+#[tauri::command]
+pub fn get_active_domain(app: AppHandle<Wry>) -> Result<Option<String>, String> {
+    read_string_key(&app, STORE_FILE, SELECTED_DOMAIN_KEY)
+}
+
 /* ---------------------------------------------------------
  * From emails management
  * --------------------------------------------------------- */
@@ -296,27 +303,4 @@ pub(crate) fn load_from_emails(app: &AppHandle<Wry>) -> Result<Vec<FromEmail>, S
 
 pub(crate) fn save_from_emails(app: &AppHandle<Wry>, emails: &[FromEmail]) -> Result<(), String> {
     write_key(app, STORE_FILE, FROM_EMAILS_KEY, json!(emails))
-}
-
-/* ---------------------------------------------------------
- * Profile Management
- * --------------------------------------------------------- */
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Profile {
-    #[serde(rename = "firstName")]
-    pub first_name: String,
-
-    #[serde(rename = "lastName")]
-    pub last_name: String,
-    pub username: String,
-    pub domain: String,
-}
-
-pub(crate) fn load_profile(app: &AppHandle<Wry>) -> Result<Option<Profile>, String> {
-    read_typed(app, STORE_FILE, PROFILE_KEY, "profile")
-}
-
-pub(crate) fn save_profile(app: &AppHandle<Wry>, profile: &Profile) -> Result<(), String> {
-    let value = serde_json::to_value(profile).map_err(|e| e.to_string())?;
-    write_key(app, STORE_FILE, PROFILE_KEY, value)
 }
