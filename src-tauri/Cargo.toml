@@ -32,6 +32,7 @@ tauri-plugin-deep-link = "2"
 sha2 = "0.11.0"
 rand = "0.10.2"
 reqwest = { version = "0.13.4", features = ["form", "json"] }
+ammonia = "4.1.4"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
