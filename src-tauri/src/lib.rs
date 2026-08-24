@@ -65,6 +65,7 @@ pub fn run() {
             store::get_api_key,
             store::delete_api_key,
             store::save_selected_domain,
+            store::get_selected_domain,
             store::get_active_domain,
             oauth::connect_resend,
             oauth::disconnect_resend,

@@ -278,6 +278,11 @@ pub fn get_active_domain(app: AppHandle<Wry>) -> Result<Option<String>, String> 
     read_string_key(&app, STORE_FILE, SELECTED_DOMAIN_KEY)
 }
 
+#[tauri::command]
+pub fn get_selected_domain(app: AppHandle<Wry>) -> Result<Option<String>, String> {
+    read_string_key(&app, STORE_FILE, SELECTED_DOMAIN_KEY)
+}
+
 /* ---------------------------------------------------------
  * From emails management
  * --------------------------------------------------------- */

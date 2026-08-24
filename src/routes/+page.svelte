@@ -5,6 +5,7 @@
 
   import {
     getOnboardingState,
+    getSelectedDomain,
     markSetupComplete,
     saveSelectedDomain,
   } from "@/lib/commom/store";
@@ -13,7 +14,7 @@
   import { toast } from "svelte-sonner";
 
   import { Skeleton } from "@/lib/components/ui/skeleton";
-  import { createFromEmail } from "@/lib/commom/from-emails";
+  import { createFromEmail, listFromEmails } from "@/lib/commom/from-emails";
   import StepConnect from "@/lib/components/setup/step-connect.svelte";
   import StepDomains from "@/lib/components/setup/step-domains.svelte";
   import StepFromEmails from "@/lib/components/setup/step-from-emails.svelte";
@@ -92,6 +93,30 @@
 
   function nextStep() {
     switchStep(Math.min(step + 1, 3) as 1 | 2 | 3);
+  }
+
+  /**
+   * Reconnect fast-path: when local data (identities + domain) survives a
+   * disconnect, connecting restores the session without repeating setup.
+   */
+  async function handleConnected() {
+    try {
+      const [emails, savedDomain] = await Promise.all([
+        listFromEmails(),
+        getSelectedDomain(),
+      ]);
+
+      if (emails.length > 0 && savedDomain) {
+        selectedDomain = savedDomain;
+        await markSetupComplete();
+        toast.success("Welcome back!");
+        goto("/mail/sent");
+        return;
+      }
+    } catch (err) {
+      console.error(err);
+    }
+    nextStep();
   }
 
   function prevStep() {
@@ -174,7 +199,7 @@
           in:fly={direction === "forward" ? SLIDE_IN : SLIDE_BACK_IN}
           out:fly={direction === "forward" ? SLIDE_OUT : SLIDE_BACK_OUT}
         >
-          <StepConnect bind:apiKeyValue onConnected={nextStep} />
+          <StepConnect bind:apiKeyValue onConnected={handleConnected} />
         </div>
 
       <!-- STEP 2: DOMAINS -->
