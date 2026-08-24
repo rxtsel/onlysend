@@ -37,6 +37,7 @@
   import * as Select from "@/lib/components/ui/select";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
   import DnsRecordsCard from "@/lib/features/setup/components/dns-records-card.svelte";
+  import CreateDomainForm from "@/lib/features/domains/components/create-domain-form.svelte";
 
   const REGIONS = [
     { value: "us-east-1", label: "US East (Virginia)" },
@@ -75,9 +76,6 @@
   let isLoading = $state(true);
 
   // Setup view state
-  let newDomainName = $state("");
-  let newDomainRegion = $state("us-east-1");
-  let newDomainInbox = $state(true);
   let isCreating = $state(false);
   let setupDetail = $state<DomainDetail | null>(null);
   let isVerifying = $state(false);
@@ -265,7 +263,6 @@
   }
 
   function openSetup() {
-    newDomainName = "";
     setupDetail = null;
     verified = false;
     errors = {};
@@ -281,23 +278,14 @@
   /* ---------------------------------------------------------
    * SETUP: CREATE + DNS RECORDS
    * --------------------------------------------------------- */
-  async function handleCreate(e: SubmitEvent) {
-    e.preventDefault();
-    errors = {};
-
-    const name = newDomainName.trim().toLowerCase();
-    if (!name || !name.includes(".")) {
-      errors.domainName = "Enter a valid domain (e.g. yourdomain.com)";
-      return;
-    }
-
+  async function handleCreate(options: {
+    name: string;
+    region: string;
+    enableReceiving: boolean;
+  }) {
     try {
       isCreating = true;
-      const created = await createDomain({
-        name,
-        region: newDomainRegion,
-        enableReceiving: newDomainInbox,
-      });
+      const created = await createDomain(options);
       setupDetail = created;
       toast.success("Domain created. Add the DNS records below.");
     } catch (err) {
@@ -516,75 +504,12 @@
         out:fly={SLIDE_BACK_OUT}
       >
         {#if !setupDetail}
-          <!-- CREATE FORM -->
-          <form onsubmit={handleCreate}>
-            <Field.Group>
-              <Field.Field>
-                <Field.Label for="domainName">Domain</Field.Label>
-                <Input
-                  id="domainName"
-                  bind:value={newDomainName}
-                  placeholder="updates.example.com"
-                  aria-invalid={!!errors.domainName}
-                  autofocus
-                />
-                {#if errors.domainName}
-                  <Field.Error>{errors.domainName}</Field.Error>
-                {/if}
-                <Field.Description>
-                  <span class="font-medium">Tip:</span> Resend recommends using
-                  a subdomain (e.g. <code
-                    class="font-mono text-[11px] px-1 py-0.5 rounded bg-muted"
-                  >
-                    updates.example.com</code
-                  >) to keep your root domain's email delivery unaffected.
-                </Field.Description>
-              </Field.Field>
-
-              <Field.Field>
-                <Field.Label for="region">Region</Field.Label>
-                <Select.Root type="single" name="region" bind:value={newDomainRegion}>
-                  <Select.Trigger id="region" class="w-full">
-                    {REGIONS.find((r) => r.value === newDomainRegion)?.label}
-                  </Select.Trigger>
-                  <Select.Content>
-                    {#each REGIONS as r (r.value)}
-                      <Select.Item value={r.value}>{r.label}</Select.Item>
-                    {/each}
-                  </Select.Content>
-                </Select.Root>
-                <Field.Description>
-                  Where emails will be sent from. Closest to your audience is
-                  best.
-                </Field.Description>
-              </Field.Field>
-
-              <div class="flex items-center gap-3">
-                <div class="min-w-0 flex-1">
-                  <p class="text-sm font-medium">Inbox (receiving)</p>
-                  <p class="text-xs text-muted-foreground">
-                    Adds an MX record so this domain can receive email in
-                    OnlySend.
-                  </p>
-                </div>
-                <Switch bind:checked={newDomainInbox} />
-              </div>
-
-              <div class="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  class="flex-1"
-                  onclick={backToList}
-                >
-                  <ArrowLeft /> Back
-                </Button>
-                <Button type="submit" class="flex-1" disabled={isCreating}>
-                  {isCreating ? "Creating..." : "Create"}
-                </Button>
-              </div>
-            </Field.Group>
-          </form>
+          <!-- CREATE FORM (extracted component) -->
+          <CreateDomainForm
+            isCreating={isCreating}
+            onBack={backToList}
+            onCreate={handleCreate}
+          />
         {:else}
           <!-- DNS RECORDS (shared card) -->
           <Card.Root class="w-full overflow-hidden">
