@@ -3,6 +3,8 @@
   import { fly } from "svelte/transition";
   import { cubicInOut } from "svelte/easing";
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import { errorMessage } from "@/lib/shared/utils/errors";
+  import { isAuthError, authErrorToast } from "@/lib/shared/services/auth-toast.svelte";
 
   import {
     getInboundSetupCache,
@@ -142,7 +144,7 @@
       startPollingIfPending();
     } catch (err) {
       console.error(err);
-      toast.error("Failed to enable receiving");
+      toast.error(errorMessage(err, "Failed to enable receiving"));
     } finally {
       isEnabling = false;
     }
@@ -157,7 +159,7 @@
       startPollingIfPending();
     } catch (err) {
       console.error(err);
-      toast.error("Failed to trigger verification");
+      toast.error(errorMessage(err, "Failed to trigger verification"));
     } finally {
       isVerifying = false;
     }
@@ -193,7 +195,11 @@
         await loadDetail(active.id);
       } catch (err) {
         console.error(err);
-        toast.error("Failed to check receiving status");
+        if (isAuthError(err)) {
+          authErrorToast(err);
+        } else {
+          toast.error(errorMessage(err, "Failed to check receiving status"));
+        }
         if (!detail) rxState = "no-domain";
       }
     })();

@@ -14,6 +14,23 @@
 
   let open = $state(false);
   let activeItem = $state(nav[0].name);
+
+  // Other components can request the dialog programmatically:
+  //   window.dispatchEvent(new CustomEvent("open-settings", { detail: { section: "Connection" } }))
+  function handleOpenSettings(e: Event) {
+    const section = (e as CustomEvent<{ section?: string }>).detail?.section;
+    if (section && nav.some((item) => item.name === section)) {
+      activeItem = section;
+    }
+    open = true;
+  }
+
+  $effect(() => {
+    const handler = handleOpenSettings;
+    window.addEventListener("open-settings", handler as EventListener);
+    return () =>
+      window.removeEventListener("open-settings", handler as EventListener);
+  });
 </script>
 
 <Dialog.Root bind:open>

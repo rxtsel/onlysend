@@ -27,7 +27,9 @@
     } from "../shared/inbound";
     import { getOnboardingState } from "@/lib/shared/api/auth";
     import EmailListItem from "@/lib/features/inbox/components/email-list-item.svelte";
-import { createEmailList } from "../shared/email-list.svelte";
+import { authErrorToast, isAuthError } from "@/lib/shared/services/auth-toast.svelte";
+import { errorMessage } from "@/lib/shared/utils/errors";
+    import { createEmailList } from "../shared/email-list.svelte";
     import { inboundStatus } from "../shared/inbound-status.svelte";
 
     // Live update when receiving becomes verified anywhere in the app.
@@ -132,7 +134,11 @@ import { createEmailList } from "../shared/email-list.svelte";
 
         activeList.refreshSilent().catch((err) => {
           console.error(`Error loading ${mode} emails:`, err);
-          toast.error("Failed to load emails");
+          if (isAuthError(err)) {
+            authErrorToast(err);
+          } else {
+            toast.error(errorMessage(err, "Failed to load emails"));
+          }
           activeList.markLoaded();
         });
       }
@@ -157,8 +163,12 @@ import { createEmailList } from "../shared/email-list.svelte";
         try {
             await activeList.refresh();
             toast.success("Emails refreshed");
-        } catch {
-            toast.error("Failed to load emails");
+        } catch (err) {
+            if (isAuthError(err)) {
+                authErrorToast(err);
+            } else {
+                toast.error(errorMessage(err, "Failed to load emails"));
+            }
         }
     }
 
