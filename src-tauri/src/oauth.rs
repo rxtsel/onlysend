@@ -318,6 +318,9 @@ async fn persist_tokens(
         scope: tokens.scope.unwrap_or_default(),
     };
 
+    // Single-credential invariant: connecting via OAuth replaces any stored API key.
+    store::delete_api_key(app.clone())?;
+
     store::save_oauth(app, &record)
 }
 

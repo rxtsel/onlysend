@@ -98,6 +98,8 @@ pub fn has_api_key(app: AppHandle<Wry>) -> Result<bool, String> {
 
 #[tauri::command]
 pub fn save_api_key(app: AppHandle<Wry>, api_key: String) -> Result<(), String> {
+    // Single-credential invariant: an API key replaces any OAuth grant.
+    clear_oauth(&app)?;
     write_key(&app, AUTH_FILE, API_KEY_RECORD, json!(api_key))
 }
 
