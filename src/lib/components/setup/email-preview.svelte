@@ -1,6 +1,7 @@
 <script lang="ts">
   import { fade } from "svelte/transition";
   import { ChevronDown } from "@lucide/svelte";
+  import { Blobatar } from "@blobatar/svelte";
 
   let {
     label,
@@ -13,20 +14,18 @@
   } = $props();
 
   const displayName = $derived(label.trim() || "Your Name");
-  const initial = $derived(displayName.charAt(0).toUpperCase());
   const hasLocal = $derived(localPart.trim().length > 0);
+  // Stable identity per address; falls back to the domain while typing.
+  const avatarName = $derived(
+    hasLocal ? `${localPart}@${domain}` : domain || "onlysend",
+  );
 </script>
 
 <div class="bg-background m-px min-h-30 rounded-3xl flex flex-col">
   <!-- HEADER -->
   <div class="pb-4 border-b border-border">
     <div class="flex items-center gap-3">
-      <!-- AVATAR -->
-      <div
-        class="shrink-0 flex w-8 h-8 items-center justify-center text-xs font-medium uppercase rounded-full bg-gradient-to-br from-accent to-border text-foreground"
-      >
-        {initial}
-      </div>
+      <Blobatar name={avatarName} size={32} class="shrink-0 rounded-full" />
 
       <!-- NAME + ADDRESS -->
       <div class="flex flex-col min-w-0">

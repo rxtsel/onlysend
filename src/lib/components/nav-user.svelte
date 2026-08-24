@@ -1,30 +1,67 @@
 <script lang="ts">
   import ChevronsUpDownIcon from "@lucide/svelte/icons/chevrons-up-down";
-  import LogOutIcon from "@lucide/svelte/icons/log-out";
   import SparklesIcon from "@lucide/svelte/icons/sparkles";
+  import UnplugIcon from "@lucide/svelte/icons/unplug";
+  import { Blobatar } from "@blobatar/svelte";
 
-  import * as Avatar from "@/lib/components/ui/avatar/index.js";
   import * as DropdownMenu from "@/lib/components/ui/dropdown-menu/index.js";
   import * as Sidebar from "@/lib/components/ui/sidebar/index.js";
   import { useSidebar } from "@/lib/components/ui/sidebar/index.js";
-  import type { Profile } from "../types";
-  import { getProfile } from "../commom/profile";
+  import {
+    disconnectResend,
+    getConnectionStatus,
+    getActiveDomain,
+    type ConnectionMethod,
+  } from "../commom/store";
   import { onMount } from "svelte";
+  import { toast } from "svelte-sonner";
 
   const sidebar = useSidebar();
 
-  let user = $state<Profile>({
-    firstName: "Send",
-    lastName: "Only",
-    username: "send.only",
-    domain: "onlysend.example",
-  });
+  let activeDomain = $state<string | null>(null);
+  let method = $state<ConnectionMethod>(null);
+  let isDisconnecting = $state(false);
 
-  onMount(async () => {
-    const userData = await getProfile();
-    if (userData) {
-      user = userData;
+  const METHOD_LABELS: Record<Exclude<ConnectionMethod, null>, string> = {
+    oauth: "Connected via OAuth",
+    api_key: "Connected with API key",
+  };
+
+  const connectionLabel = $derived(
+    method ? METHOD_LABELS[method] : "Not connected",
+  );
+
+  async function loadData() {
+    try {
+      const [domain, status] = await Promise.all([
+        getActiveDomain(),
+        getConnectionStatus(),
+      ]);
+      activeDomain = domain;
+      method = status.method;
+    } catch (err) {
+      console.error(err);
     }
+  }
+
+  async function handleDisconnect() {
+    if (isDisconnecting) return;
+
+    try {
+      isDisconnecting = true;
+      await disconnectResend();
+      toast.success("Disconnected from Resend");
+      await loadData();
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to disconnect");
+    } finally {
+      isDisconnecting = false;
+    }
+  }
+
+  onMount(() => {
+    loadData();
   });
 </script>
 
@@ -38,22 +75,18 @@
             size="lg"
             class="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground md:h-8 md:p-0"
           >
-            <Avatar.Root class="size-8 rounded-lg">
-              <Avatar.Image
-                src="/icon-512.png"
-                alt="{user.firstName} {user.lastName}"
-              />
-              <Avatar.Fallback class="rounded-lg">
-                {user.firstName.charAt(0).toUpperCase() ?? "O"}{user.lastName
-                  .charAt(0)
-                  .toUpperCase() ?? "S"}
-              </Avatar.Fallback>
-            </Avatar.Root>
+            <Blobatar
+              name={activeDomain ?? "onlysend"}
+              size={32}
+              class="rounded-lg"
+            />
             <div class="grid flex-1 text-start text-sm leading-tight">
-              <span class="truncate font-medium"
-                >{user.firstName} {user.lastName}</span
-              >
-              <span class="truncate text-xs">{user.username}</span>
+              <span class="truncate font-medium">
+                {activeDomain ?? "OnlySend"}
+              </span>
+              <span class="truncate text-xs text-muted-foreground">
+                {connectionLabel}
+              </span>
             </div>
             <ChevronsUpDownIcon class="ms-auto size-4" />
           </Sidebar.MenuButton>
@@ -67,21 +100,18 @@
       >
         <DropdownMenu.Label class="p-0 font-normal">
           <div class="flex items-center gap-2 px-1 py-1.5 text-start text-sm">
-            <Avatar.Root class="size-8 rounded-lg">
-              <Avatar.Image
-                src={user.username}
-                alt="{user.firstName} {user.lastName}"
-              />
-              <Avatar.Fallback class="rounded-lg">
-                {user.firstName.charAt(0) ?? "O"}{user.lastName.charAt(0) ??
-                  "S"}
-              </Avatar.Fallback>
-            </Avatar.Root>
+            <Blobatar
+              name={activeDomain ?? "onlysend"}
+              size={32}
+              class="rounded-lg"
+            />
             <div class="grid flex-1 text-start text-sm leading-tight">
-              <span class="truncate font-medium"
-                >{user.firstName} {user.lastName}</span
-              >
-              <span class="truncate text-xs">{user.username}</span>
+              <span class="truncate font-medium">
+                {activeDomain ?? "OnlySend"}
+              </span>
+              <span class="truncate text-xs text-muted-foreground">
+                {connectionLabel}
+              </span>
             </div>
           </div>
         </DropdownMenu.Label>
@@ -98,12 +128,16 @@
               Support us
             </a>
           </DropdownMenu.Item>
+          {#if method}
+            <DropdownMenu.Item
+              disabled={isDisconnecting}
+              onclick={handleDisconnect}
+            >
+              <UnplugIcon />
+              {isDisconnecting ? "Disconnecting..." : "Disconnect"}
+            </DropdownMenu.Item>
+          {/if}
         </DropdownMenu.Group>
-        <DropdownMenu.Separator />
-        <DropdownMenu.Item>
-          <LogOutIcon />
-          Log out
-        </DropdownMenu.Item>
       </DropdownMenu.Content>
     </DropdownMenu.Root>
   </Sidebar.MenuItem>
