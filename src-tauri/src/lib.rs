@@ -5,7 +5,8 @@ mod inbound;
 mod oauth;
 mod permissions;
 mod sent;
-mod store;
+
+pub mod infrastructure;
 
 use tauri_plugin_store::StoreExt;
 
@@ -54,19 +55,19 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            store::has_api_key,
-            store::get_onboarding_state,
-            store::set_inbox_enabled,
-            store::get_inbound_setup_cache,
-            store::save_inbound_setup_cache,
-            store::mark_setup_complete,
-            store::get_connection_status,
-            store::save_api_key,
-            store::get_api_key,
-            store::delete_api_key,
-            store::save_selected_domain,
-            store::get_selected_domain,
-            store::get_active_domain,
+            infrastructure::credentials_store::has_api_key,
+            infrastructure::settings_store::get_onboarding_state,
+            infrastructure::settings_store::set_inbox_enabled,
+            infrastructure::settings_store::get_inbound_setup_cache,
+            infrastructure::settings_store::save_inbound_setup_cache,
+            infrastructure::settings_store::mark_setup_complete,
+            infrastructure::credentials_store::get_connection_status,
+            infrastructure::credentials_store::save_api_key,
+            infrastructure::credentials_store::get_api_key,
+            infrastructure::credentials_store::delete_api_key,
+            infrastructure::settings_store::save_selected_domain,
+            infrastructure::settings_store::get_selected_domain,
+            infrastructure::settings_store::get_active_domain,
             oauth::connect_resend,
             oauth::disconnect_resend,
             permissions::probe_full_access,
@@ -79,8 +80,8 @@ pub fn run() {
             domains::set_domain_receiving,
             inbound::list_inbound_emails,
             inbound::get_inbound_email,
-            store::get_read_inbound_ids,
-            store::mark_inbound_read,
+            infrastructure::settings_store::get_read_inbound_ids,
+            infrastructure::settings_store::mark_inbound_read,
             config::list_from_emails,
             config::create_from_email,
             config::update_from_email,

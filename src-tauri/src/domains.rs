@@ -288,7 +288,7 @@ pub async fn get_domain(app: AppHandle<Wry>, domain_id: String) -> Result<Domain
             // Fallback: fetch raw and map leniently, so an unexpected field
             // in the SDK's typed struct can't break the feature. The raw
             // body is logged to diagnose the crate failure.
-            println!("[WARN] domains.get via SDK failed: {crate_err}");
+            println!("[INFO] domains.get via SDK failed (raw fallback in use): {crate_err}");
             get_domain_raw(&app, &domain_id).await
         }
     }
@@ -495,4 +495,124 @@ pub async fn verify_domain(
 
     // Return the (now pending) state so the UI can start polling.
     get_domain(app, domain_id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn region_to_enum_maps_all_known_regions() {
+        assert!(matches!(
+            region_to_enum("us-east-1"),
+            Some(resend_rs::types::Region::UsEast1)
+        ));
+        assert!(matches!(
+            region_to_enum("eu-west-1"),
+            Some(resend_rs::types::Region::EuWest1)
+        ));
+        assert!(matches!(
+            region_to_enum("sa-east-1"),
+            Some(resend_rs::types::Region::SaEast1)
+        ));
+        assert!(matches!(
+            region_to_enum("ap-northeast-1"),
+            Some(resend_rs::types::Region::ApNorthEast1)
+        ));
+    }
+
+    #[test]
+    fn region_to_enum_rejects_unknown_regions() {
+        assert!(region_to_enum("mars-1").is_none());
+        assert!(region_to_enum("").is_none());
+    }
+
+    #[test]
+    fn parse_raw_domain_full_payload() {
+        let body = serde_json::json!({
+            "id": "d1",
+            "name": "example.com",
+            "status": "pending",
+            "capabilities": { "sending": "enabled", "receiving": "disabled" },
+            "records": [
+                {
+                    "record": "SPF",
+                    "name": "send",
+                    "type": "MX",
+                    "value": "feedback-smtp.us-east-1.amazonses.com",
+                    "ttl": "Auto",
+                    "status": "not_started",
+                    "priority": 10
+                },
+                {
+                    "record": "DKIM",
+                    "name": "resend._domainkey",
+                    "type": "TXT",
+                    "value": "p=abc",
+                    "ttl": "Auto",
+                    "status": "verified"
+                },
+                {
+                    "record": "Receiving MX",
+                    "name": "example.com",
+                    "type": "MX",
+                    "value": "inbound-smtp.us-east-1.amazonaws.com",
+                    "ttl": "Auto",
+                    "status": "pending",
+                    "priority": 10
+                }
+            ]
+        });
+
+        let d = parse_raw_domain(body).expect("should parse");
+
+        assert_eq!(d.id, "d1");
+        assert_eq!(d.name, "example.com");
+        assert_eq!(d.status, "pending");
+        assert_eq!(d.capabilities.sending, "enabled");
+        assert_eq!(d.capabilities.receiving, "disabled");
+        assert_eq!(d.records.len(), 3);
+
+        let spf = &d.records[0];
+        assert_eq!(spf.group, "SPF");
+        assert_eq!(spf.record_type, "MX");
+        assert_eq!(spf.priority, Some(10));
+
+        let dkim = &d.records[1];
+        assert_eq!(dkim.group, "DKIM");
+        assert_eq!(dkim.status, "verified");
+        assert_eq!(dkim.priority, None);
+    }
+
+    #[test]
+    fn parse_raw_domain_missing_optionals_defaults() {
+        let body = serde_json::json!({
+            "id": "d2",
+            "name": "bare.dev",
+            "status": "not_started"
+        });
+
+        let d = parse_raw_domain(body).expect("should parse minimal payload");
+
+        assert_eq!(d.records.len(), 0);
+        assert_eq!(d.capabilities.sending, "disabled");
+        assert_eq!(d.capabilities.receiving, "disabled");
+    }
+
+    #[test]
+    fn parse_raw_domain_unknown_record_group_is_preserved() {
+        let body = serde_json::json!({
+            "id": "d3",
+            "name": "x.dev",
+            "status": "verified",
+            "records": [
+                { "record": "SomethingNew", "type": "TXT", "name": "n", "value": "v", "status": "pending" }
+            ]
+        });
+
+        let d = parse_raw_domain(body).expect("should parse");
+        // Unknown groups must survive so the UI can show whatever Resend adds.
+        assert_eq!(d.records[0].group, "SomethingNew");
+        assert_eq!(d.records[0].status, "pending");
+    }
 }

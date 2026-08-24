@@ -1,7 +1,7 @@
 use tauri::{AppHandle, Wry};
 use uuid::Uuid;
 
-use crate::store::{load_from_emails, save_from_emails, FromEmail};
+use crate::infrastructure::settings_store::{load_from_emails, save_from_emails, FromEmail};
 
 #[tauri::command]
 pub fn list_from_emails(app: AppHandle<Wry>) -> Result<Vec<FromEmail>, String> {

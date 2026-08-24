@@ -172,3 +172,46 @@ pub async fn get_inbound_email(
         attachments: email.attachments.iter().map(map_attachment).collect(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_email_html;
+
+    #[test]
+    fn strips_script_tags_and_content() {
+        let html = r#"<p>ok</p><script>alert('xss')</script>"#;
+        let out = sanitize_email_html(html);
+        assert!(!out.contains("script"), "got: {out}");
+        assert!(!out.contains("alert"));
+        assert!(out.contains("ok"));
+    }
+
+    #[test]
+    fn strips_event_handlers_and_javascript_urls() {
+        let html = r#"<p onclick="evil()">hi</p><a href="javascript:evil()">x</a>"#;
+        let out = sanitize_email_html(html);
+        assert!(!out.contains("onclick"));
+        assert!(!out.contains("javascript:"));
+        assert!(out.contains("hi"));
+    }
+
+    #[test]
+    fn strips_iframes_forms_and_object_tags() {
+        let html = "<iframe src=\"//evil\"></iframe><form action=\"x\"></form><object data=\"y\"></object><p>safe</p>";
+        let out = sanitize_email_html(html);
+        assert!(!out.contains("iframe"));
+        assert!(!out.contains("form"));
+        assert!(!out.contains("object"));
+        assert!(out.contains("safe"));
+    }
+
+    #[test]
+    fn preserves_legitimate_structure() {
+        let html = r#"<table border="0"><tr><td><b>Bold</b> and <a href="https://ok.com">link</a></td></tr></table><img src="https://img" alt="i">"#;
+        let out = sanitize_email_html(html);
+        assert!(out.contains("<table"));
+        assert!(out.contains("<b>"));
+        assert!(out.contains("href=\"https://ok.com\""));
+        assert!(out.contains("<img"));
+    }
+}

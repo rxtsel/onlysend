@@ -9,7 +9,8 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager, State, Wry};
 use tauri_plugin_opener::OpenerExt;
 
-use crate::store;
+use crate::infrastructure::credentials_store as store;
+use crate::infrastructure::settings_store as sstore;
 
 const RESEND_API_BASE: &str = "https://api.resend.com";
 const REDIRECT_URI: &str = "onlysend://oauth/callback";
@@ -424,8 +425,8 @@ pub async fn disconnect_resend(app: AppHandle<Wry>) -> Result<(), String> {
 
     store::clear_oauth(&app)?;
     store::delete_api_key(app.clone())?;
-    store::mark_setup_incomplete(app.clone())?;
-    store::set_inbox_enabled(app.clone(), false)?;
+    sstore::mark_setup_incomplete(app.clone())?;
+    sstore::set_inbox_enabled(app.clone(), false)?;
 
     println!("[INFO] Resend disconnected (credentials cleared, local data preserved)");
 
@@ -481,4 +482,34 @@ fn percent_decode(value: &str) -> String {
     }
 
     String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_query, percent_decode};
+
+    #[test]
+    fn parses_standard_callback_url() {
+        let q = parse_query("onlysend://oauth/callback?code=abc123&state=xyz");
+        assert_eq!(q.get("code").map(String::as_str), Some("abc123"));
+        assert_eq!(q.get("state").map(String::as_str), Some("xyz"));
+    }
+
+    #[test]
+    fn percent_decode_handles_encoded_characters() {
+        assert_eq!(percent_decode("a%20b%2Bc"), "a b+c");
+        assert_eq!(percent_decode("plain"), "plain");
+    }
+
+    #[test]
+    fn percent_decode_ignores_invalid_sequences_without_panicking() {
+        // Trailing % with missing hex digits must not panic.
+        assert_eq!(percent_decode("100% of %2"), "100% of %2");
+    }
+
+    #[test]
+    fn parse_query_empty_returns_no_params() {
+        let q = parse_query("onlysend://oauth/callback");
+        assert!(q.is_empty());
+    }
 }
