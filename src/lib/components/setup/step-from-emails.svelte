@@ -10,6 +10,7 @@
   import * as InputGroup from "@/lib/components/ui/input-group";
   import * as Item from "@/lib/components/ui/item";
   import EmailPreview from "@/lib/components/setup/email-preview.svelte";
+  import { Blobatar } from "@blobatar/svelte";
   import { ArrowRight, Trash } from "@lucide/svelte";
 
   let {
@@ -121,18 +122,19 @@
         <Item.Group class="mb-4">
           {#each options as opt, i (opt.address)}
             <Item.Root variant="outline" size="sm">
+              <Item.Media>
+                <Blobatar
+                  name={opt.address}
+                  size={28}
+                  class="rounded-full shrink-0"
+                />
+              </Item.Media>
               <Item.Content>
                 <Item.Title>{opt.label}</Item.Title>
                 <Item.Description>{opt.address}</Item.Description>
               </Item.Content>
               <Item.Actions>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  title="Remove"
-                  onclick={() => removeOption(i)}
-                >
+                <Button variant="destructive" size="icon-sm" title="Remove" onclick={() => removeOption(i)}>
                   <Trash />
                 </Button>
               </Item.Actions>
