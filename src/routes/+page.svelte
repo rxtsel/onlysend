@@ -3,21 +3,17 @@
   import { onMount } from "svelte";
   import { fade, fly } from "svelte/transition";
 
-  import {
-    getOnboardingState,
-    getSelectedDomain,
-    markSetupComplete,
-    saveSelectedDomain,
-  } from "@/lib/shared/store";
+  import { getOnboardingState, markSetupComplete } from "@/lib/shared/api/auth";
+import { getSelectedDomain, saveSelectedDomain } from "@/lib/shared/api/domains";
   import Logo from "@/lib/components/logo.svelte";
 
   import { toast } from "svelte-sonner";
 
   import { Skeleton } from "@/lib/components/ui/skeleton";
   import { createFromEmail, listFromEmails } from "@/lib/shared/from-emails";
-  import StepConnect from "@/lib/components/setup/step-connect.svelte";
-  import StepDomains from "@/lib/components/setup/step-domains.svelte";
-  import StepFromEmails from "@/lib/components/setup/step-from-emails.svelte";
+  import StepConnect from "@/lib/features/setup/components/step-connect.svelte";
+  import StepDomains from "@/lib/features/setup/components/step-domains.svelte";
+  import StepFromEmails from "@/lib/features/setup/components/step-from-emails.svelte";
   import {
     SLIDE_IN,
     SLIDE_OUT,
@@ -25,7 +21,7 @@
     SLIDE_BACK_OUT,
     createViewAnimator,
     VIEW_WRAP_CLASS,
-  } from "@/lib/components/setup/view-transition.svelte";
+  } from "@/lib/features/setup/view-transition.svelte";
 
   /* ---------------------------------------------------------
    * WIZARD STATE

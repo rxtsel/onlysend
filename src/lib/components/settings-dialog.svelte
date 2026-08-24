@@ -16,7 +16,7 @@
   import * as InputGroup from "@/lib/components/ui/input-group";
   import * as Item from "@/lib/components/ui/item";
   import * as Empty from "@/lib/components/ui/empty";
-  import EmailPreview from "@/lib/components/setup/email-preview.svelte";
+  import EmailPreview from "@/lib/features/setup/components/email-preview.svelte";
   import { Blobatar } from "@blobatar/svelte";
   import type { FromEmail } from "../types";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
@@ -36,12 +36,15 @@
   import {
     connectResend,
     disconnectResend,
-    getActiveDomain,
     getConnectionStatus,
     getOnboardingState,
     type ConnectionStatus,
-  } from "../shared/store";
-  import ReceivingSetup from "@/lib/components/setup/receiving-setup.svelte";
+  } from "@/lib/shared/api/auth";
+  import {
+    getActiveDomain,
+    listDomains,
+  } from "@/lib/shared/api/domains";
+  import ReceivingSetup from "@/lib/features/setup/components/receiving-setup.svelte";
   import { inboundStatus } from "../shared/inbound-status.svelte";
 
   // The embedded setup flow flips the shared readiness signal.

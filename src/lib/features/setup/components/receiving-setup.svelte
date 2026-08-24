@@ -5,21 +5,21 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
 
   import {
-    getDomain,
     getInboundSetupCache,
-    listDomains,
     saveInboundSetupCache,
+  } from "@/lib/shared/api/domains";
+  import {
+    getDomain,
+    listDomains,
     setDomainReceiving,
-    setInboxEnabled,
     verifyDomain,
-  } from "@/lib/shared/store";
-  import type {
-    DomainDetail,
-    DomainSummary,
-  } from "@/lib/shared/store";
+    type DomainDetail,
+    type DomainSummary,
+  } from "@/lib/shared/api/domains";
+  import { setInboxEnabled } from "@/lib/shared/api/auth";
   import { toast } from "svelte-sonner";
   import { inboundStatus } from "@/lib/shared/inbound-status.svelte";
-  import DnsRecordsCard from "@/lib/components/setup/dns-records-card.svelte";
+  import DnsRecordsCard from "@/lib/features/setup/components/dns-records-card.svelte";
 
   import { Button } from "@/lib/components/ui/button";
   import * as Empty from "@/lib/components/ui/empty";

@@ -9,7 +9,7 @@
   import { Input } from "@/lib/components/ui/input";
   import * as InputGroup from "@/lib/components/ui/input-group";
   import * as Item from "@/lib/components/ui/item";
-  import EmailPreview from "@/lib/components/setup/email-preview.svelte";
+  import EmailPreview from "@/lib/features/setup/components/email-preview.svelte";
   import { Blobatar } from "@blobatar/svelte";
   import { ArrowRight, Trash } from "@lucide/svelte";
 

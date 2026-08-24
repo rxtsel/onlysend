@@ -9,7 +9,7 @@
     SLIDE_BACK_OUT,
     createViewAnimator,
     VIEW_WRAP_CLASS,
-  } from "./view-transition.svelte";
+  } from "../view-transition.svelte";
 
   import {
     createDomain,
@@ -17,11 +17,11 @@
     getDomain,
     listDomains,
     setDomainReceiving,
-    setInboxEnabled,
     verifyDomain,
     type DomainDetail,
     type DomainSummary,
-  } from "@/lib/shared/store";
+  } from "@/lib/shared/api/domains";
+  import { setInboxEnabled } from "@/lib/shared/api/auth";
   import { Trash } from "@lucide/svelte";
   import { toast } from "svelte-sonner";
   import { copyToClipboard } from "@/lib/shared/services/clipboard.svelte";
@@ -36,7 +36,7 @@
   import { Switch } from "@/lib/components/ui/switch";
   import * as Select from "@/lib/components/ui/select";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
-  import DnsRecordsCard from "@/lib/components/setup/dns-records-card.svelte";
+  import DnsRecordsCard from "@/lib/features/setup/components/dns-records-card.svelte";
 
   const REGIONS = [
     { value: "us-east-1", label: "US East (Virginia)" },

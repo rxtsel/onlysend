@@ -11,14 +11,18 @@
     SLIDE_BACK_OUT,
     createViewAnimator,
     VIEW_WRAP_CLASS,
-  } from "./view-transition.svelte";
+  } from "../view-transition.svelte";
 
   type View = "buttons" | "manual" | "connecting";
 
   /** Alerts stay on screen until the user manually dismisses them. */
   const ALERT = { duration: Infinity } as const;
 
-  import { connectResend, probeFullAccess, saveApiKey } from "@/lib/shared/store";
+  import {
+    connectResend,
+    probeFullAccess,
+    saveApiKey,
+  } from "@/lib/shared/api/auth";
   import { apiKeySchema } from "@/lib/schemas/api-key.schema";
   import { toast } from "svelte-sonner";
   import { copyToClipboard } from "@/lib/shared/services/clipboard.svelte";

@@ -7,12 +7,8 @@
   import * as DropdownMenu from "@/lib/components/ui/dropdown-menu/index.js";
   import * as Sidebar from "@/lib/components/ui/sidebar/index.js";
   import { useSidebar } from "@/lib/components/ui/sidebar/index.js";
-  import {
-    disconnectResend,
-    getConnectionStatus,
-    getActiveDomain,
-    type ConnectionMethod,
-  } from "../shared/store";
+  import { disconnectResend, getConnectionStatus, type ConnectionMethod } from "@/lib/shared/api/auth";
+  import { getActiveDomain } from "@/lib/shared/api/domains";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { toast } from "svelte-sonner";

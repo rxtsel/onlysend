@@ -3,9 +3,7 @@
   import { copyToClipboard } from "@/lib/shared/services/clipboard.svelte";
   import { Button } from "@/lib/components/ui/button";
   import { Switch } from "@/lib/components/ui/switch";
-  import type {
-    DomainDetail,
-  } from "@/lib/shared/store";
+  import type { DomainDetail } from "@/lib/shared/api/domains";
   import {
     ArrowLeft,
     CheckCircle2,

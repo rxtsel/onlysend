@@ -26,7 +26,7 @@
         listInboundEmails,
         markInboundRead,
     } from "../shared/inbound";
-    import { getOnboardingState } from "../shared/store";
+    import { getOnboardingState } from "@/lib/shared/api/auth";
     import { createEmailList } from "../shared/email-list.svelte";
     import { inboundStatus } from "../shared/inbound-status.svelte";
 
