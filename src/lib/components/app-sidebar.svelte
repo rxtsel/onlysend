@@ -20,14 +20,14 @@
     import type { InboundEmail } from "../shared/inbound";
     import type { SentEmail } from "../types";
     import { listSentEmails } from "../shared/sent";
-    import { formatEmailDate } from "@/lib/shared/utils/dates";
     import {
         getReadInboundIds,
         listInboundEmails,
         markInboundRead,
     } from "../shared/inbound";
     import { getOnboardingState } from "@/lib/shared/api/auth";
-    import { createEmailList } from "../shared/email-list.svelte";
+    import EmailListItem from "@/lib/features/inbox/components/email-list-item.svelte";
+import { createEmailList } from "../shared/email-list.svelte";
     import { inboundStatus } from "../shared/inbound-status.svelte";
 
     // Live update when receiving becomes verified anywhere in the app.
@@ -383,60 +383,14 @@
                         </div>
                     {:else}
                         {#each visibleItems as mail (mail.id)}
-                            {@const isActive = page.params.id === mail.id}
-                            {@const isUnread =
-                                mode === "inbox" && !readIds.has(mail.id)}
-                            {@const mailDomain = domainOf(mail)}
-                            <button
-                                onclick={() => handleEmailClick(mail.id)}
-                                class="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground flex w-full flex-col items-start gap-2 whitespace-nowrap border-b p-4 text-sm leading-tight last:border-b-0 text-left {isActive
-                                    ? 'bg-sidebar-accent'
-                                    : ''}"
-                            >
-                                <div class="flex w-full items-center gap-2">
-                                    {#if mode === "inbox"}
-                                        <span
-                                            class="font-semibold truncate {isUnread
-                                                ? ''
-                                                : 'font-normal text-muted-foreground'}"
-                                        >
-                                            {mail.from}
-                                        </span>
-                                    {:else}
-                                        <span class="font-semibold truncate"
-                                            >{mail.to[0]}</span
-                                        >
-                                    {/if}
-
-                                    {#if isUnread}
-                                        <span
-                                            class="size-2 rounded-full bg-blue-500 shrink-0"
-                                            title="Unread"
-                                        ></span>
-                                    {/if}
-
-                                    <span class="ms-auto text-xs shrink-0">
-                                        {formatEmailDate(dateOf(mail))}
-                                    </span>
-                                </div>
-                                <div
-                                    class="flex w-full items-center gap-1.5 min-w-0"
-                                >
-                                    <span
-                                        class="truncate flex-1 {isUnread
-                                            ? 'text-foreground'
-                                            : 'text-muted-foreground'}"
-                                        >{mail.subject}</span
-                                    >
-                                    {#if mailDomain && activeDomains.length > 1}
-                                        <span
-                                            class="text-[10px] shrink-0 px-1.5 py-px rounded bg-muted text-muted-foreground"
-                                        >
-                                            {mailDomain}
-                                        </span>
-                                    {/if}
-                                </div>
-                            </button>
+                            <EmailListItem
+                                mail={mail}
+                                {mode}
+                                isActive={page.params.id === mail.id}
+                                isUnread={mode === "inbox" && !readIds.has(mail.id)}
+                                domainLabel={activeDomains.length > 1 ? domainOf(mail) : ""}
+                                onclick={handleEmailClick}
+                            />
                         {/each}
 
                         {#if activeList.hasMore}
