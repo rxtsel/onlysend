@@ -12,13 +12,13 @@
     setDomainReceiving,
     setInboxEnabled,
     verifyDomain,
-  } from "@/lib/commom/store";
+  } from "@/lib/shared/store";
   import type {
     DomainDetail,
     DomainSummary,
-  } from "@/lib/commom/store";
+  } from "@/lib/shared/store";
   import { toast } from "svelte-sonner";
-  import { inboundStatus } from "@/lib/commom/inbound-status.svelte";
+  import { inboundStatus } from "@/lib/shared/inbound-status.svelte";
   import DnsRecordsCard from "@/lib/components/setup/dns-records-card.svelte";
 
   import { Button } from "@/lib/components/ui/button";

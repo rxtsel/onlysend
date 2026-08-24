@@ -17,17 +17,18 @@
     import { onMount } from "svelte";
     import { toast } from "svelte-sonner";
     import { Loader } from "@lucide/svelte";
-    import type { InboundEmail } from "../commom/inbound";
+    import type { InboundEmail } from "../shared/inbound";
     import type { SentEmail } from "../types";
-    import { formatEmailDate, listSentEmails } from "../commom/sent";
+    import { listSentEmails } from "../shared/sent";
+    import { formatEmailDate } from "@/lib/shared/utils/dates";
     import {
         getReadInboundIds,
         listInboundEmails,
         markInboundRead,
-    } from "../commom/inbound";
-    import { getOnboardingState } from "../commom/store";
-    import { createEmailList } from "../commom/email-list.svelte";
-    import { inboundStatus } from "../commom/inbound-status.svelte";
+    } from "../shared/inbound";
+    import { getOnboardingState } from "../shared/store";
+    import { createEmailList } from "../shared/email-list.svelte";
+    import { inboundStatus } from "../shared/inbound-status.svelte";
 
     // Live update when receiving becomes verified anywhere in the app.
     $effect(() => {
@@ -76,13 +77,12 @@
      * --------------------------------------------------------- */
     let domainFilter = $state<"all" | string>("all");
 
-    /** The two list models differ only in their date field naming. */
     function dateOf(mail: InboundEmail | SentEmail): string {
-        return "createdAt" in mail ? mail.createdAt : mail.created_at;
+        return mail.createdAt;
     }
 
     function domainOf(mail: InboundEmail | SentEmail): string {
-        if ("createdAt" in mail) return mail.domain;
+        if ("domain" in mail) return mail.domain;
         return mail.from.split("@")[1]?.toLowerCase() ?? "";
     }
     const sentList = createEmailList<SentEmail>((limit, offset) =>

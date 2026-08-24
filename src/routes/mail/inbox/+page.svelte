@@ -1,6 +1,6 @@
 <script lang="ts">
   import ReceivingSetup from "@/lib/components/setup/receiving-setup.svelte";
-  import { inboundStatus } from "@/lib/commom/inbound-status.svelte";
+  import { inboundStatus } from "@/lib/shared/inbound-status.svelte";
   import { Inbox } from "@lucide/svelte";
 </script>
 

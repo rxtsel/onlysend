@@ -23,13 +23,13 @@
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { listen } from "@tauri-apps/api/event";
-  import { stripAt } from "../commom/email";
+  import { stripAt } from "../shared/email";
   import {
     createFromEmail,
     updateFromEmail,
     deleteFromEmail,
     listFromEmails,
-  } from "../commom/from-emails";
+  } from "../shared/from-emails";
   import { toast } from "svelte-sonner";
   import type { ZodError } from "zod/v4";
   import { emailOptionSchema } from "../schemas/email-option.schema";
@@ -40,9 +40,9 @@
     getConnectionStatus,
     getOnboardingState,
     type ConnectionStatus,
-  } from "../commom/store";
+  } from "../shared/store";
   import ReceivingSetup from "@/lib/components/setup/receiving-setup.svelte";
-  import { inboundStatus } from "../commom/inbound-status.svelte";
+  import { inboundStatus } from "../shared/inbound-status.svelte";
 
   // The embedded setup flow flips the shared readiness signal.
   $effect(() => {

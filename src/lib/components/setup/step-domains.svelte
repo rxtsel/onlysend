@@ -21,9 +21,10 @@
     verifyDomain,
     type DomainDetail,
     type DomainSummary,
-  } from "@/lib/commom/store";
+  } from "@/lib/shared/store";
   import { Trash } from "@lucide/svelte";
   import { toast } from "svelte-sonner";
+  import { copyToClipboard } from "@/lib/shared/services/clipboard.svelte";
 
   import { Button } from "@/lib/components/ui/button";
   import * as Card from "@/lib/components/ui/card";
@@ -308,13 +309,7 @@
   }
 
   async function copyRecord(value: string) {
-    try {
-      await navigator.clipboard.writeText(value);
-      toast.success("Copied to clipboard");
-    } catch (err) {
-      console.error(err);
-      toast.error("Could not copy");
-    }
+    await copyToClipboard(value);
   }
   /* ---------------------------------------------------------
    * DELETE DOMAIN (only while not fully verified)

@@ -2,7 +2,7 @@
   import { toast } from "svelte-sonner";
 
   import { emailOptionSchema } from "@/lib/schemas/email-option.schema";
-  import { stripAt } from "@/lib/commom/email";
+  import { stripAt } from "@/lib/shared/email";
 
   import { Button } from "@/lib/components/ui/button";
   import * as Field from "@/lib/components/ui/field";

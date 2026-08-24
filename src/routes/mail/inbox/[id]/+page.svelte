@@ -8,8 +8,8 @@
     getInboundEmail,
     markInboundRead,
     type InboundEmailDetail,
-  } from "@/lib/commom/inbound";
-  import { formatEmailDate } from "@/lib/commom/sent";
+  } from "@/lib/shared/inbound";
+  import { formatEmailDate } from "@/lib/shared/utils/dates";
   import { Paperclip } from "@lucide/svelte";
   import { ArrowLeft, Loader } from "@lucide/svelte";
 

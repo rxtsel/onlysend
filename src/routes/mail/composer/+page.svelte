@@ -17,7 +17,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import type { AttachmentPayload, FromEmail } from "@/lib/types";
   import { onMount } from "svelte";
-  import { listFromEmails, formatFromEmail } from "@/lib/commom/from-emails";
+  import { listFromEmails, formatFromEmail } from "@/lib/shared/from-emails";
 
   let toEmails = $state<Tag[]>([]);
   let fromEmails = $state<FromEmail[]>([]);

@@ -8,13 +8,13 @@
     getSelectedDomain,
     markSetupComplete,
     saveSelectedDomain,
-  } from "@/lib/commom/store";
+  } from "@/lib/shared/store";
   import Logo from "@/lib/components/logo.svelte";
 
   import { toast } from "svelte-sonner";
 
   import { Skeleton } from "@/lib/components/ui/skeleton";
-  import { createFromEmail, listFromEmails } from "@/lib/commom/from-emails";
+  import { createFromEmail, listFromEmails } from "@/lib/shared/from-emails";
   import StepConnect from "@/lib/components/setup/step-connect.svelte";
   import StepDomains from "@/lib/components/setup/step-domains.svelte";
   import StepFromEmails from "@/lib/components/setup/step-from-emails.svelte";

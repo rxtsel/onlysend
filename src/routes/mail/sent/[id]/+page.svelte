@@ -5,11 +5,8 @@
   import { Button } from "@/lib/components/ui/button/index.js";
   import { goto } from "$app/navigation";
   import type { SentEmail } from "@/lib/types";
-  import {
-    formatEmailDate,
-    getSentEmail,
-    isTemplateHtml,
-  } from "@/lib/commom/sent";
+  import { getSentEmail, isTemplateHtml } from "@/lib/shared/sent";
+  import { formatEmailDate } from "@/lib/shared/utils/dates";
   import Editor from "@/lib/components/editor/editor.svelte";
   import { ArrowLeft, Loader } from "@lucide/svelte";
 
@@ -103,19 +100,19 @@
             </div>
           {/if}
 
-          {#if email.reply_to}
+          {#if email.replyTo}
             <div class="flex items-start gap-2">
               <span class="text-muted-foreground font-medium min-w-12"
                 >Reply-To:</span
               >
-              <span>{email.reply_to}</span>
+              <span>{email.replyTo}</span>
             </div>
           {/if}
 
           <div class="flex items-center gap-2">
             <span class="text-muted-foreground font-medium min-w-12">Date:</span
             >
-            <span>{formatEmailDate(email.created_at)}</span>
+            <span>{formatEmailDate(email.createdAt)}</span>
           </div>
         </div>
       </div>

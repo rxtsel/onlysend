@@ -18,9 +18,10 @@
   /** Alerts stay on screen until the user manually dismisses them. */
   const ALERT = { duration: Infinity } as const;
 
-  import { connectResend, probeFullAccess, saveApiKey } from "@/lib/commom/store";
+  import { connectResend, probeFullAccess, saveApiKey } from "@/lib/shared/store";
   import { apiKeySchema } from "@/lib/schemas/api-key.schema";
   import { toast } from "svelte-sonner";
+  import { copyToClipboard } from "@/lib/shared/services/clipboard.svelte";
 
   import { Button } from "@/lib/components/ui/button";
   import * as Field from "@/lib/components/ui/field";
@@ -98,13 +99,8 @@
   }
 
   async function handleCopyLink() {
-    try {
-      await navigator.clipboard.writeText(authorizeUrl);
-      toast.success("Link copied");
-    } catch (err) {
-      console.error(err);
-      toast.error("Could not copy the link");
-    }
+    const ok = await copyToClipboard(authorizeUrl, "Link copied");
+    if (!ok) toast.error("Could not copy the link");
   }
 
   function submitManual(e: SubmitEvent) {

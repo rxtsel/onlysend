@@ -12,7 +12,7 @@
     getConnectionStatus,
     getActiveDomain,
     type ConnectionMethod,
-  } from "../commom/store";
+  } from "../shared/store";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { toast } from "svelte-sonner";

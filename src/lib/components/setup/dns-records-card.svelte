@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { toast } from "svelte-sonner";
-
+  
+  import { copyToClipboard } from "@/lib/shared/services/clipboard.svelte";
   import { Button } from "@/lib/components/ui/button";
   import { Switch } from "@/lib/components/ui/switch";
   import type {
     DomainDetail,
-  } from "@/lib/commom/store";
+  } from "@/lib/shared/store";
   import {
     ArrowLeft,
     CheckCircle2,
@@ -55,13 +55,7 @@
   );
 
   async function copyRecord(value: string) {
-    try {
-      await navigator.clipboard.writeText(value);
-      toast.success("Copied to clipboard");
-    } catch (err) {
-      console.error(err);
-      toast.error("Could not copy");
-    }
+    await copyToClipboard(value);
   }
 </script>
 
