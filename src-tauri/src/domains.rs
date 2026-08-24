@@ -2,7 +2,7 @@ use resend_rs::types::{
     Domain, DomainCapabilityStatus, DomainRecord, DomainRecordStatus, DomainStatus,
 };
 use resend_rs::{list_opts::ListOptions, Resend};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Wry};
 
 use crate::oauth;
@@ -11,12 +11,17 @@ use crate::permissions;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordDto {
+    /// Record group: "SPF" | "DKIM" | "Receiving MX" | "Tracking" | ...
+    pub group: String,
     /// "TXT" | "MX" | "CNAME" | ...
     pub record_type: String,
     pub name: String,
     pub value: String,
     /// "pending" | "verified" | "failed" | "temporary_failure" | "not_started"
     pub status: String,
+    pub ttl: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -27,6 +32,7 @@ pub struct DomainDto {
     /// "pending" | "verified" | "failed" | "not_started" |
     /// "partially_verified" | "partially_failed"
     pub status: String,
+    pub capabilities: CapabilitiesDto,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -95,37 +101,64 @@ fn map_records(domain: &Domain) -> Vec<RecordDto> {
         .map(|records| {
             records
                 .iter()
-                .map(|record| match record {
-                    DomainRecord::DomainSpfRecord(r) => RecordDto {
-                        record_type: format!("{:?}", r.r#type),
-                        name: r.name.clone(),
-                        value: r.value.clone(),
-                        status: record_status_str(r.status),
-                    },
-                    DomainRecord::DomainDkimRecord(r) => RecordDto {
-                        record_type: format!("{:?}", r.r#type),
-                        name: r.name.clone(),
-                        value: r.value.clone(),
-                        status: record_status_str(r.status),
-                    },
-                    DomainRecord::ReceivingRecord(r) => RecordDto {
-                        record_type: format!("{:?}", r.r#type),
-                        name: r.name.clone(),
-                        value: r.value.clone(),
-                        status: record_status_str(r.status),
-                    },
-                    DomainRecord::TrackingRecord(r) => RecordDto {
-                        record_type: format!("{:?}", r.r#type),
-                        name: r.name.clone(),
-                        value: r.value.clone(),
-                        status: record_status_str(r.status),
-                    },
-                    DomainRecord::TrackingCaaRecord(r) => RecordDto {
-                        record_type: format!("{:?}", r.r#type),
-                        name: r.name.clone(),
-                        value: r.value.clone(),
-                        status: record_status_str(r.status),
-                    },
+                .map(|record| {
+                    let (group, record_type, name, value, status, ttl, priority) = match record {
+                        DomainRecord::DomainSpfRecord(r) => (
+                            "SPF",
+                            format!("{:?}", r.r#type),
+                            &r.name,
+                            &r.value,
+                            record_status_str(r.status),
+                            r.ttl.clone(),
+                            r.priority,
+                        ),
+                        DomainRecord::DomainDkimRecord(r) => (
+                            "DKIM",
+                            format!("{:?}", r.r#type),
+                            &r.name,
+                            &r.value,
+                            record_status_str(r.status),
+                            r.ttl.clone(),
+                            None,
+                        ),
+                        DomainRecord::ReceivingRecord(r) => (
+                            "Receiving MX",
+                            format!("{:?}", r.r#type),
+                            &r.name,
+                            &r.value,
+                            record_status_str(r.status),
+                            r.ttl.clone(),
+                            Some(r.priority),
+                        ),
+                        DomainRecord::TrackingRecord(r) => (
+                            "Tracking",
+                            format!("{:?}", r.r#type),
+                            &r.name,
+                            &r.value,
+                            record_status_str(r.status),
+                            r.ttl.clone(),
+                            None,
+                        ),
+                        DomainRecord::TrackingCaaRecord(r) => (
+                            "Tracking CAA",
+                            format!("{:?}", r.r#type),
+                            &r.name,
+                            &r.value,
+                            record_status_str(r.status),
+                            r.ttl.clone(),
+                            None,
+                        ),
+                    };
+
+                    RecordDto {
+                        group: group.to_string(),
+                        record_type,
+                        name: name.clone(),
+                        value: value.clone(),
+                        status,
+                        ttl,
+                        priority,
+                    }
                 })
                 .collect()
         })
@@ -137,6 +170,10 @@ fn to_domain_dto(domain: &Domain) -> DomainDto {
         id: domain.id.to_string(),
         name: domain.name.clone(),
         status: domain_status_str(domain.status),
+        capabilities: CapabilitiesDto {
+            sending: capability_str(domain.capabilities.sending),
+            receiving: capability_str(domain.capabilities.receiving),
+        },
     }
 }
 
@@ -159,29 +196,244 @@ pub async fn list_domains(app: AppHandle<Wry>) -> Result<Vec<DomainDto>, String>
 }
 
 #[tauri::command]
-pub async fn create_domain(app: AppHandle<Wry>, name: String) -> Result<DomainDetailDto, String> {
-    let resend = client(&app).await?;
+pub async fn create_domain(
+    app: AppHandle<Wry>,
+    name: String,
+    region: Option<String>,
+    enable_receiving: Option<bool>,
+) -> Result<DomainDetailDto, String> {
+    let enable_receiving = enable_receiving.unwrap_or(false);
 
-    let domain = resend
-        .domains
-        .create(resend_rs::types::CreateDomainOptions::new(&name))
+    // Without inbound, the plain SDK path covers everything.
+    if !enable_receiving {
+        let resend = client(&app).await?;
+
+        let mut options = resend_rs::types::CreateDomainOptions::new(&name);
+        if let Some(r) = region.as_deref().and_then(region_to_enum) {
+            options = options.with_region(r);
+        }
+
+        let domain = resend
+            .domains
+            .create(options)
+            .await
+            .map_err(|e| permissions::map_resend_error("Failed to create domain", e))?;
+
+        return Ok(to_detail(&domain));
+    }
+
+    // With inbound ON we must send capabilities in the same request, and the
+    // SDK has no setter for them: raw POST it is (single request).
+    let credential = oauth::get_credential(&app).await?;
+
+    let http = reqwest::Client::builder()
+        .user_agent(concat!("OnlySend/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| format!("[ERROR] Failed to build http client: {}", e))?;
+
+    let mut body = serde_json::json!({
+        "name": name,
+        "capabilities": {
+            "sending": "enabled",
+            "receiving": "enabled",
+        }
+    });
+    if let Some(r) = &region {
+        body["region"] = serde_json::json!(r);
+    }
+
+    let response = http
+        .post("https://api.resend.com/domains")
+        .bearer_auth(&credential)
+        .json(&body)
+        .send()
         .await
-        .map_err(|e| permissions::map_resend_error("Failed to create domain", e))?;
+        .map_err(|e| format!("[ERROR] Domain creation failed: {e}"))?;
 
-    Ok(to_detail(&domain))
+    let status = response.status();
+    let payload: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("[ERROR] Invalid domain response: {e}"))?;
+
+    if !status.is_success() {
+        return Err(format!(
+            "[ERROR] Resend rejected the domain creation (HTTP {}): {}",
+            status,
+            payload.get("message").and_then(|v| v.as_str()).unwrap_or("")
+        ));
+    }
+
+    parse_raw_domain(payload)
+}
+
+fn region_to_enum(value: &str) -> Option<resend_rs::types::Region> {
+    use resend_rs::types::Region;
+    match value {
+        "us-east-1" => Some(Region::UsEast1),
+        "eu-west-1" => Some(Region::EuWest1),
+        "sa-east-1" => Some(Region::SaEast1),
+        "ap-northeast-1" => Some(Region::ApNorthEast1),
+        _ => None,
+    }
 }
 
 #[tauri::command]
 pub async fn get_domain(app: AppHandle<Wry>, domain_id: String) -> Result<DomainDetailDto, String> {
     let resend = client(&app).await?;
 
-    let domain = resend
-        .domains
-        .get(&domain_id)
-        .await
-        .map_err(|e| permissions::map_resend_error("Failed to fetch domain", e))?;
+    match resend.domains.get(&domain_id).await {
+        Ok(domain) => Ok(to_detail(&domain)),
+        Err(crate_err) => {
+            // Fallback: fetch raw and map leniently, so an unexpected field
+            // in the SDK's typed struct can't break the feature. The raw
+            // body is logged to diagnose the crate failure.
+            println!("[WARN] domains.get via SDK failed: {crate_err}");
+            get_domain_raw(&app, &domain_id).await
+        }
+    }
+}
 
-    Ok(to_detail(&domain))
+#[derive(Deserialize)]
+struct RawDomain {
+    id: String,
+    name: String,
+    status: serde_json::Value,
+    #[serde(default)]
+    capabilities: Option<serde_json::Value>,
+    #[serde(default)]
+    records: Option<serde_json::Value>,
+}
+
+fn json_str(value: &serde_json::Value) -> String {
+    value.as_str().unwrap_or_default().to_string()
+}
+
+async fn get_domain_raw(
+    app: &AppHandle<Wry>,
+    domain_id: &str,
+) -> Result<DomainDetailDto, String> {
+    let credential = oauth::get_credential(app).await?;
+
+    let http = reqwest::Client::builder()
+        .user_agent(concat!("OnlySend/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| format!("[ERROR] Failed to build http client: {}", e))?;
+
+    let response = http
+        .get(format!("https://api.resend.com/domains/{domain_id}"))
+        .bearer_auth(&credential)
+        .send()
+        .await
+        .map_err(|e| format!("[ERROR] Domain request failed: {e}"))?;
+
+    let status = response.status();
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("[ERROR] Invalid domain response: {e}"))?;
+
+    if !status.is_success() {
+        println!("[WARN] Raw domain body on failure: {body}");
+        return Err(format!(
+            "[ERROR] Resend rejected the domain lookup (HTTP {}): {}",
+            status,
+            body.get("message").and_then(|v| v.as_str()).unwrap_or("")
+        ));
+    }
+
+    let detail = parse_raw_domain(body)?;
+    println!(
+        "[INFO] Raw domain fallback used for {}: status={}",
+        detail.name, detail.status
+    );
+    Ok(detail)
+}
+
+/// Lenient parser for raw `/domains` payloads (create + get fallback).
+fn parse_raw_domain(body: serde_json::Value) -> Result<DomainDetailDto, String> {
+    let raw: RawDomain = serde_json::from_value(body)
+        .map_err(|e| format!("[ERROR] Unexpected domain payload: {e}"))?;
+
+    let records = raw
+        .records
+        .as_ref()
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .map(|rec| RecordDto {
+                    group: rec
+                        .get("record")
+                        .map(json_str)
+                        .unwrap_or_else(|| "UNKNOWN".into()),
+                    record_type: rec
+                        .get("type")
+                        .map(json_str)
+                        .unwrap_or_else(|| "UNKNOWN".into()),
+                    name: rec.get("name").map(json_str).unwrap_or_default(),
+                    value: rec.get("value").map(json_str).unwrap_or_default(),
+                    status: rec
+                        .get("status")
+                        .map(json_str)
+                        .unwrap_or_else(|| "not_started".into()),
+                    ttl: rec.get("ttl").map(json_str).unwrap_or_default(),
+                    priority: rec
+                        .get("priority")
+                        .and_then(|v| v.as_i64())
+                        .map(|v| v as i32),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let (sending, receiving) = raw
+        .capabilities
+        .as_ref()
+        .map(|c| {
+            (
+                c.get("sending")
+                    .map(json_str)
+                    .unwrap_or_else(|| "disabled".into()),
+                c.get("receiving")
+                    .map(json_str)
+                    .unwrap_or_else(|| "disabled".into()),
+            )
+        })
+        .unwrap_or_else(|| ("disabled".into(), "disabled".into()));
+
+    Ok(DomainDetailDto {
+        id: raw.id,
+        name: raw.name,
+        status: json_str(&raw.status),
+        capabilities: CapabilitiesDto {
+            sending,
+            receiving,
+        },
+        records,
+    })
+}
+
+/// Permanently deletes a domain from Resend.
+#[tauri::command]
+pub async fn delete_domain(
+    app: AppHandle<Wry>,
+    domain_id: String,
+) -> Result<bool, String> {
+    let resend = client(&app).await?;
+
+    let response = resend
+        .domains
+        .delete(&domain_id)
+        .await
+        .map_err(|e| permissions::map_resend_error("Failed to delete domain", e))?;
+
+    println!(
+        "[INFO] Domain {} deleted: {}",
+        response.id, response.deleted
+    );
+
+    Ok(response.deleted)
 }
 
 /// Enables or disables receiving (inbound) for a domain.

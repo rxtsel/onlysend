@@ -64,16 +64,26 @@ export async function probeFullAccess(credential: string): Promise<ProbeResult> 
  * DOMAINS
  * --------------------------------------------------------- */
 export interface DomainRecord {
+  /** Record group: "SPF" | "DKIM" | "Receiving MX" | "Tracking" | ... */
+  group: string;
   recordType: string;
   name: string;
   value: string;
   status: string;
+  ttl: string;
+  priority?: number | null;
+}
+
+export interface DomainCapabilities {
+  sending: string;
+  receiving: string;
 }
 
 export interface DomainSummary {
   id: string;
   name: string;
   status: string;
+  capabilities?: DomainCapabilities;
 }
 
 export interface DomainCapabilities {
@@ -90,8 +100,21 @@ export async function listDomains(): Promise<DomainSummary[]> {
   return await invoke<DomainSummary[]>("list_domains");
 }
 
-export async function createDomain(name: string): Promise<DomainDetail> {
-  return await invoke<DomainDetail>("create_domain", { name });
+export async function createDomain(options: {
+  name: string;
+  region?: string;
+  enableReceiving?: boolean;
+}): Promise<DomainDetail> {
+  const { name, region, enableReceiving } = options;
+  return await invoke<DomainDetail>("create_domain", {
+    name,
+    region,
+    enableReceiving,
+  });
+}
+
+export async function deleteDomain(domainId: string): Promise<boolean> {
+  return await invoke<boolean>("delete_domain", { domainId });
 }
 
 export async function getDomain(domainId: string): Promise<DomainDetail> {
