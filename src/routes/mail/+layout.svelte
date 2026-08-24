@@ -18,11 +18,22 @@
     const isSentRoot = $derived(pathname === "/mail/sent");
     const isSentDetail = $derived(pathname.startsWith("/mail/sent/"));
     const isComposer = $derived(pathname === "/mail/composer");
-
-    // Extract only the id when we are on /mail/sent/:id
-    const emailId = $derived(
-        isSentDetail ? pathname.slice("/mail/sent/".length) : "",
+    const isInboxRoot = $derived(pathname === "/mail/inbox");
+    const isInboxDetail = $derived(pathname.startsWith("/mail/inbox/"));
+    const isMailView = $derived(
+      isSentRoot || isSentDetail || isInboxRoot || isInboxDetail,
     );
+
+    // Extract only the id when we are on /mail/sent/:id or /mail/inbox/:id
+    const emailId = $derived(
+      isSentDetail
+        ? pathname.slice("/mail/sent/".length)
+        : isInboxDetail
+          ? pathname.slice("/mail/inbox/".length)
+          : "",
+    );
+    const listTitle = $derived(isInboxRoot || isInboxDetail ? "Inbox" : "All sent");
+    const listHref = $derived(isInboxRoot || isInboxDetail ? "/mail/inbox" : "/mail/sent");
 </script>
 
 <Sidebar.Provider style="--sidebar-width: 450px;" open={!isComposer}>
@@ -31,7 +42,7 @@
         <header
             class="bg-background z-10 sticky top-0 flex shrink-0 items-center gap-2 border-b px-4 py-4.5 max-h-[65px] h-[65px]"
         >
-            {#if isSentRoot || isSentDetail}
+            {#if isMailView}
                 <Sidebar.Trigger class="-ms-1" />
 
                 <Separator
@@ -42,18 +53,18 @@
                 <Breadcrumb.Root>
                     <Breadcrumb.List>
                         <Breadcrumb.Item class="hidden md:block">
-                            {#if isSentRoot}
-                                <!-- On /mail/sent show it as current page -->
-                                <Breadcrumb.Page>All sent</Breadcrumb.Page>
+                            {#if isInboxRoot || isSentRoot}
+                                <!-- On the list root show it as current page -->
+                                <Breadcrumb.Page>{listTitle}</Breadcrumb.Page>
                             {:else}
-                                <!-- On /mail/sent/:id use it as link -->
-                                <Breadcrumb.Link href="/mail/sent"
-                                    >All sent</Breadcrumb.Link
+                                <!-- On detail use it as link -->
+                                <Breadcrumb.Link href={listHref}
+                                    >{listTitle}</Breadcrumb.Link
                                 >
                             {/if}
                         </Breadcrumb.Item>
 
-                        {#if !isSentRoot && emailId}
+                        {#if emailId}
                             <Breadcrumb.Separator class="hidden md:block" />
                             <Breadcrumb.Item>
                                 <!-- Only show the id, nothing else -->

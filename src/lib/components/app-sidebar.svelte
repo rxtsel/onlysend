@@ -1,4 +1,5 @@
 <script lang="ts" module>
+    import InboxIcon from "@lucide/svelte/icons/inbox";
     import SendIcon from "@lucide/svelte/icons/send";
     import PlusIcon from "@lucide/svelte/icons/plus";
     import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
@@ -15,111 +16,230 @@
     import { page } from "$app/state";
     import { onMount } from "svelte";
     import { toast } from "svelte-sonner";
+    import { Loader } from "@lucide/svelte";
+    import type { InboundEmail } from "../commom/inbound";
     import type { SentEmail } from "../types";
     import { formatEmailDate, listSentEmails } from "../commom/sent";
-    import { Loader } from "@lucide/svelte";
+    import {
+        getReadInboundIds,
+        listInboundEmails,
+        markInboundRead,
+    } from "../commom/inbound";
+    import { getOnboardingState } from "../commom/store";
+    import { createEmailList } from "../commom/email-list.svelte";
+    import { inboundStatus } from "../commom/inbound-status.svelte";
+
+    // Live update when receiving becomes verified anywhere in the app.
+    $effect(() => {
+      if (inboundStatus.ready && !inboxEnabled) {
+        inboxEnabled = true;
+      }
+    });
 
     let {
         ref = $bindable(null),
         ...restProps
     }: ComponentProps<typeof Sidebar.Root> = $props();
 
+    /* ---------------------------------------------------------
+     * MODE: which list the sidebar shows, driven by the route
+     * --------------------------------------------------------- */
+    type Mode = "inbox" | "sent";
+
+    const mode = $derived(
+        page.url.pathname.startsWith("/mail/inbox") ? ("inbox" as const) : ("sent" as const),
+    );
+
     const data = {
         navMain: [
-            {
-                title: "All Sent",
-                url: "/mail/sent",
-                icon: SendIcon,
-                isActive: true,
-            },
+            { title: "Inbox", url: "/mail/inbox", icon: InboxIcon, mode: "inbox" as const },
+            { title: "All Sent", url: "/mail/sent", icon: SendIcon, mode: "sent" as const },
         ],
     };
 
-    let activeItem = $state(data.navMain[0]);
-    let mails = $state<SentEmail[]>([]);
-    let isLoadingEmails = $state(true);
-    let isRefreshing = $state(false);
-    let isLoadingMore = $state(false);
-    let hasMore = $state(true);
-    let currentPage = $state(0);
+    const activeItem = $derived(
+        data.navMain.find((item) => item.mode === mode) ?? data.navMain[0],
+    );
 
     const sidebar = useSidebar();
     const PAGE_SIZE = 16;
+    const POLL_INTERVAL_MS = 60_000;
 
-    async function loadSentEmails(append = false) {
-        isLoadingEmails = true;
-        try {
-            if (append) {
-                isLoadingMore = true;
-            } else {
-                isRefreshing = true;
-                currentPage = 0;
-            }
+    /* ---------------------------------------------------------
+     * INBOX VISIBILITY (persisted flag, updated by observation
+     * points in the wizard / inbox setup flow)
+     * --------------------------------------------------------- */
+    let inboxEnabled = $state(false);
 
-            const page = append ? currentPage + 1 : 0;
-            const offset = page * PAGE_SIZE;
+    /* ---------------------------------------------------------
+     * DOMAIN FILTER (unified views, client-side filtering)
+     * --------------------------------------------------------- */
+    let domainFilter = $state<"all" | string>("all");
 
-            console.log(
-                `Loading emails - Page: ${page}, Offset: ${offset}, Append: ${append}`,
-            );
-
-            const newMails = await listSentEmails(PAGE_SIZE, offset);
-
-            console.log(`Received ${newMails.length} emails`);
-
-            if (append) {
-                mails = [...mails, ...newMails];
-                currentPage = page;
-            } else {
-                mails = newMails;
-                currentPage = 0;
-            }
-
-            // Check if there are more emails
-            hasMore = newMails.length === PAGE_SIZE;
-        } catch (error) {
-            console.error("Error loading sent emails:", error);
-            toast.error("Failed to load sent emails");
-        } finally {
-            isRefreshing = false;
-            isLoadingMore = false;
-            isLoadingEmails = false;
-        }
+    /** The two list models differ only in their date field naming. */
+    function dateOf(mail: InboundEmail | SentEmail): string {
+        return "createdAt" in mail ? mail.createdAt : mail.created_at;
     }
+
+    function domainOf(mail: InboundEmail | SentEmail): string {
+        if ("createdAt" in mail) return mail.domain;
+        return mail.from.split("@")[1]?.toLowerCase() ?? "";
+    }
+    const sentList = createEmailList<SentEmail>((limit, offset) =>
+        listSentEmails(limit, offset),
+    );
+
+    const inboxList = createEmailList<InboundEmail>((limit, offset) =>
+        listInboundEmails(limit, offset),
+    );
+
+    const activeList = $derived(mode === "inbox" ? inboxList : sentList);
+
+    /* ---------------------------------------------------------
+     * DOMAIN FILTER (unified views)
+     * --------------------------------------------------------- */
+    const activeDomains = $derived.by(() => {
+        const set = new Set<string>();
+        for (const mail of activeList.items as (InboundEmail | SentEmail)[]) {
+            const d = domainOf(mail);
+            if (d) set.add(d);
+        }
+        return [...set].sort();
+    });
+
+    const visibleItems = $derived(
+        domainFilter === "all"
+            ? (activeList.items as (InboundEmail | SentEmail)[])
+            : (activeList.items as (InboundEmail | SentEmail)[]).filter(
+                  (mail) => domainOf(mail) === domainFilter,
+              ),
+    );
+
+    // Load each list once when its mode becomes active. The inbox list
+    // only fetches once receiving is ready (the root page owns that
+    // state); before that it stays empty and error-free.
+    let lastLoadedMode = $state("");
+
+    $effect(() => {
+      if (mode !== lastLoadedMode) {
+        lastLoadedMode = mode;
+        domainFilter = "all";
+
+        if (mode === "inbox" && !inboundStatus.ready) {
+          inboxList.markLoaded();
+          return;
+        }
+
+        activeList.refreshSilent().catch((err) => {
+          console.error(`Error loading ${mode} emails:`, err);
+          toast.error("Failed to load emails");
+          activeList.markLoaded();
+        });
+      }
+    });
+
+    // Re-fetch the inbox as soon as receiving becomes ready.
+    $effect(() => {
+      if (mode === "inbox" && inboundStatus.ready && lastLoadedMode === "inbox") {
+        const alreadyFetched = inboxList.items.length > 0;
+        if (!alreadyFetched) {
+          inboxList.refreshSilent().catch(console.error);
+        }
+      }
+    });
 
     async function handleRefresh() {
-        await loadSentEmails(false);
-        toast.success("Emails refreshed");
-    }
+        if (mode === "inbox" && !inboundStatus.ready) {
+            toast.info("Enable receiving first to get email into OnlySend.");
+            return;
+        }
 
-    async function handleLoadMore() {
-        if (!isLoadingMore && hasMore) {
-            await loadSentEmails(true);
+        try {
+            await activeList.refresh();
+            toast.success("Emails refreshed");
+        } catch {
+            toast.error("Failed to load emails");
         }
     }
 
-    function handleEmailClick(mailId: string) {
-        goto(`/mail/sent/${mailId}`);
+    function handleLoadMore() {
+        activeList.loadMore();
     }
 
-    // Export function to be called from composer after sending
-    export function refreshEmails() {
-        return loadSentEmails(false);
+    /* ---------------------------------------------------------
+     * INBOX READ MARKERS
+     * --------------------------------------------------------- */
+    let readIds = $state<Set<string>>(new Set());
+
+    onMount(async () => {
+        try {
+            const [ids, state] = await Promise.all([
+                getReadInboundIds(),
+                getOnboardingState(),
+            ]);
+            readIds = new Set(ids);
+            inboxEnabled = state.inboxEnabled;
+        } catch (err) {
+            console.error("Error loading inbox markers:", err);
+        }
+    });
+
+    // Settings can flip this flag (Set up inbox flow); pick it up live.
+    window.addEventListener("inbox-enabled-changed", ((e: CustomEvent<boolean>) => {
+        inboxEnabled = e.detail;
+    }) as EventListener);
+
+    /** Nav items, with Inbox gated behind the receiving flag. */
+    const navItems = $derived(
+        data.navMain.filter((item) => item.mode !== "inbox" || inboxEnabled),
+    );
+
+    async function handleEmailClick(mailId: string) {
+        if (mode === "inbox" && !readIds.has(mailId)) {
+            readIds = new Set([...readIds, mailId]);
+            markInboundRead(mailId).catch(console.error);
+        }
+        goto(`/mail/${mode}/${mailId}`);
     }
 
+    /* ---------------------------------------------------------
+     * INBOX POLLING (only while the inbox is visible)
+     * --------------------------------------------------------- */
     onMount(() => {
-        loadSentEmails(false);
+        const interval = setInterval(async () => {
+            if (
+                mode !== "inbox" ||
+                document.hidden ||
+                !inboundStatus.ready ||
+                !inboxList.items.length
+            )
+                return;
 
-        // Listen for email sent events
-        const handleEmailSent = () => {
-            loadSentEmails(false);
-        };
+            try {
+                const previousNewest = inboxList.items[0]?.id;
+                await inboxList.refreshSilent();
 
-        window.addEventListener("email-sent", handleEmailSent);
+                const items = inboxList.items;
+                const oldIndex = previousNewest
+                    ? items.findIndex((m) => m.id === previousNewest)
+                    : -1;
 
-        return () => {
-            window.removeEventListener("email-sent", handleEmailSent);
-        };
+                const newCount =
+                    oldIndex === -1
+                        ? Math.max(items.length - 1, 0)
+                        : oldIndex;
+
+                if (newCount > 0) {
+                    toast.success(
+                        `${newCount} new email${newCount > 1 ? "s" : ""}`,
+                    );
+                }
+            } catch (err) {
+                console.error("Inbox polling failed:", err);
+            }
+        }, POLL_INTERVAL_MS);
+
+        return () => clearInterval(interval);
     });
 </script>
 
@@ -159,14 +279,13 @@
             <Sidebar.Group>
                 <Sidebar.GroupContent class="px-1.5 md:px-0">
                     <Sidebar.Menu>
-                        {#each data.navMain as item (item.title)}
+                        {#each navItems as item (item.title)}
                             <Sidebar.MenuItem>
                                 <Sidebar.MenuButton
                                     tooltipContentProps={{
                                         hidden: false,
                                     }}
                                     onclick={() => {
-                                        activeItem = item;
                                         sidebar.setOpen(true);
                                         goto(item.url);
                                     }}
@@ -202,25 +321,45 @@
                     variant="ghost"
                     size="icon-sm"
                     onclick={handleRefresh}
-                    disabled={isRefreshing}
+                    disabled={activeList.isRefreshing}
                     title="Refresh emails"
                 >
-                    <RefreshCwIcon class={isRefreshing ? "animate-spin" : ""} />
+                    <RefreshCwIcon
+                        class={activeList.isRefreshing ? "animate-spin" : ""}
+                    />
                 </Button>
             </div>
+
+            {#if activeDomains.length > 1}
+                <!-- DOMAIN FILTER CHIPS -->
+                <div class="flex flex-wrap gap-1.5">
+                    <button
+                        onclick={() => (domainFilter = "all")}
+                        class="text-xs px-2 py-0.5 rounded-full border transition-colors {domainFilter === 'all'
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'hover:bg-sidebar-accent'}"
+                    >
+                        All
+                    </button>
+                    {#each activeDomains as d (d)}
+                        <button
+                            onclick={() => (domainFilter = d)}
+                            class="text-xs px-2 py-0.5 rounded-full border transition-colors {domainFilter === d
+                                ? 'bg-primary text-primary-foreground border-primary'
+                                : 'hover:bg-sidebar-accent'}"
+                        >
+                            {d}
+                        </button>
+                    {/each}
+                </div>
+            {/if}
         </Sidebar.Header>
         <Sidebar.Content
             class="overflow-y-auto overflow-x-hidden max-w-[400px]"
         >
             <Sidebar.Group class="px-0 pt-0">
                 <Sidebar.GroupContent>
-                    {#if mails.length === 0 && !isRefreshing}
-                        <div
-                            class="p-8 text-center text-sm text-muted-foreground"
-                        >
-                            No sent emails yet
-                        </div>
-                    {:else if isLoadingEmails}
+                    {#if activeList.isLoading}
                         {@const skeletons = Array.from({ length: PAGE_SIZE })}
                         {#each skeletons}
                             <div
@@ -232,9 +371,22 @@
                                 <div class="h-3 bg-muted w-1/2 rounded"></div>
                             </div>
                         {/each}
+                    {:else if activeList.items.length === 0 && !activeList.isRefreshing}
+                        <div
+                            class="p-8 text-center text-sm text-muted-foreground"
+                        >
+                            {#if mode === "inbox"}
+                                No received emails yet
+                            {:else}
+                                No sent emails yet
+                            {/if}
+                        </div>
                     {:else}
-                        {#each mails as mail (mail.id)}
+                        {#each visibleItems as mail (mail.id)}
                             {@const isActive = page.params.id === mail.id}
+                            {@const isUnread =
+                                mode === "inbox" && !readIds.has(mail.id)}
+                            {@const mailDomain = domainOf(mail)}
                             <button
                                 onclick={() => handleEmailClick(mail.id)}
                                 class="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground flex w-full flex-col items-start gap-2 whitespace-nowrap border-b p-4 text-sm leading-tight last:border-b-0 text-left {isActive
@@ -242,27 +394,58 @@
                                     : ''}"
                             >
                                 <div class="flex w-full items-center gap-2">
-                                    <span class="font-semibold truncate"
-                                        >{mail.to[0]}</span
-                                    >
+                                    {#if mode === "inbox"}
+                                        <span
+                                            class="font-semibold truncate {isUnread
+                                                ? ''
+                                                : 'font-normal text-muted-foreground'}"
+                                        >
+                                            {mail.from}
+                                        </span>
+                                    {:else}
+                                        <span class="font-semibold truncate"
+                                            >{mail.to[0]}</span
+                                        >
+                                    {/if}
+
+                                    {#if isUnread}
+                                        <span
+                                            class="size-2 rounded-full bg-primary shrink-0"
+                                            title="Unread"
+                                        ></span>
+                                    {/if}
+
                                     <span class="ms-auto text-xs shrink-0">
-                                        {formatEmailDate(mail.created_at)}
+                                        {formatEmailDate(dateOf(mail))}
                                     </span>
                                 </div>
-                                <span
-                                    class="text-muted-foreground truncate w-full"
-                                    >{mail.subject}</span
+                                <div
+                                    class="flex w-full items-center gap-1.5 min-w-0"
                                 >
+                                    <span
+                                        class="truncate flex-1 {isUnread
+                                            ? 'text-foreground'
+                                            : 'text-muted-foreground'}"
+                                        >{mail.subject}</span
+                                    >
+                                    {#if mailDomain && activeDomains.length > 1}
+                                        <span
+                                            class="text-[10px] shrink-0 px-1.5 py-px rounded bg-muted text-muted-foreground"
+                                        >
+                                            {mailDomain}
+                                        </span>
+                                    {/if}
+                                </div>
                             </button>
                         {/each}
 
-                        {#if hasMore}
+                        {#if activeList.hasMore}
                             <button
                                 onclick={handleLoadMore}
-                                disabled={isLoadingMore}
+                                disabled={activeList.isLoadingMore}
                                 class="w-full p-4 text-sm text-center text-muted-foreground hover:bg-sidebar-accent transition-colors"
                             >
-                                {#if isLoadingMore}
+                                {#if activeList.isLoadingMore}
                                     <Loader
                                         class="size-4 animate-spin mx-auto"
                                     />

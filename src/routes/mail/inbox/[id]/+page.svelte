@@ -1,0 +1,152 @@
+<script lang="ts">
+  import { page } from "$app/state";
+  import { onMount } from "svelte";
+
+  import { Button } from "@/lib/components/ui/button/index.js";
+  import { goto } from "$app/navigation";
+  import {
+    getInboundEmail,
+    markInboundRead,
+    type InboundEmailDetail,
+  } from "@/lib/commom/inbound";
+  import { formatEmailDate } from "@/lib/commom/sent";
+  import { Paperclip } from "@lucide/svelte";
+  import { ArrowLeft, Loader } from "@lucide/svelte";
+
+  let email = $state<InboundEmailDetail | null>(null);
+  let isLoading = $state(true);
+  let error = $state<string | null>(null);
+
+  async function loadEmail() {
+    const emailId = page.params.id;
+    if (!emailId) {
+      error = "No email ID provided";
+      isLoading = false;
+      return;
+    }
+
+    try {
+      isLoading = true;
+      error = null;
+      email = await getInboundEmail(emailId);
+
+      // Opening an email marks it as read.
+      markInboundRead(email.id).catch(console.error);
+    } catch (err) {
+      console.error("Error loading email:", err);
+      error = "Failed to load email";
+    } finally {
+      isLoading = false;
+    }
+  }
+
+  function formatSize(bytes: number | null): string {
+    if (bytes == null) return "";
+    const units = ["B", "KB", "MB", "GB"];
+    let size = bytes;
+    let unit = 0;
+    while (size >= 1024 && unit < units.length - 1) {
+      size /= 1024;
+      unit += 1;
+    }
+    return `${size.toFixed(size >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+  }
+
+  onMount(() => {
+    loadEmail();
+  });
+
+  // Reload when route params change
+  $effect(() => {
+    if (page.params.id) {
+      loadEmail();
+    }
+  });
+</script>
+
+<div class="flex h-full flex-col">
+  {#if isLoading}
+    <div class="min-h-full w-full flex items-center justify-center">
+      <div class="text-muted-foreground">
+        <Loader class="animate-spin" />
+      </div>
+    </div>
+  {:else if error || !email}
+    <div class="flex flex-col items-center justify-center h-full gap-4">
+      <div class="text-muted-foreground">{error || "Email not found"}</div>
+      <Button variant="outline" onclick={() => goto("/mail/inbox")}>
+        <ArrowLeft class="mr-2 h-4 w-4" />
+        Back to Inbox
+      </Button>
+    </div>
+  {:else}
+    <!-- Email Header -->
+    <div class="border-b">
+      <div class="pb-6">
+        <h1 class="text-2xl font-semibold mb-2">{email.subject}</h1>
+
+        <div class="space-y-2 text-sm">
+          <div class="flex items-start gap-2">
+            <span class="text-muted-foreground font-medium min-w-10">From:</span>
+            <span>{email.from}</span>
+          </div>
+
+          <div class="flex items-start gap-2">
+            <span class="text-muted-foreground font-medium min-w-10">To:</span>
+            <div class="flex flex-wrap gap-1">
+              {#each email.to as recipient}
+                <span class="bg-muted px-2 py-0.5 rounded">{recipient}</span>
+              {/each}
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <span class="text-muted-foreground font-medium min-w-12">Date:</span>
+            <span>{formatEmailDate(email.createdAt)}</span>
+          </div>
+
+          {#if email.attachments.length > 0}
+            <div class="flex items-start gap-2">
+              <span class="text-muted-foreground font-medium min-w-12"
+                >Files:</span
+              >
+              <div class="flex flex-wrap gap-1.5">
+                {#each email.attachments as att (att.id)}
+                  <span
+                    class="inline-flex items-center gap-1.5 border px-2 py-0.5 rounded text-xs"
+                    title={`${att.contentType}${att.size ? ` - ${formatSize(att.size)}` : ""}`}
+                  >
+                    <Paperclip class="size-3" />
+                    {att.filename ?? "attachment"}
+                  </span>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </div>
+      </div>
+    </div>
+
+    <!-- Email Content -->
+    <div class="flex-1 overflow-y-auto bg-muted/30">
+      {#if email.html}
+        <!-- Fully sandboxed iframe: no scripts, no forms, no navigation,
+             no same-origin access. The HTML was also sanitized in Rust. -->
+        <iframe
+          title="Email content"
+          sandbox=""
+          class="w-full h-full border-0 bg-white"
+          srcdoc={email.html}
+        ></iframe>
+      {:else if email.text}
+        <pre class="whitespace-pre-wrap text-sm p-6 font-sans"
+          >{email.text}</pre
+        >
+      {:else}
+        <div class="text-muted-foreground text-sm p-6">
+          No content available
+        </div>
+      {/if}
+    </div>
+  {/if}
+</div>
