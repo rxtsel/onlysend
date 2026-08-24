@@ -3,95 +3,201 @@
   import { Button, buttonVariants } from "@/lib/components/ui/button";
   import * as Dialog from "@/lib/components/ui/dialog";
   import * as Sidebar from "@/lib/components/ui/sidebar";
-  import { Mail, User, Settings, SquarePen, Trash, Plug } from "@lucide/svelte";
+  import {
+    Mail,
+    Settings,
+    SquarePen,
+    Trash,
+    Plug,
+    Star,
+  } from "@lucide/svelte";
   import * as Field from "@/lib/components/ui/field";
   import { Input } from "@/lib/components/ui/input";
-  import type { FromEmail, Profile } from "../types";
+  import * as InputGroup from "@/lib/components/ui/input-group";
+  import * as Item from "@/lib/components/ui/item";
+  import * as Empty from "@/lib/components/ui/empty";
+  import EmailPreview from "@/lib/components/setup/email-preview.svelte";
+  import type { FromEmail } from "../types";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
   import { onMount } from "svelte";
   import { listen } from "@tauri-apps/api/event";
+  import { stripAt } from "../commom/email";
   import {
     createFromEmail,
     updateFromEmail,
     deleteFromEmail,
-    formatFromEmail,
     listFromEmails,
   } from "../commom/from-emails";
-  import { getProfile, saveProfile } from "../commom/profile";
   import { toast } from "svelte-sonner";
   import type { ZodError } from "zod/v4";
-  import { profileSchema } from "../schemas/profile.schema";
   import { emailOptionSchema } from "../schemas/email-option.schema";
   import {
     connectResend,
     disconnectResend,
+    getActiveDomain,
     getConnectionStatus,
     type ConnectionStatus,
   } from "../commom/store";
 
   const data = {
     nav: [
-      { name: "Profile", icon: User },
-      { name: "Email sender options", icon: Mail },
+      { name: "Sender options", icon: Mail },
       { name: "Connection", icon: Plug },
     ],
   };
 
   let open = $state(false);
-  let activeItem = $state("Profile");
-  let profileErrors = $state<Record<string, string>>({});
+  let activeItem = $state("Sender options");
   let emailErrors = $state<Record<string, string>>({});
   let isSaving = $state(false);
   let isDeleteDialogOpen = $state(false);
 
-  // From Email form state
-  let fromEmailForm = $state({
-    id: "",
-    label: "",
-    address: "",
-    isDefault: false,
-  });
-  let isEditingFromEmail = $state(false);
+  // Active sender identity
+  let activeDomain = $state<string | null>(null);
 
-  let fromEmails = $state<FromEmail[]>([]);
-  let profile = $state<Profile>({
-    firstName: "",
-    lastName: "",
-    username: "",
-    domain: "",
-  });
+  // Connection state
   let connection = $state<ConnectionStatus>({ method: null });
   let isConnecting = $state(false);
   let isDisconnecting = $state(false);
 
+  // From Email form state
+  let emailLabel = $state("");
+  let emailAddress = $state("");
+  let isEditingFromEmail = $state(false);
+  let editingId = $state("");
+
+  let fromEmails = $state<FromEmail[]>([]);
+
   function handleZodError(error: ZodError): Record<string, string> {
     const errors: Record<string, string> = {};
     error.issues.forEach((err) => {
-      const path = err.path.join(".");
-      errors[path] = err.message;
+      errors[err.path.join(".")] = err.message;
     });
     return errors;
   }
 
   async function loadData() {
     try {
-      const [profileData, fromEmailsData, connectionData] = await Promise.all([
-        getProfile(),
+      const [emails, domain, status] = await Promise.all([
         listFromEmails(),
+        getActiveDomain(),
         getConnectionStatus(),
       ]);
-      if (profileData) {
-        profile = profileData;
-      }
-      fromEmails = fromEmailsData;
-      connection = connectionData;
+      fromEmails = emails;
+      activeDomain = domain;
+      connection = status;
     } catch (error) {
       console.error("Error loading data:", error);
       toast.error("Failed to load data");
     }
   }
 
-  // Connection handlers
+  /* ---------------------------------------------------------
+   * FROM EMAILS
+   * --------------------------------------------------------- */
+  function resetForm() {
+    emailLabel = "";
+    emailAddress = "";
+    isEditingFromEmail = false;
+    editingId = "";
+    emailErrors = {};
+  }
+
+  function startEdit(email: FromEmail) {
+    isEditingFromEmail = true;
+    editingId = email.id;
+    emailLabel = email.label;
+
+    // Only the local part goes into the input; the domain is the addon.
+    emailAddress = activeDomain && email.address.endsWith(`@${activeDomain}`)
+      ? email.address.slice(0, -(`@${activeDomain}`).length)
+      : email.address.split("@")[0] ?? "";
+
+    emailErrors = {};
+  }
+
+  async function handleAddOrUpdate(e: Event) {
+    e.preventDefault();
+    emailErrors = {};
+    isSaving = true;
+
+    try {
+      const { local, typedDomain } = stripAt(emailAddress.trim());
+      if (local) emailAddress = local;
+
+      if (typedDomain && activeDomain && typedDomain !== activeDomain.toLowerCase()) {
+        toast.info(
+          `Using your domain ${activeDomain} instead of ${typedDomain}.`,
+        );
+      }
+
+      const fullAddress = `${local}@${activeDomain}`;
+      const validated = emailOptionSchema.parse({
+        label: emailLabel,
+        address: fullAddress,
+      });
+
+      if (isEditingFromEmail && editingId) {
+        await updateFromEmail({
+          id: editingId,
+          label: validated.label,
+          address: validated.address,
+          isDefault: isDefault(editingId),
+        });
+        toast.success("Email option updated");
+      } else {
+        await createFromEmail({
+          label: validated.label,
+          address: validated.address,
+          isDefault: fromEmails.length === 0,
+        });
+        toast.success("Email option created");
+      }
+
+      await loadData();
+      resetForm();
+    } catch (error) {
+      if (error instanceof Error && error.name === "ZodError") {
+        emailErrors = handleZodError(error as ZodError);
+      } else {
+        console.error("Error saving from email:", error);
+        toast.error("Failed to save email option");
+      }
+    } finally {
+      isSaving = false;
+    }
+  }
+
+  function isDefault(id: string): boolean {
+    return fromEmails.find((e) => e.id === id)?.isDefault ?? false;
+  }
+
+  async function setDefault(id: string) {
+    try {
+      await updateFromEmail({ id, isDefault: true });
+      toast.success("Default sender updated");
+      await loadData();
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to update default");
+    }
+  }
+
+  async function handleDelete(id: string) {
+    try {
+      await deleteFromEmail(id);
+      toast.success("Email option deleted");
+      if (editingId === id) resetForm();
+      await loadData();
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to delete email option");
+    }
+  }
+
+  /* ---------------------------------------------------------
+   * CONNECTION
+   * --------------------------------------------------------- */
   async function handleConnectResend(e: Event) {
     e.preventDefault();
     try {
@@ -101,6 +207,19 @@
       isConnecting = false;
       console.error("Error connecting with Resend:", error);
       toast.error("Failed to start the connection");
+    }
+  }
+
+  async function refreshConnection() {
+    try {
+      connection = await getConnectionStatus();
+      isConnecting = false;
+
+      if (connection.method === "oauth") {
+        toast.success("Connected with Resend");
+      }
+    } catch (error) {
+      console.error("Error refreshing connection status:", error);
     }
   }
 
@@ -119,129 +238,12 @@
     }
   }
 
-  async function refreshConnection() {
-    try {
-      connection = await getConnectionStatus();
-      isConnecting = false;
-
-      if (connection.method === "oauth") {
-        toast.success("Connected with Resend");
-      }
-    } catch (error) {
-      console.error("Error refreshing connection status:", error);
-    }
-  }
-
-  // Profile handlers
-  async function handleSaveProfile(e: Event) {
-    e.preventDefault();
-    profileErrors = {};
-    isSaving = true;
-
-    try {
-      // Validate with Zod
-      const validatedData = profileSchema.parse(profile);
-
-      await saveProfile(validatedData);
-      toast.success("Profile saved successfully");
-    } catch (error) {
-      if (error instanceof Error && error.name === "ZodError") {
-        profileErrors = handleZodError(error as ZodError);
-      } else {
-        console.error("Error saving profile:", error);
-        toast.error("Failed to save profile");
-      }
-    } finally {
-      isSaving = false;
-    }
-  }
-
-  // From Email handlers
-  function resetFromEmailForm() {
-    fromEmailForm = {
-      id: "",
-      label: "",
-      address: "",
-      isDefault: false,
-    };
-    isEditingFromEmail = false;
-    emailErrors = {};
-  }
-
-  async function handleSubmitFromEmail(e: Event) {
-    e.preventDefault();
-    emailErrors = {};
-    isSaving = true;
-
-    try {
-      // Validate with Zod
-      const validatedData = emailOptionSchema.parse({
-        label: fromEmailForm.label,
-        address: fromEmailForm.address,
-      });
-
-      if (isEditingFromEmail && fromEmailForm.id) {
-        // Update existing
-        await updateFromEmail({
-          id: fromEmailForm.id,
-          label: validatedData.label,
-          address: validatedData.address,
-          isDefault: fromEmailForm.isDefault,
-        });
-        toast.success("Email option updated successfully");
-      } else {
-        // Create new
-        await createFromEmail({
-          label: validatedData.label,
-          address: validatedData.address,
-          isDefault: fromEmailForm.isDefault,
-        });
-        toast.success("Email option created successfully");
-      }
-
-      // Reload data and reset form
-      await loadData();
-      resetFromEmailForm();
-    } catch (error) {
-      if (error instanceof Error && error.name === "ZodError") {
-        emailErrors = handleZodError(error as ZodError);
-      } else {
-        console.error("Error saving from email:", error);
-        toast.error("Failed to save email option");
-      }
-    } finally {
-      isSaving = false;
-    }
-  }
-
-  function handleEditFromEmail(email: FromEmail) {
-    fromEmailForm = {
-      id: email.id,
-      label: email.label,
-      address: email.address,
-      isDefault: email.isDefault,
-    };
-    isEditingFromEmail = true;
-    emailErrors = {};
-  }
-
-  async function handleDeleteFromEmail(id: string) {
-    try {
-      await deleteFromEmail(id);
-      toast.success("Email option deleted successfully");
-      await loadData();
-    } catch (error) {
-      console.error("Error deleting from email:", error);
-      toast.error("Failed to delete email option");
-    }
-  }
-
   onMount(() => {
     let unlisten: (() => void) | undefined;
 
     loadData();
 
-    listen<{ success: boolean; error?: string }>(
+    listen<{ success: boolean; warning?: string; error?: string }>(
       "oauth://done",
       (event) => {
         if (event.payload.success) {
@@ -318,10 +320,8 @@
           </div>
         </header>
         <div class="flex flex-1 flex-col gap-4 overflow-y-auto p-4 pt-0 mr-7">
-          {#if activeItem === "Profile"}
-            {@render profileComponent()}
-          {:else if activeItem === "Email sender options"}
-            {@render emailSenderOptions()}
+          {#if activeItem === "Sender options"}
+            {@render senderOptions()}
           {:else if activeItem === "Connection"}
             {@render connectionSection()}
           {/if}
@@ -331,211 +331,143 @@
   </Dialog.Content>
 </Dialog.Root>
 
-{#snippet profileComponent()}
-  <form class="w-full" onsubmit={handleSaveProfile}>
+{#snippet senderOptions()}
+  <form class="w-full" onsubmit={handleAddOrUpdate}>
     <Field.Group>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-2">
-        <Field.Field>
-          <Field.Label for="firstName">First Name</Field.Label>
-          <Input
-            id="firstName"
-            name="firstName"
-            bind:value={profile.firstName}
-            placeholder="John"
-            required
-            aria-invalid={!!profileErrors.firstName}
-          />
-          {#if profileErrors.firstName}
-            <Field.Error>{profileErrors.firstName}</Field.Error>
-          {/if}
-        </Field.Field>
-
-        <Field.Field>
-          <Field.Label for="lastName">Last Name</Field.Label>
-          <Input
-            id="lastName"
-            name="lastName"
-            bind:value={profile.lastName}
-            placeholder="Doe"
-            required
-            aria-invalid={!!profileErrors.lastName}
-          />
-          {#if profileErrors.lastName}
-            <Field.Error>{profileErrors.lastName}</Field.Error>
-          {/if}
-        </Field.Field>
-      </div>
-
-      <Field.Field>
-        <Field.Label for="username">Username</Field.Label>
-        <Input
-          id="username"
-          name="username"
-          bind:value={profile.username}
-          placeholder="john_doe"
-          required
-          aria-invalid={!!profileErrors.username}
-        />
-        {#if profileErrors.username}
-          <Field.Error>{profileErrors.username}</Field.Error>
-        {/if}
-        <Field.Description>
-          Only letters, numbers, and underscores (3-30 characters)
-        </Field.Description>
-      </Field.Field>
-
-      <Field.Field>
-        <Field.Label for="domain">Domain</Field.Label>
-        <Input
-          id="domain"
-          name="domain"
-          bind:value={profile.domain}
-          placeholder="example.com"
-          required
-          aria-invalid={!!profileErrors.domain}
-        />
-        {#if profileErrors.domain}
-          <Field.Error>{profileErrors.domain}</Field.Error>
-        {/if}
-        <Field.Description>
-          Without protocol (e.g., example.com)
-        </Field.Description>
-      </Field.Field>
-
-      <Field.Field>
-        <Button type="submit" disabled={isSaving} class="w-full">
-          {isSaving ? "Saving..." : "Save Changes"}
-        </Button>
-      </Field.Field>
-    </Field.Group>
-  </form>
-{/snippet}
-
-{#snippet emailSenderOptions()}
-  <form class="w-full" onsubmit={handleSubmitFromEmail}>
-    <Field.Group>
-      <div class="flex justify-between items-center mb-2">
+      <div class="flex items-center justify-between mb-2">
         <h3 class="text-sm font-medium">
           {isEditingFromEmail ? "Edit Email Option" : "Add New Email Option"}
         </h3>
-        {#if isEditingFromEmail}
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onclick={resetFromEmailForm}
+        {#if activeDomain}
+          <span
+            class="font-mono text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground"
+            title="Active domain"
           >
-            Cancel Edit
-          </Button>
+            @{activeDomain}
+          </span>
         {/if}
       </div>
 
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-2">
-        <Field.Field>
-          <Field.Label for="label">Label</Field.Label>
-          <Input
-            id="label"
-            name="label"
-            bind:value={fromEmailForm.label}
-            placeholder="Contact"
-            required
-            aria-invalid={!!emailErrors.label}
-          />
-          {#if emailErrors.label}
-            <Field.Error>{emailErrors.label}</Field.Error>
-          {/if}
-        </Field.Field>
+      <Field.Field>
+        <Field.Label for="label">Your Name</Field.Label>
+        <Input
+          id="label"
+          name="label"
+          bind:value={emailLabel}
+          placeholder="Your Name"
+          required
+          aria-invalid={!!emailErrors.label}
+        />
+        {#if emailErrors.label}
+          <Field.Error>{emailErrors.label}</Field.Error>
+        {/if}
+      </Field.Field>
 
-        <Field.Field>
-          <Field.Label for="address">Address</Field.Label>
-          <Input
-            id="address"
-            name="address"
-            type="email"
-            bind:value={fromEmailForm.address}
-            placeholder="contact@domain.com"
-            required
+      <Field.Field>
+        <Field.Label for="address">Address</Field.Label>
+        <InputGroup.Root>
+          <InputGroup.Input
+            placeholder="hello"
+            bind:value={emailAddress}
             aria-invalid={!!emailErrors.address}
           />
-          {#if emailErrors.address}
-            <Field.Error>{emailErrors.address}</Field.Error>
-          {/if}
-        </Field.Field>
+          <InputGroup.Addon align="inline-end">
+            <InputGroup.Text>@{activeDomain ?? "domain"}</InputGroup.Text>
+          </InputGroup.Addon>
+        </InputGroup.Root>
+        {#if emailErrors.address}
+          <Field.Error>{emailErrors.address}</Field.Error>
+        {:else}
+          <Field.Description>
+            Just the part before the @. Click a name or value below to copy.
+          </Field.Description>
+        {/if}
+      </Field.Field>
+
+      <!-- LIVE PREVIEW -->
+      <div class="mb-4">
+        <EmailPreview
+          label={emailLabel}
+          localPart={stripAt(emailAddress).local}
+          domain={activeDomain ?? ""}
+        />
       </div>
 
-      <Field.Field>
-        <label class="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            bind:checked={fromEmailForm.isDefault}
-            class="rounded border-gray-300"
-          />
-          Mark as default
-        </label>
-      </Field.Field>
-
-      <Field.Field>
-        <Button type="submit" disabled={isSaving} class="w-full">
-          {isSaving ? "Saving..." : isEditingFromEmail ? "Update" : "Create"}
-        </Button>
-      </Field.Field>
+      <div class="flex gap-2 mb-4">
+        {#if isEditingFromEmail}
+          <Button
+            type="button"
+            variant="outline"
+            class="flex-1"
+            onclick={resetForm}
+          >
+            Cancel Edit
+          </Button>
+          <Button type="submit" class="flex-1" disabled={isSaving}>
+            Update
+          </Button>
+        {:else}
+          <Button type="submit" class="w-full" disabled={isSaving}>
+            Add email
+          </Button>
+        {/if}
+      </div>
     </Field.Group>
   </form>
 
-  <div class="mt-6">
-    <h3 class="text-sm font-medium mb-2">Saved Email Options</h3>
-    {#if fromEmails.length === 0}
-      <p class="text-sm text-muted-foreground text-center py-4">
-        No email options configured yet
-      </p>
-    {:else}
-      <table
-        class="w-full table-auto border-collapse border border-border rounded-md"
-      >
-        <thead>
-          <tr class="bg-muted/50">
-            <th class="border border-border p-2 text-xs text-left"
-              >From Email</th
+  <!-- SAVED OPTIONS -->
+  {#if fromEmails.length === 0}
+    <Empty.Root class="border border-dashed">
+      <Empty.Header>
+        <Empty.Media variant="icon">
+          <Mail />
+        </Empty.Media>
+        <Empty.Title>No sender options yet</Empty.Title>
+        <Empty.Description>
+          Add your first identity above to start sending emails.
+        </Empty.Description>
+      </Empty.Header>
+    </Empty.Root>
+  {:else}
+    <Item.Group>
+      {#each fromEmails as fromEmail, i (fromEmail.id)}
+        <Item.Root variant="outline" size="sm">
+          <Item.Content>
+            <Item.Title>{fromEmail.label}</Item.Title>
+            <Item.Description>{fromEmail.address}</Item.Description>
+          </Item.Content>
+          <Item.Actions>
+            {#if fromEmail.isDefault}
+              <span title="Default sender">
+                <Star class="size-4 fill-yellow-400 stroke-yellow-400" />
+              </span>
+            {:else}
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                title="Set as default"
+                onclick={() => setDefault(fromEmail.id)}
+              >
+                <Star />
+              </Button>
+            {/if}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              title="Edit"
+              onclick={() => startEdit(fromEmail)}
             >
-            <th class="border border-border p-2 text-xs text-left w-24"
-              >Actions</th
-            >
-          </tr>
-        </thead>
-        <tbody>
-          {#each fromEmails as fromEmail (fromEmail.id)}
-            <tr class="hover:bg-muted/30">
-              <td class="border border-border px-4 py-2">
-                <div class="flex items-center gap-2">
-                  <span class="text-xs">{formatFromEmail(fromEmail)}</span>
-                  {#if fromEmail.isDefault}
-                    <span
-                      class="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded"
-                    >
-                      Default
-                    </span>
-                  {/if}
-                </div>
-              </td>
-              <td class="border border-border px-4 py-2">
-                <div class="flex justify-end gap-1">
-                  <Button
-                    variant="outline"
-                    size="icon-sm"
-                    onclick={() => handleEditFromEmail(fromEmail)}
-                    title="Edit"
-                  >
-                    <SquarePen />
-                  </Button>
-                  {@render confirmDelete(fromEmail.id)}
-                </div>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    {/if}
-  </div>
+              <SquarePen />
+            </Button>
+            {@render confirmDelete(fromEmail.id)}
+          </Item.Actions>
+        </Item.Root>
+        {#if i !== fromEmails.length - 1}
+          <Item.Separator />
+        {/if}
+      {/each}
+    </Item.Group>
+  {/if}
 {/snippet}
 
 {#snippet connectionSection()}
@@ -614,7 +546,7 @@
         <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
         <AlertDialog.Action
           class={buttonVariants({ variant: "destructive" })}
-          onclick={() => handleDeleteFromEmail(fromEmailId)}
+          onclick={() => handleDelete(fromEmailId)}
         >
           Continue
         </AlertDialog.Action>
