@@ -1,5 +1,6 @@
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import { onMount } from "svelte";
   import { fly } from "svelte/transition";
 
@@ -223,14 +224,14 @@
             </Field.Field>
             <Field.Field>
               <Field.Description>
-                You can find your API key in your{" "}
-                <a
-                  href="https://resend.com/api-keys"
-                  target="_blank"
+                You can find your API key in your
+                <button
+                  type="button"
                   class="underline underline-offset-4 font-medium"
+                  onclick={() => openUrl("https://resend.com/api-keys")}
                 >
                   Resend dashboard
-                </a>.
+                </button>.
               </Field.Description>
             </Field.Field>
 

@@ -15,6 +15,7 @@
   } from "../commom/store";
   import { onMount } from "svelte";
   import { toast } from "svelte-sonner";
+  import { openUrl } from "@tauri-apps/plugin-opener";
 
   const sidebar = useSidebar();
 
@@ -117,16 +118,9 @@
         </DropdownMenu.Label>
         <DropdownMenu.Separator />
         <DropdownMenu.Group>
-          <DropdownMenu.Item class="p-0 m-0">
-            <a
-              href="https://donate.stripe.com/00wdR8dOd0YF7Ipce0a7C04"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="flex w-full item-center gap-2 py-2 px-2"
-            >
-              <SparklesIcon />
-              Support us
-            </a>
+          <DropdownMenu.Item onclick={() => openUrl("https://donate.stripe.com/00wdR8dOd0YF7Ipce0a7C04")}>
+            <SparklesIcon />
+            Support us
           </DropdownMenu.Item>
           {#if method}
             <DropdownMenu.Item
