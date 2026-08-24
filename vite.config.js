@@ -1,13 +1,20 @@
 import tailwindcss from "@tailwindcss/vite";
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import { sveltekit } from "@sveltejs/kit/vite";
 
-// @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [tailwindcss(), sveltekit()],
+  // Vitest: use browser entry points of packages even though tests run in Node
+  ...(process.env.VITEST
+    ? { resolve: { conditions: ["browser"] } }
+    : {}),
+  test: {
+    // Logic-only tests — no DOM rendering, so Node's default env is enough.
+    environment: "node"
+  },
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
