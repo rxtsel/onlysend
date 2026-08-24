@@ -1,4 +1,4 @@
-import type { SentEmail } from "../types/sent.type";
+import type { SentEmail } from "@/lib/types";
 
 class EmailCache {
   private cache = $state<Map<string, SentEmail>>(new Map());

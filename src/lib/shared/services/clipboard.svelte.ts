@@ -1,7 +1,7 @@
 import { toast } from "svelte-sonner";
 
 /**
- * Copies text to the clipboard with toast feedback.
+ * Copies text to the clipboard and toasts a normalized confirmation.
  * Single implementation for every copy action in the app.
  *
  * @returns true when the copy succeeded, false otherwise — callers that
@@ -10,7 +10,7 @@ import { toast } from "svelte-sonner";
  */
 export async function copyToClipboard(
   value: string,
-  label = "Copied to clipboard",
+  label = "Copied",
 ): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(value);

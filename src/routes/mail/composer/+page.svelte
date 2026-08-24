@@ -1,5 +1,6 @@
 <script lang="ts">
   import * as Popover from "$lib/components/ui/popover";
+  import { invalidateEmailCache } from "@/lib/shared/sent";
   import { Input } from "@/lib/components/ui/input";
   import * as Select from "$lib/components/ui/select";
   import * as Field from "@/lib/components/ui/field";
@@ -95,7 +96,8 @@
       form.reset();
 
       toast.success("Email send successfully!");
-      // Refresh the sidebar emails list
+      // Bust the list cache so the sidebar shows the new email immediately
+      invalidateEmailCache();
       window.dispatchEvent(new CustomEvent("email-sent"));
 
       goto("/mail/sent");

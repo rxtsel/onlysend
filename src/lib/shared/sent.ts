@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { SentEmail } from "../types/sent.type";
-import { emailCache } from "../stores/email-cache.svelte";
+import { emailCache } from "@/lib/features/sending/email-cache.svelte";
 
 export async function listSentEmails(
   limit?: number,
@@ -42,10 +42,6 @@ export async function getSentEmail(emailId: string): Promise<SentEmail> {
 
 export function invalidateEmailCache(): void {
   emailCache.invalidateList();
-}
-
-export function clearEmailCache(): void {
-  emailCache.clear();
 }
 
 // For conditional render beetween html or Editor Tap component

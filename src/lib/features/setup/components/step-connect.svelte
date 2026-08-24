@@ -103,8 +103,7 @@
   }
 
   async function handleCopyLink() {
-    const ok = await copyToClipboard(authorizeUrl, "Link copied");
-    if (!ok) toast.error("Could not copy the link");
+    await copyToClipboard(authorizeUrl);
   }
 
   function submitManual(e: SubmitEvent) {
