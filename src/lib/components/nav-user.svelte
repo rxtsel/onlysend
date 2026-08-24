@@ -14,14 +14,18 @@
     type ConnectionMethod,
   } from "../commom/store";
   import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
   import { toast } from "svelte-sonner";
   import { openUrl } from "@tauri-apps/plugin-opener";
+
+  import * as AlertDialog from "@/lib/components/ui/alert-dialog";
 
   const sidebar = useSidebar();
 
   let activeDomain = $state<string | null>(null);
   let method = $state<ConnectionMethod>(null);
   let isDisconnecting = $state(false);
+  let showDisconnectConfirm = $state(false);
 
   const METHOD_LABELS: Record<Exclude<ConnectionMethod, null>, string> = {
     oauth: "Connected via OAuth",
@@ -52,7 +56,8 @@
       isDisconnecting = true;
       await disconnectResend();
       toast.success("Disconnected from Resend");
-      await loadData();
+      showDisconnectConfirm = false;
+      goto("/");
     } catch (err) {
       console.error(err);
       toast.error("Failed to disconnect");
@@ -123,16 +128,37 @@
             Support us
           </DropdownMenu.Item>
           {#if method}
-            <DropdownMenu.Item
-              disabled={isDisconnecting}
-              onclick={handleDisconnect}
-            >
+            <DropdownMenu.Item variant="destructive" onclick={() => (showDisconnectConfirm = true)}>
               <UnplugIcon />
-              {isDisconnecting ? "Disconnecting..." : "Disconnect"}
+              Disconnect
             </DropdownMenu.Item>
           {/if}
         </DropdownMenu.Group>
       </DropdownMenu.Content>
     </DropdownMenu.Root>
+
+    <!-- DISCONNECT CONFIRM -->
+    <AlertDialog.Root bind:open={showDisconnectConfirm}>
+      <AlertDialog.Content>
+        <AlertDialog.Header>
+          <AlertDialog.Title>Disconnect from Resend?</AlertDialog.Title>
+          <AlertDialog.Description>
+            Your OAuth grant will be revoked and any stored API key removed.
+            You'll be signed out and returned to setup. Your local data
+            (identities, history) stays and revives when you reconnect.
+          </AlertDialog.Description>
+        </AlertDialog.Header>
+        <AlertDialog.Footer>
+          <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+          <AlertDialog.Action
+            class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            disabled={isDisconnecting}
+            onclick={handleDisconnect}
+          >
+            {isDisconnecting ? "Disconnecting..." : "Disconnect"}
+          </AlertDialog.Action>
+        </AlertDialog.Footer>
+      </AlertDialog.Content>
+    </AlertDialog.Root>
   </Sidebar.MenuItem>
 </Sidebar.Menu>

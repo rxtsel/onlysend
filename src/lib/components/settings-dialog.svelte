@@ -21,6 +21,7 @@
   import type { FromEmail } from "../types";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
   import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
   import { listen } from "@tauri-apps/api/event";
   import { stripAt } from "../commom/email";
   import {
@@ -73,6 +74,7 @@
   let isDisconnecting = $state(false);
   let inboxEnabled = $state(false);
   let showInboxSetup = $state(false);
+  let showDisconnectConfirm = $state(false);
 
   // From Email form state
   let emailLabel = $state("");
@@ -239,13 +241,15 @@
     }
   }
 
-  async function handleDisconnect(e: Event) {
-    e.preventDefault();
+  async function handleDisconnect() {
+    if (isDisconnecting) return;
     try {
       isDisconnecting = true;
       await disconnectResend();
       toast.success("Disconnected from Resend");
-      await loadData();
+      showDisconnectConfirm = false;
+      open = false;
+      goto("/");
     } catch (error) {
       console.error("Error disconnecting:", error);
       toast.error("Failed to disconnect");
@@ -510,7 +514,7 @@
           variant="destructive"
           size="sm"
           disabled={isDisconnecting}
-          onclick={handleDisconnect}
+          onclick={() => (showDisconnectConfirm = true)}
         >
           {isDisconnecting ? "Disconnecting..." : "Disconnect"}
         </Button>
@@ -601,6 +605,30 @@
           onclick={() => handleDelete(fromEmailId)}
         >
           Continue
+        </AlertDialog.Action>
+      </AlertDialog.Footer>
+    </AlertDialog.Content>
+  </AlertDialog.Root>
+{/snippet}
+{#snippet disconnectConfirm()}
+  <AlertDialog.Root bind:open={showDisconnectConfirm}>
+    <AlertDialog.Content>
+      <AlertDialog.Header>
+        <AlertDialog.Title>Disconnect from Resend?</AlertDialog.Title>
+        <AlertDialog.Description>
+          Your OAuth grant will be revoked and any stored API key removed.
+          You'll be signed out and returned to setup. Your local data
+          (identities, history) stays and revives when you reconnect.
+        </AlertDialog.Description>
+      </AlertDialog.Header>
+      <AlertDialog.Footer>
+        <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+        <AlertDialog.Action
+          class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          disabled={isDisconnecting}
+          onclick={handleDisconnect}
+        >
+          {isDisconnecting ? "Disconnecting..." : "Disconnect"}
         </AlertDialog.Action>
       </AlertDialog.Footer>
     </AlertDialog.Content>
