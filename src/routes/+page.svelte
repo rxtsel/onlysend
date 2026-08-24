@@ -129,7 +129,7 @@
 
 {#if isChecking}
   <main
-    class="container mx-auto min-h-svh flex justify-center items-center flex-col"
+    class="container mx-auto py-6 min-h-svh flex justify-center items-center flex-col"
   >
     <header class="text-center mb-8 w-full">
       <Skeleton class="size-16 rounded-xl mx-auto mb-6" />
@@ -144,7 +144,7 @@
   </main>
 {:else}
   <main
-    class="container mx-auto min-h-svh flex justify-center items-center flex-col"
+    class="container mx-auto py-6 min-h-svh flex justify-center items-center flex-col"
   >
     <header class="text-center mb-8 w-full max-w-md">
       <Logo class="mx-auto mb-6" />
