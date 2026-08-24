@@ -29,6 +29,10 @@ struct PendingFlow {
 #[derive(Default)]
 pub struct OAuthState {
     pending: Mutex<Option<PendingFlow>>,
+    /// Single-flight guard: concurrent expired-token holders queue here so
+    /// exactly ONE refresh request hits Resend (rotation reuse would kill
+    /// the whole grant otherwise).
+    refresh_lock: tokio::sync::Mutex<()>,
 }
 
 #[derive(Serialize)]
@@ -347,6 +351,18 @@ pub(crate) async fn get_credential(app: &AppHandle<Wry>) -> Result<String, Strin
         store::load_oauth(app)?.ok_or_else(|| "[ERROR] Not authenticated".to_string())?;
 
     if unix_now() < record.expires_at {
+        return Ok(record.access_token);
+    }
+
+    // Single-flight: N concurrent callers produce exactly ONE refresh
+    // request. Latecomers re-read the rotated tokens from the store.
+    let state: State<OAuthState> = app.state();
+    let _guard = state.refresh_lock.lock().await;
+
+    let record =
+        store::load_oauth(app)?.ok_or_else(|| "[ERROR] Not authenticated".to_string())?;
+    if unix_now() < record.expires_at {
+        // Another task refreshed while we waited.
         return Ok(record.access_token);
     }
 
