@@ -109,11 +109,6 @@ export interface DomainSummary {
   capabilities?: DomainCapabilities;
 }
 
-export interface DomainCapabilities {
-  sending: string;
-  receiving: string;
-}
-
 export interface DomainDetail extends DomainSummary {
   capabilities: DomainCapabilities;
   records: DomainRecord[];
