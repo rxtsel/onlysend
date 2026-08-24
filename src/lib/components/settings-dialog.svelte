@@ -277,7 +277,11 @@
       >Customize your settings here.</Dialog.Description
     >
     <Sidebar.Provider class="items-start">
-      <Sidebar.Root collapsible="none" class="hidden md:flex">
+      <Sidebar.Root
+        collapsible="none"
+        class="hidden md:flex"
+        style="--sidebar-width: 11rem"
+      >
         <Sidebar.Content>
           <Sidebar.Group>
             <Sidebar.GroupContent>
@@ -336,7 +340,7 @@
   <form class="w-full" onsubmit={handleAddOrUpdate}>
     <Field.Group>
       <div class="flex items-center justify-between mb-2">
-        <h3 class="text-sm font-medium">
+        <h3 class="text-base font-medium">
           {isEditingFromEmail ? "Edit Email Option" : "Add New Email Option"}
         </h3>
         {#if activeDomain}
@@ -349,41 +353,39 @@
         {/if}
       </div>
 
-      <Field.Field>
-        <Field.Label for="label">Your Name</Field.Label>
-        <Input
-          id="label"
-          name="label"
-          bind:value={emailLabel}
-          placeholder="Your Name"
-          required
-          aria-invalid={!!emailErrors.label}
-        />
-        {#if emailErrors.label}
-          <Field.Error>{emailErrors.label}</Field.Error>
-        {/if}
-      </Field.Field>
-
-      <Field.Field>
-        <Field.Label for="address">Address</Field.Label>
-        <InputGroup.Root>
-          <InputGroup.Input
-            placeholder="hello"
-            bind:value={emailAddress}
-            aria-invalid={!!emailErrors.address}
+      <div class="flex flex-col @min-sm:flex-row gap-2 mb-4">
+        <Field.Field>
+          <Field.Label for="label">Your Name</Field.Label>
+          <Input
+            id="label"
+            name="label"
+            bind:value={emailLabel}
+            placeholder="Your Name"
+            required
+            aria-invalid={!!emailErrors.label}
           />
-          <InputGroup.Addon align="inline-end">
-            <InputGroup.Text>@{activeDomain ?? "domain"}</InputGroup.Text>
-          </InputGroup.Addon>
-        </InputGroup.Root>
-        {#if emailErrors.address}
-          <Field.Error>{emailErrors.address}</Field.Error>
-        {:else}
-          <Field.Description>
-            Just the part before the @. Click a name or value below to copy.
-          </Field.Description>
-        {/if}
-      </Field.Field>
+          {#if emailErrors.label}
+            <Field.Error>{emailErrors.label}</Field.Error>
+          {/if}
+        </Field.Field>
+
+        <Field.Field>
+          <Field.Label for="address">Address</Field.Label>
+          <InputGroup.Root>
+            <InputGroup.Input
+              placeholder="hello"
+              bind:value={emailAddress}
+              aria-invalid={!!emailErrors.address}
+            />
+            <InputGroup.Addon align="inline-end">
+              <InputGroup.Text>@{activeDomain ?? "domain"}</InputGroup.Text>
+            </InputGroup.Addon>
+          </InputGroup.Root>
+          {#if emailErrors.address}
+            <Field.Error>{emailErrors.address}</Field.Error>
+          {/if}
+        </Field.Field>
+      </div>
 
       <!-- LIVE PREVIEW -->
       <div class="mb-4">
