@@ -118,13 +118,11 @@
       {/if}
 
       <!-- LIVE PREVIEW -->
-      <div class="mb-4">
-        <EmailPreview
-          label={emailLabel}
-          localPart={previewLocal}
-          {domain}
-        />
-      </div>
+      <EmailPreview
+        label={emailLabel}
+        localPart={previewLocal}
+        {domain}
+      />
 
       <Button type="button" class="w-full mb-4" onclick={addEmailOption}>
         Add email

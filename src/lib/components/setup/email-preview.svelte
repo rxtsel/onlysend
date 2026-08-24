@@ -17,7 +17,7 @@
   const hasLocal = $derived(localPart.trim().length > 0);
 </script>
 
-<div class="bg-background m-px min-h-56 p-5 rounded-3xl flex flex-col">
+<div class="bg-background m-px min-h-30 rounded-3xl flex flex-col">
   <!-- HEADER -->
   <div class="pb-4 border-b border-border">
     <div class="flex items-center gap-3">
@@ -65,6 +65,5 @@
   <div class="pt-4 flex flex-col gap-3">
     <div class="h-3 bg-muted rounded w-3/5"></div>
     <div class="h-3 bg-muted rounded w-4/5"></div>
-    <div class="h-3 bg-muted rounded w-2/3"></div>
   </div>
 </div>
