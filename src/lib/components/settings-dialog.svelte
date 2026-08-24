@@ -17,6 +17,7 @@
   import * as Item from "@/lib/components/ui/item";
   import * as Empty from "@/lib/components/ui/empty";
   import EmailPreview from "@/lib/components/setup/email-preview.svelte";
+  import { Blobatar } from "@blobatar/svelte";
   import type { FromEmail } from "../types";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
   import { onMount } from "svelte";
@@ -432,6 +433,13 @@
     <Item.Group>
       {#each fromEmails as fromEmail, i (fromEmail.id)}
         <Item.Root variant="outline" size="sm">
+          <Item.Media>
+            <Blobatar
+              name={fromEmail.address}
+              size={28}
+              class="rounded-full shrink-0"
+            />
+          </Item.Media>
           <Item.Content>
             <Item.Title>{fromEmail.label}</Item.Title>
             <Item.Description>{fromEmail.address}</Item.Description>
@@ -462,9 +470,6 @@
             {@render confirmDelete(fromEmail.id)}
           </Item.Actions>
         </Item.Root>
-        {#if i !== fromEmails.length - 1}
-          <Item.Separator />
-        {/if}
       {/each}
     </Item.Group>
   {/if}
