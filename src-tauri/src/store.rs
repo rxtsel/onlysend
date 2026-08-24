@@ -237,6 +237,10 @@ pub fn mark_setup_complete(app: AppHandle<Wry>) -> Result<(), String> {
     write_key(&app, STORE_FILE, SETUP_COMPLETE_KEY, json!(true))
 }
 
+pub(crate) fn mark_setup_incomplete(app: AppHandle<Wry>) -> Result<(), String> {
+    write_key(&app, STORE_FILE, SETUP_COMPLETE_KEY, json!(false))
+}
+
 /* ---------------------------------------------------------
  * Inbound setup cache
  *

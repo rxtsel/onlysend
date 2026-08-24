@@ -401,6 +401,10 @@ pub(crate) async fn get_credential(app: &AppHandle<Wry>) -> Result<String, Strin
 
 /// Revokes the refresh token (killing the whole grant) and clears local state.
 #[tauri::command]
+/// Full credential logout: revokes the OAuth grant (if any), removes any
+/// stored API key and resets setup flags. Local data (identities, read
+/// markers, cached setup) is intentionally preserved so it revives on
+/// reconnect.
 pub async fn disconnect_resend(app: AppHandle<Wry>) -> Result<(), String> {
     let record = store::load_oauth(&app)?;
 
@@ -419,8 +423,11 @@ pub async fn disconnect_resend(app: AppHandle<Wry>) -> Result<(), String> {
     }
 
     store::clear_oauth(&app)?;
+    store::delete_api_key(app.clone())?;
+    store::mark_setup_incomplete(app.clone())?;
+    store::set_inbox_enabled(app.clone(), false)?;
 
-    println!("[INFO] Resend OAuth disconnected");
+    println!("[INFO] Resend disconnected (credentials cleared, local data preserved)");
 
     Ok(())
 }
