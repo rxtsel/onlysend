@@ -2,9 +2,7 @@ import { toast } from "svelte-sonner";
 
 /** Opens the settings dialog on a given section (shell listens globally). */
 export function openSettings(section: string): void {
-  window.dispatchEvent(
-    new CustomEvent("open-settings", { detail: { section } }),
-  );
+  window.dispatchEvent(new CustomEvent("open-settings", { detail: { section } }));
 }
 
 /** True when an error looks like a missing/expired credential. */
@@ -27,9 +25,10 @@ export interface ToastOptions {
  */
 export function authErrorToast(err: unknown): void {
   const message = isAuthError(err)
-    ? "Not authenticated — reconnect Resend to continue."
-    : String(err ?? "").replace(/^\[ERROR\]\s*/, "").trim() ||
-      "Something went wrong";
+    ? "Not authenticated. Reconnect Resend to continue."
+    : String(err ?? "")
+        .replace(/^\[ERROR\]\s*/, "")
+        .trim() || "Something went wrong";
 
   if (!isAuthError(err)) {
     toast.error(message);
