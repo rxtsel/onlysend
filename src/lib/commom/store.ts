@@ -8,10 +8,33 @@ export async function hasApiKey(): Promise<boolean> {
 export interface OnboardingState {
   complete: boolean;
   authenticated: boolean;
+  inboxEnabled: boolean;
 }
 
 export async function getOnboardingState(): Promise<OnboardingState> {
   return await invoke<OnboardingState>("get_onboarding_state");
+}
+
+export async function setInboxEnabled(enabled: boolean): Promise<void> {
+  await invoke("set_inbox_enabled", { enabled });
+}
+
+export interface InboundSetupCache {
+  id: string;
+  name: string;
+  status: string;
+  capabilities: DomainCapabilities;
+  records: DomainRecord[];
+}
+
+export async function getInboundSetupCache(): Promise<InboundSetupCache | null> {
+  return await invoke<InboundSetupCache | null>("get_inbound_setup_cache");
+}
+
+export async function saveInboundSetupCache(
+  detail: InboundSetupCache,
+): Promise<void> {
+  await invoke("save_inbound_setup_cache", { detail });
 }
 
 export async function markSetupComplete(): Promise<void> {

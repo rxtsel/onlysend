@@ -1,6 +1,7 @@
 mod config;
 mod domains;
 mod email;
+mod inbound;
 mod oauth;
 mod permissions;
 mod sent;
@@ -55,6 +56,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             store::has_api_key,
             store::get_onboarding_state,
+            store::set_inbox_enabled,
+            store::get_inbound_setup_cache,
+            store::save_inbound_setup_cache,
             store::mark_setup_complete,
             store::get_connection_status,
             store::save_api_key,
@@ -68,9 +72,14 @@ pub fn run() {
             email::send_email,
             domains::list_domains,
             domains::create_domain,
+            domains::delete_domain,
             domains::get_domain,
             domains::verify_domain,
             domains::set_domain_receiving,
+            inbound::list_inbound_emails,
+            inbound::get_inbound_email,
+            store::get_read_inbound_ids,
+            store::mark_inbound_read,
             config::list_from_emails,
             config::create_from_email,
             config::update_from_email,

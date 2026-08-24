@@ -13,9 +13,10 @@ const CLIENT_ID_KEY: &str = "resend_oauth_client_id";
 const SELECTED_DOMAIN_KEY: &str = "selected_domain";
 const SETUP_COMPLETE_KEY: &str = "setup_complete";
 const FROM_EMAILS_KEY: &str = "from_emails";
-/// Obsolete keys from older builds, removed on startup.
-const ONBOARDING_STEP_KEY: &str = "onboarding_step";
-const PROFILE_KEY: &str = "profile";
+const INBOX_ENABLED_KEY: &str = "inbox_enabled";
+const READ_INBOUND_KEY: &str = "read_inbound_ids";
+/// Cap so the read-marker list can't grow unbounded.
+const READ_INBOUND_CAP: usize = 200;
 
 /* ---------------------------------------------------------
  * Store primitives
@@ -101,19 +102,7 @@ pub fn save_api_key(app: AppHandle<Wry>, api_key: String) -> Result<(), String> 
 }
 
 pub(crate) fn load_api_key(app: &AppHandle<Wry>) -> Result<Option<String>, String> {
-    if let Some(key) = read_string_key(app, AUTH_FILE, API_KEY_RECORD)? {
-        return Ok(Some(key));
-    }
-
-    // One-time migration: keys saved before auth.json existed.
-    let legacy = read_string_key(app, STORE_FILE, API_KEY_RECORD)?;
-    if let Some(key) = &legacy {
-        write_key(app, AUTH_FILE, API_KEY_RECORD, json!(key))?;
-        delete_key(app, STORE_FILE, API_KEY_RECORD)?;
-        println!("[INFO] Migrated API key from settings.json to auth.json");
-    }
-
-    Ok(legacy)
+    read_string_key(app, AUTH_FILE, API_KEY_RECORD)
 }
 
 #[tauri::command]
@@ -132,12 +121,8 @@ pub fn get_api_key(app: AppHandle<Wry>) -> Result<Option<String>, String> {
 
 #[tauri::command]
 pub fn delete_api_key(app: AppHandle<Wry>) -> Result<(), String> {
-    // Remove from both files in case a legacy copy still exists.
     delete_key(&app, AUTH_FILE, API_KEY_RECORD)?;
-    delete_key(&app, STORE_FILE, API_KEY_RECORD)?;
-
     println!("[INFO] API key deleted successfully");
-
     Ok(())
 }
 
@@ -215,61 +200,63 @@ pub struct OnboardingState {
     pub complete: bool,
     /// True when a credential (API key or OAuth) already exists.
     pub authenticated: bool,
-}
-
-/// One-time migration for users created before the new wizard: they have an
-/// API key and from-emails but no selected domain. Derive it from the first
-/// identity so they don't have to repeat onboarding.
-fn migrate_legacy_onboarding(app: &AppHandle<Wry>) -> Result<bool, String> {
-    if load_api_key(app)?.is_none() {
-        return Ok(false);
-    }
-
-    let emails = load_from_emails(app)?;
-    let Some(first) = emails.first() else {
-        return Ok(false);
-    };
-
-    let Some(domain) = first.address.split('@').nth(1) else {
-        return Ok(false);
-    };
-
-    write_key(app, STORE_FILE, SELECTED_DOMAIN_KEY, json!(domain))?;
-    write_key(app, STORE_FILE, SETUP_COMPLETE_KEY, json!(true))?;
-    println!("[INFO] Migrated legacy onboarding state");
-
-    Ok(true)
+    /// Gates the Inbox nav item: true once receiving is set up.
+    #[serde(default)]
+    pub inbox_enabled: bool,
 }
 
 #[tauri::command]
 pub fn get_onboarding_state(app: AppHandle<Wry>) -> Result<OnboardingState, String> {
-    let mut complete = read_raw_key(&app, STORE_FILE, SETUP_COMPLETE_KEY)?
+    let complete = read_raw_key(&app, STORE_FILE, SETUP_COMPLETE_KEY)?
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    // Legacy users completed setup before this flag existed.
-    if !complete {
-        complete = migrate_legacy_onboarding(&app)?;
-    }
-
-    // Drop obsolete keys from older builds.
-    for legacy_key in [ONBOARDING_STEP_KEY, PROFILE_KEY] {
-        if read_raw_key(&app, STORE_FILE, legacy_key)?.is_some() {
-            delete_key(&app, STORE_FILE, legacy_key)?;
-        }
-    }
-
     let authenticated = load_api_key(&app)?.is_some() || load_oauth(&app)?.is_some();
+
+    let inbox_enabled = read_raw_key(&app, STORE_FILE, INBOX_ENABLED_KEY)?
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     Ok(OnboardingState {
         complete,
         authenticated,
+        inbox_enabled,
     })
+}
+
+/// Gates the Inbox nav item; updated by the receiving setup flow.
+#[tauri::command]
+pub fn set_inbox_enabled(app: AppHandle<Wry>, enabled: bool) -> Result<(), String> {
+    write_key(&app, STORE_FILE, INBOX_ENABLED_KEY, json!(enabled))
 }
 
 #[tauri::command]
 pub fn mark_setup_complete(app: AppHandle<Wry>) -> Result<(), String> {
     write_key(&app, STORE_FILE, SETUP_COMPLETE_KEY, json!(true))
+}
+
+/* ---------------------------------------------------------
+ * Inbound setup cache
+ *
+ * Last-known domain detail (records + statuses) so the setup card
+ * renders instantly without hitting Resend on every open. Refreshed
+ * explicitly by the UI (open / Verify now).
+ * --------------------------------------------------------- */
+const INBOUND_SETUP_CACHE_KEY: &str = "inbound_setup";
+
+#[tauri::command]
+pub fn get_inbound_setup_cache(
+    app: AppHandle<Wry>,
+) -> Result<Option<serde_json::Value>, String> {
+    read_raw_key(&app, STORE_FILE, INBOUND_SETUP_CACHE_KEY)
+}
+
+#[tauri::command]
+pub fn save_inbound_setup_cache(
+    app: AppHandle<Wry>,
+    detail: serde_json::Value,
+) -> Result<(), String> {
+    write_key(&app, STORE_FILE, INBOUND_SETUP_CACHE_KEY, detail)
 }
 
 /* ---------------------------------------------------------
@@ -303,4 +290,27 @@ pub(crate) fn load_from_emails(app: &AppHandle<Wry>) -> Result<Vec<FromEmail>, S
 
 pub(crate) fn save_from_emails(app: &AppHandle<Wry>, emails: &[FromEmail]) -> Result<(), String> {
     write_key(app, STORE_FILE, FROM_EMAILS_KEY, json!(emails))
+}
+
+/* ---------------------------------------------------------
+ * Inbound read markers
+ * --------------------------------------------------------- */
+#[tauri::command]
+pub fn get_read_inbound_ids(app: AppHandle<Wry>) -> Result<Vec<String>, String> {
+    Ok(read_typed(&app, STORE_FILE, READ_INBOUND_KEY, "read ids")?.unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn mark_inbound_read(app: AppHandle<Wry>, email_id: String) -> Result<(), String> {
+    let mut ids: Vec<String> =
+        read_typed(&app, STORE_FILE, READ_INBOUND_KEY, "read ids")?.unwrap_or_default();
+
+    if ids.contains(&email_id) {
+        return Ok(());
+    }
+
+    ids.insert(0, email_id);
+    ids.truncate(READ_INBOUND_CAP);
+
+    write_key(&app, STORE_FILE, READ_INBOUND_KEY, json!(ids))
 }
