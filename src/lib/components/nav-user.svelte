@@ -1,8 +1,11 @@
 <script lang="ts">
-  import CheckIcon from "@lucide/svelte/icons/check";
-  import ChevronsUpDownIcon from "@lucide/svelte/icons/chevrons-up-down";
-  import SparklesIcon from "@lucide/svelte/icons/sparkles";
-  import UnplugIcon from "@lucide/svelte/icons/unplug";
+  import {
+    ChevronsUpDownIcon,
+    CheckIcon,
+    PlusIcon,
+    SparklesIcon,
+    UnplugIcon,
+  } from "@lucide/svelte";
   import { Blobatar } from "@blobatar/svelte";
 
   import * as DropdownMenu from "@/lib/components/ui/dropdown-menu/index.js";
@@ -163,6 +166,10 @@
           </DropdownMenu.Group>
         {/if}
         <DropdownMenu.Group>
+          <DropdownMenu.Item onclick={() => goto("/setup")}>
+            <PlusIcon />
+            Add account
+          </DropdownMenu.Item>
           <DropdownMenu.Item onclick={() => openUrl("https://donate.stripe.com/00wdR8dOd0YF7Ipce0a7C04")}>
             <SparklesIcon />
             Support us

@@ -216,29 +216,19 @@ pub fn upsert_account_oauth(
 /// entry when none exists).
 pub fn upsert_api_key_active(app: &AppHandle<Wry>, api_key: &str) -> Result<(), String> {
     let mut accounts = read_accounts(app)?;
-    let active_id = read_active_id(app, &accounts)?;
+    let label = format!("Account {}", accounts.len() + 1);
 
-    match active_id.as_deref().and_then(|id| {
-        accounts.iter_mut().find(|a| a.id == *id)
-    }) {
-        Some(a) => {
-            a.method = "api_key".into();
-            a.api_key = Some(api_key.to_string());
-            a.oauth = None;
-        }
-        None => {
-            accounts.push(AccountCredential {
-                id: Uuid::new_v4().to_string(),
-                label: format!("Account {}", accounts.len() + 1),
-                method: "api_key".into(),
-                api_key: Some(api_key.to_string()),
-                oauth: None,
-            });
-        }
-    }
+    accounts.push(AccountCredential {
+        id: uuid::Uuid::new_v4().to_string(),
+        label,
+        method: "api_key".into(),
+        api_key: Some(api_key.to_string()),
+        oauth: None,
+    });
 
-    let id = read_active_id(app, &accounts)?.unwrap_or_default();
-    persist_with_active(app, &accounts, &id)
+    let id = accounts.last().unwrap().id.clone();
+    write_accounts(app, &accounts)?;
+    write_key(app, AUTH_FILE, ACTIVE_ACCOUNT_KEY, json!(id))
 }
 
 pub(crate) fn clear_oauth(app: &AppHandle<Wry>) -> Result<(), String> {
@@ -332,38 +322,25 @@ pub fn remove_account(
     Ok(removed.oauth)
 }
 
-/// Saves the OAuth grant on the ACTIVE account, creating a new entry if
-/// none exists (fresh connect). Used by connect flow and refresh rotation.
+/// Saves the OAuth grant as a NEW account entry (fresh connect).
 pub fn save_oauth(app: &AppHandle<Wry>, record: &OAuthRecord) -> Result<(), String> {
     let mut accounts = read_accounts(app)?;
-    let active_id = read_active_id(app, &accounts)?;
+    let label = format!("Account {}", accounts.len() + 1);
 
-    match active_id
-        .as_deref()
-        .and_then(|id| accounts.iter_mut().find(|a| a.id == *id))
-    {
-        Some(a) => {
-            a.method = "oauth".into();
-            a.oauth = Some(record.clone());
-            a.api_key = None;
-        }
-        None => {
-            accounts.push(AccountCredential {
-                id: uuid::Uuid::new_v4().to_string(),
-                label: format!("Account {}", accounts.len() + 1),
-                method: "oauth".into(),
-                api_key: None,
-                oauth: Some(record.clone()),
-            });
-        }
-    }
+    accounts.push(AccountCredential {
+        id: uuid::Uuid::new_v4().to_string(),
+        label,
+        method: "oauth".into(),
+        api_key: None,
+        oauth: Some(record.clone()),
+    });
 
-    let id = active_id.unwrap_or_default();
+    let id = accounts.last().unwrap().id.clone();
     write_accounts(app, &accounts)?;
     write_key(app, AUTH_FILE, ACTIVE_ACCOUNT_KEY, json!(id))
 }
 
-/// Updates the OAuth grant of the ACTIVE account in place.
+/// Updates the OAuth grant of the ACTIVE account in place (rotation path).
 pub(crate) fn update_active_oauth(
     app: &AppHandle<Wry>,
     record: &OAuthRecord,
@@ -371,11 +348,15 @@ pub(crate) fn update_active_oauth(
     let mut accounts = read_accounts(app)?;
     let active_id = read_active_id(app, &accounts)?;
 
-    if let Some(a) = accounts.iter_mut().find(|a| Some(&a.id) == active_id.as_ref()) {
+    if let Some(a) = accounts
+        .iter_mut()
+        .find(|a| Some(&a.id) == active_id.as_ref())
+    {
         a.method = "oauth".into();
         a.oauth = Some(record.clone());
         a.api_key = None;
     }
 
-    write_accounts(app, &accounts)
+    let id = active_id.unwrap_or_default();
+    persist_with_active(app, &accounts, &id)
 }

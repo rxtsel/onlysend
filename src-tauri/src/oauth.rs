@@ -411,7 +411,7 @@ pub(crate) async fn get_credential(app: &AppHandle<Wry>) -> Result<String, Strin
         scope: tokens.scope.unwrap_or(record.scope.clone()),
     };
 
-    store::save_oauth(app, &new_record)?;
+    store::update_active_oauth(app, &new_record)?;
 
     Ok(new_record.access_token)
 }
