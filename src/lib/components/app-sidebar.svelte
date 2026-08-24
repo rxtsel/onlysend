@@ -410,7 +410,7 @@
 
                                     {#if isUnread}
                                         <span
-                                            class="size-2 rounded-full bg-primary shrink-0"
+                                            class="size-2 rounded-full bg-blue-500 shrink-0"
                                             title="Unread"
                                         ></span>
                                     {/if}
