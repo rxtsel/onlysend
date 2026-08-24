@@ -31,6 +31,16 @@ pub fn run() {
             let _store = app.store("settings.json")?;
             println!("🚀 Store initialized");
 
+            // D: Proactive credential warm-up — refresh before the UI fires
+            // its parallel loads. Single-flight in get_credential makes this
+            // race-safe. Silent: failures surface on actual use.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(err) = oauth::get_credential(&handle).await {
+                    println!("[INFO] Credential warm-up skipped: {err}");
+                }
+            });
+
             #[cfg(desktop)]
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
