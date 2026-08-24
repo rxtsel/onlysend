@@ -60,3 +60,28 @@ export interface ProbeResult {
 export async function probeFullAccess(credential: string): Promise<ProbeResult> {
   return await invoke<ProbeResult>("probe_full_access", { credential });
 }
+
+/* ---------------------------------------------------------
+ * MULTI-ACCOUNT
+ * --------------------------------------------------------- */
+export interface AccountMeta {
+  id: string;
+  label: string;
+  method: string;
+  isActive: boolean;
+}
+
+export async function listAccounts(): Promise<AccountMeta[]> {
+  return await invoke<AccountMeta[]>("list_accounts");
+}
+
+export async function setActiveAccount(accountId: string): Promise<void> {
+  await invoke("set_active_account", { accountId });
+}
+
+/** Removes an account entirely (credential + entry). */
+export async function removeAccount(
+  accountId: string,
+): Promise<string | null> {
+  return await invoke<string | null>("remove_account", { accountId });
+}

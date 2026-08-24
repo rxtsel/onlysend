@@ -1,4 +1,5 @@
 <script lang="ts">
+  import CheckIcon from "@lucide/svelte/icons/check";
   import ChevronsUpDownIcon from "@lucide/svelte/icons/chevrons-up-down";
   import SparklesIcon from "@lucide/svelte/icons/sparkles";
   import UnplugIcon from "@lucide/svelte/icons/unplug";
@@ -7,7 +8,14 @@
   import * as DropdownMenu from "@/lib/components/ui/dropdown-menu/index.js";
   import * as Sidebar from "@/lib/components/ui/sidebar/index.js";
   import { useSidebar } from "@/lib/components/ui/sidebar/index.js";
-  import { disconnectResend, getConnectionStatus, type ConnectionMethod } from "@/lib/shared/api/auth";
+  import {
+    disconnectResend,
+    getConnectionStatus,
+    listAccounts,
+    setActiveAccount,
+    type ConnectionMethod,
+    type AccountMeta,
+  } from "@/lib/shared/api/auth";
   import { getActiveDomain } from "@/lib/shared/api/domains";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
@@ -24,6 +32,8 @@
   let method = $state<ConnectionMethod>(null);
   let isDisconnecting = $state(false);
   let showDisconnectConfirm = $state(false);
+  let accounts = $state<AccountMeta[]>([]);
+  let activeAccountId = $state<string | null>(null);
 
   const METHOD_LABELS: Record<Exclude<ConnectionMethod, null>, string> = {
     oauth: "Connected via OAuth",
@@ -37,6 +47,27 @@
   async function loadData() {
     await connection.load();
     method = connection.status.method;
+
+    try {
+      accounts = await listAccounts();
+      activeAccountId =
+        accounts.find((a) => a.isActive)?.id ?? accounts[0]?.id ?? null;
+    } catch (err) {
+      console.error("Error loading accounts:", err);
+    }
+  }
+
+  async function handleSwitchAccount(accountId: string) {
+    try {
+      await setActiveAccount(accountId);
+      await loadData();
+
+      // Notify the app to reload data for the new account
+      window.dispatchEvent(new CustomEvent("account-switched"));
+    } catch (err) {
+      console.error("Error switching account:", err);
+      toast.error("Failed to switch account");
+    }
   }
 
   async function handleDisconnect() {
@@ -111,6 +142,26 @@
           </div>
         </DropdownMenu.Label>
         <DropdownMenu.Separator />
+        {#if accounts.length > 1}
+          <DropdownMenu.Group>
+            <DropdownMenu.Label class="text-[10px] uppercase tracking-wide text-muted-foreground px-2">
+              Accounts
+            </DropdownMenu.Label>
+            {#each accounts as account (account.id)}
+              <DropdownMenu.Item
+                onclick={() => handleSwitchAccount(account.id)}
+                class={account.id === activeAccountId ? "bg-accent" : ""}
+              >
+                <Blobatar name={account.label} size={20} class="rounded" />
+                <span class="truncate">{account.label}</span>
+                {#if account.id === activeAccountId}
+                  <CheckIcon class="ms-auto size-3 text-primary" />
+                {/if}
+              </DropdownMenu.Item>
+            {/each}
+            <DropdownMenu.Separator />
+          </DropdownMenu.Group>
+        {/if}
         <DropdownMenu.Group>
           <DropdownMenu.Item onclick={() => openUrl("https://donate.stripe.com/00wdR8dOd0YF7Ipce0a7C04")}>
             <SparklesIcon />
