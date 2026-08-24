@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { fly } from "svelte/transition";
+  import { toast } from "svelte-sonner";
 
   import {
     SLIDE_IN,
@@ -10,51 +11,26 @@
     createViewAnimator,
     VIEW_WRAP_CLASS,
   } from "../view-transition.svelte";
-
-  import {
-    createDomain,
-    deleteDomain,
-    getDomain,
-    listDomains,
-    setDomainReceiving,
-    verifyDomain,
-    type DomainDetail,
-    type DomainSummary,
-  } from "@/lib/shared/api/domains";
-  import { setInboxEnabled } from "@/lib/shared/api/auth";
-  import { Trash } from "@lucide/svelte";
-  import { toast } from "svelte-sonner";
   import { copyToClipboard } from "@/lib/shared/services/clipboard.svelte";
 
   import { Button } from "@/lib/components/ui/button";
   import * as Card from "@/lib/components/ui/card";
   import * as Empty from "@/lib/components/ui/empty";
-  import * as Field from "@/lib/components/ui/field";
-  import { Input } from "@/lib/components/ui/input";
   import * as Item from "@/lib/components/ui/item";
   import { Skeleton } from "@/lib/components/ui/skeleton";
-  import { Switch } from "@/lib/components/ui/switch";
-  import * as Select from "@/lib/components/ui/select";
-  import * as AlertDialog from "$lib/components/ui/alert-dialog";
-  import DnsRecordsCard from "@/lib/features/setup/components/dns-records-card.svelte";
+  import DnsRecordsCard from "./dns-records-card.svelte";
   import CreateDomainForm from "@/lib/features/domains/components/create-domain-form.svelte";
-
-  const REGIONS = [
-    { value: "us-east-1", label: "US East (Virginia)" },
-    { value: "eu-west-1", label: "Europe (Ireland)" },
-    { value: "sa-east-1", label: "South America (São Paulo)" },
-    { value: "ap-northeast-1", label: "Asia Pacific (Tokyo)" },
-  ];
+  import { DomainSetupStore, canSelect } from "@/lib/features/domains/domain-setup-store.svelte";
+  import type { DomainSummary } from "@/lib/shared/api/domains";
+  import { setInboxEnabled } from "@/lib/shared/api/auth";
   import {
     ArrowLeft,
     CheckCircle2,
-    Copy,
     Globe,
-    Info,
-    Loader,
     Plus,
-    XCircle,
+    Trash,
   } from "@lucide/svelte";
+  import * as AlertDialog from "$lib/components/ui/alert-dialog";
 
   let {
     domain = $bindable(""),
@@ -64,65 +40,21 @@
     onContinue: () => void;
   } = $props();
 
+  const store = new DomainSetupStore();
+
   /* ---------------------------------------------------------
-   * STATE
+   * VIEW SWITCHING (slide + height animation)
    * --------------------------------------------------------- */
   type View = "list" | "setup";
 
   let view = $state<View>("list");
-  let domains = $state<DomainSummary[]>([]);
-  /** Resend id of the currently selected domain. */
-  let selectedId = $state("");
-  let isLoading = $state(true);
+  const animator = createViewAnimator();
 
-  // Setup view state
-  let isCreating = $state(false);
-  let setupDetail = $state<DomainDetail | null>(null);
-  let isVerifying = $state(false);
-  let verified = $state(false);
-  let isTogglingReceiving = $state(false);
-
-  /** Ready to move on once sending works for this domain. */
-  const setupUsable = $derived(
-    !!setupDetail &&
-      (setupDetail.status === "verified" ||
-        setupDetail.capabilities.sending === "enabled"),
-  );
-
-  async function handleReceivingToggle(checked: boolean) {
-    if (!setupDetail || isTogglingReceiving) return;
-
-    try {
-      isTogglingReceiving = true;
-      setupDetail = await setDomainReceiving(setupDetail.id, checked);
-      toast.success(
-        checked
-          ? "Receiving enabled. Add the MX record below."
-          : "Receiving disabled",
-      );
-      if (allRecordsVerified(setupDetail)) {
-        verified = true;
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to update receiving");
-    } finally {
-      isTogglingReceiving = false;
-    }
+  async function switchView(next: View) {
+    await animator.transition(next, () => {
+      view = next;
+    });
   }
-
-  function continueToEmails() {
-    if (!setupDetail) return;
-    setInboxEnabled(
-      setupDetail.capabilities.receiving === "enabled" &&
-        allRecordsVerified(setupDetail),
-    ).catch(console.error);
-    onContinue();
-  }
-  let errors = $state<Record<string, string>>({});
-
-  const POLL_INTERVAL_MS = 5000;
-  const POLL_MAX_ATTEMPTS = 36; // ~3 minutes
 
   const STATUS_STYLES: Record<string, string> = {
     verified: "bg-green-500/10 text-green-600",
@@ -139,68 +71,28 @@
   }
 
   /* ---------------------------------------------------------
-   * ANIMATED VIEW SWITCHING (slide + height)
+   * LIST ACTIONS
    * --------------------------------------------------------- */
-  const animator = createViewAnimator();
-
-  async function switchView(next: View) {
-    await animator.transition(next, () => {
-      view = next;
-    });
+  function select(d: DomainSummary) {
+    store.select(d.name, d.id);
+    domain = d.name;
   }
 
-  /* ---------------------------------------------------------
-   * LIST
-   * --------------------------------------------------------- */
-  async function loadDomains() {
-    isLoading = true;
-    try {
-      domains = await listDomains();
-
-      // Observation point: keep the Inbox visibility flag in sync with
-      // what Resend reports for the user's domains.
-      const inboxReady = domains.some(
-        (d) =>
-          d.capabilities?.receiving === "enabled" &&
-          ["verified", "partially_verified"].includes(d.status),
-      );
-      setInboxEnabled(inboxReady).catch(console.error);
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to load domains");
-    } finally {
-      isLoading = false;
-    }
-  }
-
-  function select(name: string, id: string) {
-    domain = name;
-    selectedId = id;
-  }
-
-  /**
-   * A domain is selectable once sending works for it — a
-   * partially-verified domain usually qualifies even though its global
-   * status isn't fully "verified" yet.
-   */
-  function canSelect(d: DomainSummary): boolean {
-    return d.status === "verified" || d.capabilities?.sending === "enabled";
+  /** Selectable once sending works — partial domains usually qualify. */
+  function canSelectDomain(d: DomainSummary): boolean {
+    return canSelect(d);
   }
 
   /** Selectable domains select directly; the rest open their DNS setup. */
   async function handleItemClick(d: DomainSummary) {
-    if (canSelect(d)) {
-      select(d.name, d.id);
+    if (canSelectDomain(d)) {
+      select(d);
       return;
     }
 
     try {
-      const detail = await getDomain(d.id);
-      setupDetail = detail;
-      verified = allRecordsVerified(detail);
-      errors = {};
+      await store.loadFresh(d.id);
       await switchView("setup");
-      maybeAutoVerify();
     } catch (err) {
       console.error(err);
       toast.error(`Failed to load domain details. ${err ?? ""}`.trim());
@@ -209,196 +101,110 @@
 
   /**
    * Continue routes through the DNS view whenever there is something
-   * pending: unverified records or receiving not enabled yet.
-   * Fully-green domains skip straight to email options.
+   * pending. Fully-green domains skip straight to email options.
    */
   async function handleContinue() {
     if (!domain) return;
 
-    const summary = domains.find((d) => d.name === domain);
+    const summary = store.domains.find((d) => d.name === domain);
     if (!summary) {
+      finishInboxFlag();
       onContinue();
       return;
     }
 
-    try {
-      const detail = await getDomain(summary.id);
-      setupDetail = detail;
-      verified = allRecordsVerified(detail);
-      errors = {};
-
-      const needsDns =
-        detail.status !== "verified" ||
-        !allRecordsVerified(detail) ||
-        detail.capabilities.receiving !== "enabled";
-
-      if (needsDns) {
-        await switchView("setup");
-        maybeAutoVerify();
-      } else {
-        onContinue();
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error(`Failed to load domain details. ${err ?? ""}`.trim());
+    const { needsDns } = await store.loadFresh(summary.id);
+    if (needsDns) {
+      await switchView("setup");
+    } else {
+      finishInboxFlag();
+      onContinue();
     }
-  }
-
-  /**
-   * Replicates the dashboard refresh: trigger a re-verification cycle
-   * once when entering the DNS view with pending records, then let the
-   * bounded polling converge the statuses. Skipped for brand-new domains
-   * (nothing to verify until the user adds their DNS records).
-   */
-  function maybeAutoVerify() {
-    if (
-      !setupDetail ||
-      verified ||
-      setupDetail.status === "not_started" ||
-      allRecordsVerified(setupDetail)
-    ) {
-      return;
-    }
-    handleVerify();
-  }
-
-  function openSetup() {
-    setupDetail = null;
-    verified = false;
-    errors = {};
-    switchView("setup");
-  }
-
-  function backToList() {
-    stopPolling();
-    switchView("list");
-    loadDomains();
   }
 
   /* ---------------------------------------------------------
-   * SETUP: CREATE + DNS RECORDS
+   * SETUP VIEW ACTIONS
    * --------------------------------------------------------- */
+  function openCreate() {
+    store.resetSetup();
+    switchView("setup");
+  }
+
+  async function backToList() {
+    store.stopWork();
+    await switchView("list");
+    store.load().catch((err) => {
+      console.error(err);
+      toast.error("Failed to load domains");
+    });
+  }
+
   async function handleCreate(options: {
     name: string;
     region: string;
     enableReceiving: boolean;
   }) {
     try {
-      isCreating = true;
-      const created = await createDomain(options);
-      setupDetail = created;
+      await store.create(options);
       toast.success("Domain created. Add the DNS records below.");
     } catch (err) {
       console.error(err);
       toast.error("Failed to create the domain");
-    } finally {
-      isCreating = false;
     }
   }
 
-  async function copyRecord(value: string) {
-    await copyToClipboard(value);
+  async function handleVerify() {
+    try {
+      await store.verify();
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to trigger verification");
+    }
   }
-  /* ---------------------------------------------------------
-   * DELETE DOMAIN (only while not fully verified)
-   * --------------------------------------------------------- */
-  let isDeleting = $state(false);
+
+  async function handleReceivingToggle(checked: boolean) {
+    try {
+      await store.toggleReceiving(checked);
+      toast.success(
+        checked ? "Receiving enabled." : "Receiving disabled.",
+      );
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to update receiving");
+    }
+  }
 
   async function handleDeleteDomain() {
-    if (!setupDetail || isDeleting) return;
+    if (!store.setupDetail || store.isDeleting) return;
 
+    const name = store.setupDetail.name;
     try {
-      isDeleting = true;
-      await deleteDomain(setupDetail.id);
-      toast.success(`${setupDetail.name} deleted`);
-      setupDetail = null;
+      await store.remove(store.setupDetail.id);
+      toast.success(`${name} deleted`);
       domain = "";
       backToList();
     } catch (err) {
       console.error(err);
       toast.error("Failed to delete the domain");
-    } finally {
-      isDeleting = false;
     }
   }
 
-  /* ---------------------------------------------------------
-   * VERIFY + POLLING
-   * --------------------------------------------------------- */
-  let pollTimer: ReturnType<typeof setInterval> | undefined;
-
-  function stopPolling() {
-    if (pollTimer) {
-      clearInterval(pollTimer);
-      pollTimer = undefined;
-    }
-  }
-
-  function allRecordsVerified(detail: DomainDetail): boolean {
-    return (
-      detail.status === "verified" ||
-      (detail.records.length > 0 &&
-        detail.records.every((r) => r.status === "verified"))
-    );
-  }
-
-  async function pollStatus() {
-    if (!setupDetail || verified) return stopPolling();
-
-    try {
-      const detail = await getDomain(setupDetail.id);
-      setupDetail = detail;
-
-      if (allRecordsVerified(detail)) {
-        stopPolling();
-        verified = true;
-        domain = detail.name;
-        toast.success(`${detail.name} is verified!`);
-        setInboxEnabled(true).catch(console.error);
-
-        setTimeout(() => {
-          backToList();
-        }, 1200);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  }
-
-  async function handleVerify() {
-    if (!setupDetail || isVerifying) return;
-
-    try {
-      isVerifying = true;
-      setupDetail = await verifyDomain(setupDetail.id);
-
-      let attempts = 0;
-      stopPolling();
-      pollTimer = setInterval(() => {
-        attempts += 1;
-        if (attempts > POLL_MAX_ATTEMPTS || verified) {
-          stopPolling();
-          if (!verified) {
-            isVerifying = false;
-            toast.error(
-              "Verification is taking too long. Check your DNS records and try again.",
-            );
-          }
-          return;
-        }
-        pollStatus();
-      }, POLL_INTERVAL_MS);
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to trigger verification");
-    } finally {
-      isVerifying = false;
-    }
+  function finishInboxFlag() {
+    const detail = store.setupDetail;
+    if (!detail) return;
+    const enabled =
+      detail.capabilities.receiving === "enabled" &&
+      detail.records.length > 0 &&
+      detail.records.every((r) => r.status === "verified");
+    setInboxEnabled(enabled).catch(console.error);
   }
 
   onMount(() => {
-    loadDomains();
-    return () => stopPolling();
+    store.load().catch((err) => {
+      console.error(err);
+      toast.error("Failed to load domains");
+      store.markLoaded();
+    });
   });
 </script>
 
@@ -414,7 +220,7 @@
         in:fly={SLIDE_IN}
         out:fly={SLIDE_OUT}
       >
-        {#if isLoading}
+        {#if store.isLoading}
           <div class="flex flex-col gap-2" aria-busy="true">
             {#each [0, 1, 2] as i (i)}
               <div class="border rounded-lg px-4 py-3.5 flex items-center gap-3">
@@ -424,7 +230,7 @@
               </div>
             {/each}
           </div>
-        {:else if domains.length === 0}
+        {:else if store.domains.length === 0}
           <Empty.Root class="border border-dashed">
             <Empty.Header>
               <Empty.Media variant="icon">
@@ -436,14 +242,14 @@
               </Empty.Description>
             </Empty.Header>
             <Empty.Content>
-              <Button onclick={openSetup}>
+              <Button onclick={openCreate}>
                 <Plus /> Add domain
               </Button>
             </Empty.Content>
           </Empty.Root>
         {:else}
           <Item.Group>
-            {#each domains as d (d.id)}
+            {#each store.domains as d (d.id)}
               <button
                 type="button"
                 class="text-left w-full"
@@ -481,7 +287,7 @@
             variant="ghost"
             size="sm"
             class="mt-3 w-full"
-            onclick={openSetup}
+            onclick={openCreate}
           >
             <Plus /> Add another domain
           </Button>
@@ -503,10 +309,10 @@
         in:fly={SLIDE_BACK_IN}
         out:fly={SLIDE_BACK_OUT}
       >
-        {#if !setupDetail}
+        {#if !store.setupDetail}
           <!-- CREATE FORM (extracted component) -->
           <CreateDomainForm
-            isCreating={isCreating}
+            isCreating={store.isCreating}
             onBack={backToList}
             onCreate={handleCreate}
           />
@@ -516,8 +322,8 @@
             <Card.Header>
               <Card.Title class="flex items-center justify-between gap-2">
                 <span class="flex items-center gap-2 min-w-0">
-                  <span class="truncate">{setupDetail.name}</span>
-                  {#if verified}
+                  <span class="truncate">{store.setupDetail.name}</span>
+                  {#if store.verified}
                     <span
                       class="text-[10px] uppercase tracking-wide font-medium px-2 py-0.5 rounded bg-green-500/10 text-green-600 shrink-0"
                     >
@@ -525,32 +331,36 @@
                     </span>
                   {:else}
                     <span
-                      class="text-[10px] uppercase tracking-wide font-medium px-2 py-0.5 rounded shrink-0 {STATUS_STYLES[setupDetail.status] ?? STATUS_STYLES.not_started}"
+                      class="text-[10px] uppercase tracking-wide font-medium px-2 py-0.5 rounded shrink-0 {STATUS_STYLES[store.setupDetail.status] ?? STATUS_STYLES.not_started}"
                     >
-                      {statusLabel(setupDetail.status)}
+                      {statusLabel(store.setupDetail.status)}
                     </span>
                   {/if}
                 </span>
-                {#if !verified}
+                {#if !store.verified}
                   {@render confirmDeleteDomain()}
                 {/if}
               </Card.Title>
               <Card.Description>
                 Add these records at your DNS provider for
-                {setupDetail.name}. Click a name or value to copy it.
+                {store.setupDetail.name}. Click a name or value to copy it.
               </Card.Description>
             </Card.Header>
 
             <Card.Content>
               <DnsRecordsCard
-                detail={setupDetail}
+                detail={store.setupDetail}
                 bordered={false}
-                isVerifying={isVerifying}
-                isTogglingReceiving={isTogglingReceiving}
-                onVerify={handleVerify}
+                showReceivingToggle={true}
+                isVerifying={store.isVerifying}
+                isTogglingReceiving={store.isTogglingReceiving}
+                onVerify={() => store.verify().catch(console.error)}
                 onToggleReceiving={handleReceivingToggle}
                 onBack={backToList}
-                onContinue={continueToEmails}
+                onContinue={() => {
+                  finishInboxFlag();
+                  onContinue();
+                }}
               />
             </Card.Content>
           </Card.Root>
@@ -568,7 +378,7 @@
         variant="destructive"
         size="icon-sm"
         title="Delete domain"
-        disabled={isDeleting}
+        disabled={store.isDeleting}
       >
         <Trash />
       </Button>
@@ -576,7 +386,7 @@
     <AlertDialog.Content>
       <AlertDialog.Header>
         <AlertDialog.Title>
-          Delete {setupDetail?.name} from Resend?
+          Delete {store.setupDetail?.name} from Resend?
         </AlertDialog.Title>
         <AlertDialog.Description>
           This permanently removes the domain and all its DNS records from
@@ -587,9 +397,10 @@
         <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
         <AlertDialog.Action
           class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          disabled={store.isDeleting}
           onclick={handleDeleteDomain}
         >
-          {isDeleting ? "Deleting..." : "Delete domain"}
+          Deleting...
         </AlertDialog.Action>
       </AlertDialog.Footer>
     </AlertDialog.Content>
