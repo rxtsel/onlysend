@@ -13,13 +13,16 @@
 
   import {
     createDomain,
+    deleteDomain,
     getDomain,
     listDomains,
     setDomainReceiving,
+    setInboxEnabled,
     verifyDomain,
     type DomainDetail,
     type DomainSummary,
   } from "@/lib/commom/store";
+  import { Trash } from "@lucide/svelte";
   import { toast } from "svelte-sonner";
 
   import { Button } from "@/lib/components/ui/button";
@@ -30,11 +33,22 @@
   import * as Item from "@/lib/components/ui/item";
   import { Skeleton } from "@/lib/components/ui/skeleton";
   import { Switch } from "@/lib/components/ui/switch";
+  import * as Select from "@/lib/components/ui/select";
+  import * as AlertDialog from "$lib/components/ui/alert-dialog";
+  import DnsRecordsCard from "@/lib/components/setup/dns-records-card.svelte";
+
+  const REGIONS = [
+    { value: "us-east-1", label: "US East (Virginia)" },
+    { value: "eu-west-1", label: "Europe (Ireland)" },
+    { value: "sa-east-1", label: "South America (São Paulo)" },
+    { value: "ap-northeast-1", label: "Asia Pacific (Tokyo)" },
+  ];
   import {
     ArrowLeft,
     CheckCircle2,
     Copy,
     Globe,
+    Info,
     Loader,
     Plus,
     XCircle,
@@ -55,14 +69,57 @@
 
   let view = $state<View>("list");
   let domains = $state<DomainSummary[]>([]);
+  /** Resend id of the currently selected domain. */
+  let selectedId = $state("");
   let isLoading = $state(true);
 
   // Setup view state
   let newDomainName = $state("");
+  let newDomainRegion = $state("us-east-1");
+  let newDomainInbox = $state(true);
   let isCreating = $state(false);
   let setupDetail = $state<DomainDetail | null>(null);
   let isVerifying = $state(false);
   let verified = $state(false);
+  let isTogglingReceiving = $state(false);
+
+  /** Ready to move on once sending works for this domain. */
+  const setupUsable = $derived(
+    !!setupDetail &&
+      (setupDetail.status === "verified" ||
+        setupDetail.capabilities.sending === "enabled"),
+  );
+
+  async function handleReceivingToggle(checked: boolean) {
+    if (!setupDetail || isTogglingReceiving) return;
+
+    try {
+      isTogglingReceiving = true;
+      setupDetail = await setDomainReceiving(setupDetail.id, checked);
+      toast.success(
+        checked
+          ? "Receiving enabled. Add the MX record below."
+          : "Receiving disabled",
+      );
+      if (allRecordsVerified(setupDetail)) {
+        verified = true;
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to update receiving");
+    } finally {
+      isTogglingReceiving = false;
+    }
+  }
+
+  function continueToEmails() {
+    if (!setupDetail) return;
+    setInboxEnabled(
+      setupDetail.capabilities.receiving === "enabled" &&
+        allRecordsVerified(setupDetail),
+    ).catch(console.error);
+    onContinue();
+  }
   let errors = $state<Record<string, string>>({});
 
   const POLL_INTERVAL_MS = 5000;
@@ -100,6 +157,15 @@
     isLoading = true;
     try {
       domains = await listDomains();
+
+      // Observation point: keep the Inbox visibility flag in sync with
+      // what Resend reports for the user's domains.
+      const inboxReady = domains.some(
+        (d) =>
+          d.capabilities?.receiving === "enabled" &&
+          ["verified", "partially_verified"].includes(d.status),
+      );
+      setInboxEnabled(inboxReady).catch(console.error);
     } catch (err) {
       console.error(err);
       toast.error("Failed to load domains");
@@ -108,14 +174,24 @@
     }
   }
 
-  function select(name: string) {
+  function select(name: string, id: string) {
     domain = name;
+    selectedId = id;
   }
 
-  /** Verified domains select directly; unverified ones open their DNS setup. */
+  /**
+   * A domain is selectable once sending works for it — a
+   * partially-verified domain usually qualifies even though its global
+   * status isn't fully "verified" yet.
+   */
+  function canSelect(d: DomainSummary): boolean {
+    return d.status === "verified" || d.capabilities?.sending === "enabled";
+  }
+
+  /** Selectable domains select directly; the rest open their DNS setup. */
   async function handleItemClick(d: DomainSummary) {
-    if (d.status === "verified") {
-      select(d.name);
+    if (canSelect(d)) {
+      select(d.name, d.id);
       return;
     }
 
@@ -125,10 +201,66 @@
       verified = allRecordsVerified(detail);
       errors = {};
       await switchView("setup");
+      maybeAutoVerify();
     } catch (err) {
       console.error(err);
-      toast.error("Failed to load domain details");
+      toast.error(`Failed to load domain details. ${err ?? ""}`.trim());
     }
+  }
+
+  /**
+   * Continue routes through the DNS view whenever there is something
+   * pending: unverified records or receiving not enabled yet.
+   * Fully-green domains skip straight to email options.
+   */
+  async function handleContinue() {
+    if (!domain) return;
+
+    const summary = domains.find((d) => d.name === domain);
+    if (!summary) {
+      onContinue();
+      return;
+    }
+
+    try {
+      const detail = await getDomain(summary.id);
+      setupDetail = detail;
+      verified = allRecordsVerified(detail);
+      errors = {};
+
+      const needsDns =
+        detail.status !== "verified" ||
+        !allRecordsVerified(detail) ||
+        detail.capabilities.receiving !== "enabled";
+
+      if (needsDns) {
+        await switchView("setup");
+        maybeAutoVerify();
+      } else {
+        onContinue();
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error(`Failed to load domain details. ${err ?? ""}`.trim());
+    }
+  }
+
+  /**
+   * Replicates the dashboard refresh: trigger a re-verification cycle
+   * once when entering the DNS view with pending records, then let the
+   * bounded polling converge the statuses. Skipped for brand-new domains
+   * (nothing to verify until the user adds their DNS records).
+   */
+  function maybeAutoVerify() {
+    if (
+      !setupDetail ||
+      verified ||
+      setupDetail.status === "not_started" ||
+      allRecordsVerified(setupDetail)
+    ) {
+      return;
+    }
+    handleVerify();
   }
 
   function openSetup() {
@@ -160,7 +292,13 @@
 
     try {
       isCreating = true;
-      setupDetail = await createDomain(name);
+      const created = await createDomain({
+        name,
+        region: newDomainRegion,
+        enableReceiving: newDomainInbox,
+      });
+      setupDetail = created;
+      toast.success("Domain created. Add the DNS records below.");
     } catch (err) {
       console.error(err);
       toast.error("Failed to create the domain");
@@ -178,28 +316,26 @@
       toast.error("Could not copy");
     }
   }
-
   /* ---------------------------------------------------------
-   * RECEIVING TOGGLE
+   * DELETE DOMAIN (only while not fully verified)
    * --------------------------------------------------------- */
-  let isTogglingReceiving = $state(false);
+  let isDeleting = $state(false);
 
-  async function handleReceivingToggle(checked: boolean) {
-    if (!setupDetail || isTogglingReceiving) return;
+  async function handleDeleteDomain() {
+    if (!setupDetail || isDeleting) return;
 
     try {
-      isTogglingReceiving = true;
-      setupDetail = await setDomainReceiving(setupDetail.id, checked);
-      toast.success(
-        checked
-          ? "Receiving enabled. Add the MX record below"
-          : "Receiving disabled",
-      );
+      isDeleting = true;
+      await deleteDomain(setupDetail.id);
+      toast.success(`${setupDetail.name} deleted`);
+      setupDetail = null;
+      domain = "";
+      backToList();
     } catch (err) {
       console.error(err);
-      toast.error("Failed to update receiving");
+      toast.error("Failed to delete the domain");
     } finally {
-      isTogglingReceiving = false;
+      isDeleting = false;
     }
   }
 
@@ -235,6 +371,7 @@
         verified = true;
         domain = detail.name;
         toast.success(`${detail.name} is verified!`);
+        setInboxEnabled(true).catch(console.error);
 
         setTimeout(() => {
           backToList();
@@ -368,7 +505,7 @@
         {/if}
 
         {#if domain}
-          <Button type="button" class="w-full mt-4" onclick={onContinue}>
+          <Button type="button" class="w-full mt-4" onclick={handleContinue}>
             Continue with {domain}
           </Button>
         {/if}
@@ -409,6 +546,35 @@
                 </Field.Description>
               </Field.Field>
 
+              <Field.Field>
+                <Field.Label for="region">Region</Field.Label>
+                <Select.Root type="single" name="region" bind:value={newDomainRegion}>
+                  <Select.Trigger id="region" class="w-full">
+                    {REGIONS.find((r) => r.value === newDomainRegion)?.label}
+                  </Select.Trigger>
+                  <Select.Content>
+                    {#each REGIONS as r (r.value)}
+                      <Select.Item value={r.value}>{r.label}</Select.Item>
+                    {/each}
+                  </Select.Content>
+                </Select.Root>
+                <Field.Description>
+                  Where emails will be sent from. Closest to your audience is
+                  best.
+                </Field.Description>
+              </Field.Field>
+
+              <div class="flex items-center gap-3">
+                <div class="min-w-0 flex-1">
+                  <p class="text-sm font-medium">Inbox (receiving)</p>
+                  <p class="text-xs text-muted-foreground">
+                    Adds an MX record so this domain can receive email in
+                    OnlySend.
+                  </p>
+                </div>
+                <Switch bind:checked={newDomainInbox} />
+              </div>
+
               <div class="flex gap-2">
                 <Button
                   type="button"
@@ -425,156 +591,87 @@
             </Field.Group>
           </form>
         {:else}
-          <!-- DNS RECORDS -->
+          <!-- DNS RECORDS (shared card) -->
           <Card.Root class="w-full overflow-hidden">
             <Card.Header>
-              <Card.Title class="flex items-center justify-between">
-                <span>{setupDetail.name}</span>
-                {#if verified}
-                  <span
-                    class="text-[10px] uppercase tracking-wide font-medium px-2 py-0.5 rounded bg-green-500/10 text-green-600"
-                  >
-                    Verified
-                  </span>
+              <Card.Title class="flex items-center justify-between gap-2">
+                <span class="flex items-center gap-2 min-w-0">
+                  <span class="truncate">{setupDetail.name}</span>
+                  {#if verified}
+                    <span
+                      class="text-[10px] uppercase tracking-wide font-medium px-2 py-0.5 rounded bg-green-500/10 text-green-600 shrink-0"
+                    >
+                      Verified
+                    </span>
+                  {:else}
+                    <span
+                      class="text-[10px] uppercase tracking-wide font-medium px-2 py-0.5 rounded shrink-0 {STATUS_STYLES[setupDetail.status] ?? STATUS_STYLES.not_started}"
+                    >
+                      {statusLabel(setupDetail.status)}
+                    </span>
+                  {/if}
+                </span>
+                {#if !verified}
+                  {@render confirmDeleteDomain()}
                 {/if}
               </Card.Title>
               <Card.Description>
-                Add these records to your DNS provider. Click a name or value
-                to copy it.
+                Add these records at your DNS provider for
+                {setupDetail.name}. Click a name or value to copy it.
               </Card.Description>
-              <Card.Action>
-                <Button
-                  type="button"
-                  size="sm"
-                  onclick={handleVerify}
-                  disabled={verified || isVerifying}
-                >
-                  {#if verified}
-                    <CheckCircle2 /> Done
-                  {:else}
-                    Verify domain
-                  {/if}
-                </Button>
-              </Card.Action>
             </Card.Header>
 
             <Card.Content>
-              <div class="flex flex-col gap-2">
-                {#each setupDetail.records as record, i (i)}
-                  {@const isOk = record.status === "verified"}
-                  {@const isFailed = record.status === "failed"}
-                  <div class="border rounded-md px-3 py-2 min-w-0">
-                    <div class="flex items-center gap-2 mb-1 min-w-0">
-                      {#if isOk}
-                        <CheckCircle2 class="size-4 text-green-600 shrink-0" />
-                      {:else if isFailed}
-                        <XCircle class="size-4 text-red-600 shrink-0" />
-                      {:else}
-                        <Loader
-                          class="size-4 animate-spin shrink-0 text-muted-foreground"
-                        />
-                      {/if}
-                      <span
-                        class="text-xs font-medium shrink-0"
-                        title={`${record.recordType} record`}
-                      >
-                        {record.recordType}
-                      </span>
-
-                      <!-- NAME: click or hover-copy -->
-                      <div class="group/name flex items-center gap-x-1 min-w-0 flex-1">
-                        <button
-                          type="button"
-                          class="text-xs text-muted-foreground truncate min-w-0 cursor-pointer hover:bg-muted/60 rounded px-1 -mx-1"
-                          title={`Copy ${record.name}`}
-                          onclick={() => copyRecord(record.name)}
-                        >
-                          {record.name}
-                        </button>
-                        <button
-                          type="button"
-                          class="shrink-0 opacity-0 group-hover/name:opacity-100 transition-opacity cursor-pointer text-muted-foreground hover:text-foreground"
-                          title={`Copy ${record.name}`}
-                          tabindex="-1"
-                          onclick={() => copyRecord(record.name)}
-                        >
-                          <Copy class="size-3" />
-                        </button>
-                      </div>
-                    </div>
-
-                    <!-- VALUE: click or hover-copy -->
-                    <div class="group/value flex items-center gap-x-1 pl-6 min-w-0">
-                      <button
-                        type="button"
-                        class="font-mono text-[11px] text-muted-foreground truncate min-w-0 cursor-pointer hover:bg-muted/60 rounded px-1 -mx-1"
-                        title={`Copy ${record.value}`}
-                        onclick={() => copyRecord(record.value)}
-                      >
-                        {record.value}
-                      </button>
-                      <button
-                        type="button"
-                        class="shrink-0 opacity-0 group-hover/value:opacity-100 transition-opacity cursor-pointer text-muted-foreground hover:text-foreground"
-                        title={`Copy ${record.value}`}
-                        tabindex="-1"
-                        onclick={() => copyRecord(record.value)}
-                      >
-                        <Copy class="size-3" />
-                      </button>
-                    </div>
-                  </div>
-                {/each}
-
-                {#if isVerifying && !verified}
-                  <p class="text-xs text-muted-foreground text-center pt-1">
-                    Checking DNS propagation...
-                  </p>
-                {/if}
-
-                <p class="text-xs text-muted-foreground border-t pt-3">
-                  Optional: add a DMARC TXT record (
-                  <code class="font-mono">_dmarc.{setupDetail.name}</code> ) at
-                  your provider for anti-spoofing protection.
-                </p>
-
-                <!-- RECEIVING -->
-                <div class="border rounded-md px-3 py-2.5 flex items-center gap-3 mt-2">
-                  <div class="min-w-0 flex-1">
-                    <p class="text-sm font-medium">Receiving (inbound)</p>
-                    {#if setupDetail.status === "verified"}
-                      <p class="text-xs text-muted-foreground">
-                        Adds an MX record so this domain can receive emails.
-                      </p>
-                    {:else}
-                      <p class="text-xs text-muted-foreground">
-                        Verify the domain first to enable receiving.
-                      </p>
-                    {/if}
-                  </div>
-                  <Switch
-                    checked={setupDetail.capabilities.receiving === "enabled"}
-                    disabled={setupDetail.status !== "verified" || isTogglingReceiving}
-                    onCheckedChange={handleReceivingToggle}
-                  />
-                </div>
-              </div>
+              <DnsRecordsCard
+                detail={setupDetail}
+                bordered={false}
+                isVerifying={isVerifying}
+                isTogglingReceiving={isTogglingReceiving}
+                onVerify={handleVerify}
+                onToggleReceiving={handleReceivingToggle}
+                onBack={backToList}
+                onContinue={continueToEmails}
+              />
             </Card.Content>
-
-            <Card.Footer>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                class="w-full"
-                onclick={backToList}
-              >
-                <ArrowLeft /> Back to domains
-              </Button>
-            </Card.Footer>
           </Card.Root>
         {/if}
       </div>
     {/if}
   </div>
 </div>
+
+{#snippet confirmDeleteDomain()}
+  <AlertDialog.Root>
+    <AlertDialog.Trigger>
+      <Button
+        type="button"
+        variant="destructive"
+        size="icon-sm"
+        title="Delete domain"
+        disabled={isDeleting}
+      >
+        <Trash />
+      </Button>
+    </AlertDialog.Trigger>
+    <AlertDialog.Content>
+      <AlertDialog.Header>
+        <AlertDialog.Title>
+          Delete {setupDetail?.name} from Resend?
+        </AlertDialog.Title>
+        <AlertDialog.Description>
+          This permanently removes the domain and all its DNS records from
+          your Resend account. This action cannot be undone.
+        </AlertDialog.Description>
+      </AlertDialog.Header>
+      <AlertDialog.Footer>
+        <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+        <AlertDialog.Action
+          class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          onclick={handleDeleteDomain}
+        >
+          {isDeleting ? "Deleting..." : "Delete domain"}
+        </AlertDialog.Action>
+      </AlertDialog.Footer>
+    </AlertDialog.Content>
+  </AlertDialog.Root>
+{/snippet}

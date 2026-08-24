@@ -37,8 +37,19 @@
     disconnectResend,
     getActiveDomain,
     getConnectionStatus,
+    getOnboardingState,
     type ConnectionStatus,
   } from "../commom/store";
+  import ReceivingSetup from "@/lib/components/setup/receiving-setup.svelte";
+  import { inboundStatus } from "../commom/inbound-status.svelte";
+
+  // The embedded setup flow flips the shared readiness signal.
+  $effect(() => {
+    if (inboundStatus.ready && !inboxEnabled) {
+      inboxEnabled = true;
+      showInboxSetup = false;
+    }
+  });
 
   const data = {
     nav: [
@@ -60,6 +71,8 @@
   let connection = $state<ConnectionStatus>({ method: null });
   let isConnecting = $state(false);
   let isDisconnecting = $state(false);
+  let inboxEnabled = $state(false);
+  let showInboxSetup = $state(false);
 
   // From Email form state
   let emailLabel = $state("");
@@ -79,14 +92,16 @@
 
   async function loadData() {
     try {
-      const [emails, domain, status] = await Promise.all([
+      const [emails, domain, status, onboarding] = await Promise.all([
         listFromEmails(),
         getActiveDomain(),
         getConnectionStatus(),
+        getOnboardingState(),
       ]);
       fromEmails = emails;
       activeDomain = domain;
       connection = status;
+      inboxEnabled = onboarding.inboxEnabled;
     } catch (error) {
       console.error("Error loading data:", error);
       toast.error("Failed to load data");
@@ -442,9 +457,11 @@
               class="rounded-full shrink-0"
             />
           </Item.Media>
-          <Item.Content>
-            <Item.Title>{fromEmail.label}</Item.Title>
-            <Item.Description>{fromEmail.address}</Item.Description>
+          <Item.Content class="text-left">
+            <Item.Title class="text-left">{fromEmail.label}</Item.Title>
+            <Item.Description class="text-left"
+              >{fromEmail.address}</Item.Description
+            >
           </Item.Content>
           <Item.Actions>
             {#if fromEmail.isDefault}
@@ -525,6 +542,34 @@
           {isConnecting ? "Waiting for authorization..." : "Connect with Resend"}
         </Button>
       </div>
+    {/if}
+
+    <!-- INBOX SETUP -->
+    {#if connection.method}
+      <h3 class="text-sm font-medium mt-6 mb-2">Inbox</h3>
+      {#if inboxEnabled && !showInboxSetup}
+        <div class="border rounded-md px-4 py-3 flex items-center justify-between">
+          <p class="text-sm">Inbox enabled for your active domain.</p>
+        </div>
+      {:else}
+        {#if !showInboxSetup}
+          <div class="border rounded-md px-4 py-3">
+            <p class="text-sm text-muted-foreground mb-3">
+              Receiving is not configured yet. Set it up to read incoming email
+              in OnlySend.
+            </p>
+            <Button type="button" size="sm" onclick={() => (showInboxSetup = true)}>
+              Set up inbox
+            </Button>
+          </div>
+        {:else}
+          <div
+            class="border rounded-md p-4 max-h-80 overflow-y-auto overflow-x-hidden min-w-0 w-full"
+          >
+            <ReceivingSetup bordered={false} />
+          </div>
+        {/if}
+      {/if}
     {/if}
   </div>
 {/snippet}
