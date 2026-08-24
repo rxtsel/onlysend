@@ -2,6 +2,7 @@
   import { toast } from "svelte-sonner";
 
   import { emailOptionSchema } from "@/lib/schemas/email-option.schema";
+  import { stripAt } from "@/lib/commom/email";
 
   import { Button } from "@/lib/components/ui/button";
   import * as Field from "@/lib/components/ui/field";
@@ -22,19 +23,6 @@
   let emailLabel = $state("");
   let emailAddress = $state("");
   let errors = $state<Record<string, string>>({});
-
-  /**
-   * Pure helper: users often paste a full email. Splits at the first "@"
-   * so we can keep only the local part and inspect the typed domain.
-   */
-  function stripAt(raw: string): { local: string; typedDomain: string } {
-    const at = raw.indexOf("@");
-    if (at === -1) return { local: raw, typedDomain: "" };
-    return {
-      local: raw.slice(0, at),
-      typedDomain: raw.slice(at + 1).trim().toLowerCase(),
-    };
-  }
 
   const previewLocal = $derived(stripAt(emailAddress).local);
 
