@@ -5,8 +5,17 @@ export async function hasApiKey(): Promise<boolean> {
 }
 
 /** True when onboarding was completed with either API key or OAuth. */
-export async function isAuthenticated(): Promise<boolean> {
-  return await invoke<boolean>("is_authenticated");
+export interface OnboardingState {
+  complete: boolean;
+  authenticated: boolean;
+}
+
+export async function getOnboardingState(): Promise<OnboardingState> {
+  return await invoke<OnboardingState>("get_onboarding_state");
+}
+
+export async function markSetupComplete(): Promise<void> {
+  await invoke("mark_setup_complete");
 }
 
 export type ConnectionMethod = "oauth" | "api_key" | null;
@@ -108,9 +117,5 @@ export async function setDomainReceiving(
  * --------------------------------------------------------- */
 export async function saveSelectedDomain(domain: string): Promise<void> {
   await invoke("save_selected_domain", { domain });
-}
-
-export async function getSelectedDomain(): Promise<string | null> {
-  return await invoke<string | null>("get_selected_domain");
 }
 

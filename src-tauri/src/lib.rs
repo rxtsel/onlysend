@@ -55,13 +55,13 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             store::has_api_key,
-            store::is_authenticated,
+            store::get_onboarding_state,
+            store::mark_setup_complete,
             store::get_connection_status,
             store::save_api_key,
             store::get_api_key,
             store::delete_api_key,
             store::save_selected_domain,
-            store::get_selected_domain,
             oauth::connect_resend,
             oauth::disconnect_resend,
             permissions::probe_full_access,

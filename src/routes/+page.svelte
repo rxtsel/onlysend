@@ -4,7 +4,8 @@
   import { fade, fly } from "svelte/transition";
 
   import {
-    isAuthenticated,
+    getOnboardingState,
+    markSetupComplete,
     saveSelectedDomain,
   } from "@/lib/commom/store";
   import Logo from "@/lib/components/logo.svelte";
@@ -57,17 +58,21 @@
   };
 
   /* ---------------------------------------------------------
-   * CHECK AUTH ON LOAD
+   * RESUME ONBOARDING ON LOAD
    * --------------------------------------------------------- */
   onMount(async () => {
     isChecking = true;
     try {
-      const authenticated = await isAuthenticated();
+      const state = await getOnboardingState();
 
-      if (authenticated) {
+      if (state.complete) {
         goto("/mail/sent");
         return;
       }
+
+      // Resume position is derived, not stored: with a credential the
+      // user always re-confirms their domain at step 2.
+      step = state.authenticated ? 2 : 1;
     } catch (err) {
       console.error(err);
     } finally {
@@ -102,6 +107,7 @@
 
       await Promise.all([
         saveSelectedDomain(selectedDomain),
+        markSetupComplete(),
         saveProfile({
           firstName: "",
           lastName: "",

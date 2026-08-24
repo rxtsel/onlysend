@@ -11,6 +11,9 @@ const API_KEY_RECORD: &str = "resend_api_key";
 const OAUTH_RECORD: &str = "resend_oauth";
 const CLIENT_ID_KEY: &str = "resend_oauth_client_id";
 const SELECTED_DOMAIN_KEY: &str = "selected_domain";
+const SETUP_COMPLETE_KEY: &str = "setup_complete";
+/// Obsolete key from older builds, removed on startup.
+const ONBOARDING_STEP_KEY: &str = "onboarding_step";
 const FROM_EMAILS_KEY: &str = "from_emails";
 const PROFILE_KEY: &str = "profile";
 
@@ -206,13 +209,65 @@ pub fn get_connection_status(app: AppHandle<Wry>) -> Result<ConnectionStatus, St
 /* ---------------------------------------------------------
  * Onboarding state
  * --------------------------------------------------------- */
-/// True when the user completed onboarding with either auth method.
-#[tauri::command]
-pub fn is_authenticated(app: AppHandle<Wry>) -> Result<bool, String> {
-    let has_key = load_api_key(&app)?;
-    let has_oauth = load_oauth(&app)?;
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OnboardingState {
+    pub complete: bool,
+    /// True when a credential (API key or OAuth) already exists.
+    pub authenticated: bool,
+}
 
-    Ok(has_key.is_some() || has_oauth.is_some())
+/// One-time migration for users created before the new wizard: they have an
+/// API key and from-emails but no selected domain. Derive it from the first
+/// identity so they don't have to repeat onboarding.
+fn migrate_legacy_onboarding(app: &AppHandle<Wry>) -> Result<bool, String> {
+    if load_api_key(app)?.is_none() {
+        return Ok(false);
+    }
+
+    let emails = load_from_emails(app)?;
+    let Some(first) = emails.first() else {
+        return Ok(false);
+    };
+
+    let Some(domain) = first.address.split('@').nth(1) else {
+        return Ok(false);
+    };
+
+    write_key(app, STORE_FILE, SELECTED_DOMAIN_KEY, json!(domain))?;
+    write_key(app, STORE_FILE, SETUP_COMPLETE_KEY, json!(true))?;
+    println!("[INFO] Migrated legacy onboarding state");
+
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn get_onboarding_state(app: AppHandle<Wry>) -> Result<OnboardingState, String> {
+    let mut complete = read_raw_key(&app, STORE_FILE, SETUP_COMPLETE_KEY)?
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    // Legacy users completed setup before this flag existed.
+    if !complete {
+        complete = migrate_legacy_onboarding(&app)?;
+    }
+
+    // Drop the obsolete wizard-step key from older builds.
+    if read_raw_key(&app, STORE_FILE, ONBOARDING_STEP_KEY)?.is_some() {
+        delete_key(&app, STORE_FILE, ONBOARDING_STEP_KEY)?;
+    }
+
+    let authenticated = load_api_key(&app)?.is_some() || load_oauth(&app)?.is_some();
+
+    Ok(OnboardingState {
+        complete,
+        authenticated,
+    })
+}
+
+#[tauri::command]
+pub fn mark_setup_complete(app: AppHandle<Wry>) -> Result<(), String> {
+    write_key(&app, STORE_FILE, SETUP_COMPLETE_KEY, json!(true))
 }
 
 /* ---------------------------------------------------------
@@ -221,11 +276,6 @@ pub fn is_authenticated(app: AppHandle<Wry>) -> Result<bool, String> {
 #[tauri::command]
 pub fn save_selected_domain(app: AppHandle<Wry>, domain: String) -> Result<(), String> {
     write_key(&app, STORE_FILE, SELECTED_DOMAIN_KEY, json!(domain))
-}
-
-#[tauri::command]
-pub fn get_selected_domain(app: AppHandle<Wry>) -> Result<Option<String>, String> {
-    read_string_key(&app, STORE_FILE, SELECTED_DOMAIN_KEY)
 }
 
 /* ---------------------------------------------------------
