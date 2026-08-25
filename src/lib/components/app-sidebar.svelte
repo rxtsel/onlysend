@@ -14,7 +14,8 @@
     import type { ComponentProps } from "svelte";
     import { goto } from "$app/navigation";
     import { page } from "$app/state";
-    import { onMount } from "svelte";
+    import { onMount, onDestroy } from "svelte";
+    import { fly } from "svelte/transition";
     import { toast } from "svelte-sonner";
     import { Loader } from "@lucide/svelte";
     import type { InboundEmail } from "../shared/inbound";
@@ -121,6 +122,20 @@ import { errorMessage } from "@/lib/shared/utils/errors";
     // only fetches once receiving is ready (the root page owns that
     // state); before that it stays empty and error-free.
     let lastLoadedMode = $state("");
+
+    // Account switch: clear lists and reload for the new active account.
+    function handleAccountSwitched() {
+        sentList.clearItems();
+        inboxList.clearItems();
+        domainFilter = "all";
+        lastLoadedMode = "";
+    }
+
+    window.addEventListener("account-switched", handleAccountSwitched);
+
+    onDestroy(() => {
+        window.removeEventListener("account-switched", handleAccountSwitched);
+    });
 
     $effect(() => {
       if (mode !== lastLoadedMode) {

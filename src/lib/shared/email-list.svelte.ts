@@ -91,5 +91,10 @@ export function createEmailList<T>(
     markLoaded() {
       isLoading = false;
     },
+    clearItems() {
+      items = [];
+      hasMore = true;
+      currentPage = 0;
+    },
   };
 }
