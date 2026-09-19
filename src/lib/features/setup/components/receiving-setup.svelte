@@ -65,6 +65,7 @@
   const POLL_MAX_ATTEMPTS = 60; // ~5 minutes
   let pollTimer: ReturnType<typeof setInterval> | undefined;
   let pollAttempts = 0;
+  let disposed = false;
 
   function stopPolling() {
     if (pollTimer) {
@@ -75,6 +76,7 @@
 
   /** Keeps the shared readiness signal + persisted flag in sync. */
   function syncReadiness(current: ReceivingState) {
+    if (disposed) return;
     inboundStatus.ready = current === "ready";
     if (current !== "loading") {
       setInboxEnabled(current === "ready").catch(console.error);
@@ -82,6 +84,7 @@
   }
 
   function applyDetail(d: DomainDetail) {
+    if (disposed) return;
     detail = d;
 
     // Persist last-known state so the card renders instantly next time.
@@ -109,7 +112,7 @@
   }
 
   function startPollingIfPending() {
-    if (rxState !== "mx-pending") return;
+    if (disposed || rxState !== "mx-pending") return;
 
     pollAttempts = 0;
     stopPolling();
@@ -121,7 +124,9 @@
       }
 
       try {
-        detail = await getDomain(detail.id);
+        const updated = await getDomain(detail.id);
+        if (disposed) return;
+        detail = updated;
         if (allRecordsVerified(detail)) {
           stopPolling();
           rxState = "ready";
@@ -138,7 +143,9 @@
 
     try {
       isEnabling = true;
-      detail = await setDomainReceiving(detail.id, true);
+      const updated = await setDomainReceiving(detail.id, true);
+      if (disposed) return;
+      detail = updated;
       toast.success("Receiving enabled. Add the MX record below.");
       rxState = "mx-pending";
       startPollingIfPending();
@@ -155,7 +162,9 @@
 
     try {
       isVerifying = true;
-      detail = await verifyDomain(detail.id);
+      const updated = await verifyDomain(detail.id);
+      if (disposed) return;
+      detail = updated;
       startPollingIfPending();
     } catch (err) {
       console.error(err);
@@ -170,6 +179,7 @@
       // 1) Instant paint from the local cache (no request).
       try {
         const cached = await getInboundSetupCache();
+        if (disposed) return;
         if (cached) {
           applyDetail(cached as DomainDetail);
         }
@@ -180,7 +190,9 @@
       // 2) A single fresh fetch to true-up statuses. No continuous polling:
       //    verification checks run only when the user clicks Verify/Enable.
       try {
+        if (disposed) return;
         const domains = await listDomains();
+        if (disposed) return;
         const active =
           domains.find((d) => d.status === "verified") ?? domains[0] ?? null;
 
@@ -195,6 +207,7 @@
         await loadDetail(active.id);
       } catch (err) {
         console.error(err);
+        if (disposed) return;
         if (isAuthError(err)) {
           authErrorToast(err);
         } else {
@@ -204,7 +217,10 @@
       }
     })();
 
-    return () => stopPolling();
+    return () => {
+      disposed = true;
+      stopPolling();
+    };
   });
 </script>
 

@@ -14,7 +14,7 @@
     import type { ComponentProps } from "svelte";
     import { goto } from "$app/navigation";
     import { page } from "$app/state";
-    import { onMount, onDestroy } from "svelte";
+    import { onMount, onDestroy, untrack } from "svelte";
     import { fly } from "svelte/transition";
     import { toast } from "svelte-sonner";
     import { Loader } from "@lucide/svelte";
@@ -89,7 +89,7 @@ import { errorMessage } from "@/lib/shared/utils/errors";
         return mail.from.split("@")[1]?.toLowerCase() ?? "";
     }
     const sentList = createEmailList<SentEmail>((limit, offset) =>
-        listSentEmails(limit, offset),
+        listSentEmails(limit, offset, true),
     );
 
     const inboxList = createEmailList<InboundEmail>((limit, offset) =>
@@ -121,52 +121,36 @@ import { errorMessage } from "@/lib/shared/utils/errors";
     // Load each list once when its mode becomes active. The inbox list
     // only fetches once receiving is ready (the root page owns that
     // state); before that it stays empty and error-free.
-    let lastLoadedMode = $state("");
-
-    // Account switch: clear lists and reload for the new active account.
-    function handleAccountSwitched() {
-        sentList.clearItems();
-        inboxList.clearItems();
-        domainFilter = "all";
-        lastLoadedMode = "";
-    }
-
-    window.addEventListener("account-switched", handleAccountSwitched);
+    let lastLoadContext = "";
+    let disposed = false;
 
     onDestroy(() => {
-        window.removeEventListener("account-switched", handleAccountSwitched);
+        disposed = true;
+        sentList.clearItems();
+        inboxList.clearItems();
     });
 
+    // Only mode/readiness drive loading. Never subscribe this effect to list
+    // items or loading flags: an empty inbox is a valid completed response.
     $effect(() => {
-      if (mode !== lastLoadedMode) {
-        lastLoadedMode = mode;
-        domainFilter = "all";
-
-        if (mode === "inbox" && !inboundStatus.ready) {
-          inboxList.markLoaded();
-          return;
-        }
-
-        activeList.refreshSilent().catch((err) => {
-          console.error(`Error loading ${mode} emails:`, err);
-          if (isAuthError(err)) {
-            authErrorToast(err);
-          } else {
-            toast.error(errorMessage(err, "Failed to load emails"));
-          }
-          activeList.markLoaded();
+        const currentMode = mode;
+        const ready = currentMode !== "inbox" || inboundStatus.ready;
+        untrack(() => {
+            const context = `${currentMode}:${ready}`;
+            if (context === lastLoadContext) return;
+            lastLoadContext = context;
+            domainFilter = "all";
+            const list = currentMode === "inbox" ? inboxList : sentList;
+            if (!ready) {
+                list.markLoaded();
+                return;
+            }
+            void list.refresh().catch((err) => {
+                if (disposed) return;
+                if (isAuthError(err)) authErrorToast(err);
+                else toast.error(errorMessage(err, "Failed to load emails"));
+            });
         });
-      }
-    });
-
-    // Re-fetch the inbox as soon as receiving becomes ready.
-    $effect(() => {
-      if (mode === "inbox" && inboundStatus.ready && lastLoadedMode === "inbox") {
-        const alreadyFetched = inboxList.items.length > 0;
-        if (!alreadyFetched) {
-          inboxList.refreshSilent().catch(console.error);
-        }
-      }
     });
 
     async function handleRefresh() {
@@ -202,6 +186,7 @@ import { errorMessage } from "@/lib/shared/utils/errors";
                 getReadInboundIds(),
                 getOnboardingState(),
             ]);
+            if (disposed) return;
             readIds = new Set(ids);
             inboxEnabled = state.inboxEnabled;
         } catch (err) {
@@ -210,9 +195,13 @@ import { errorMessage } from "@/lib/shared/utils/errors";
     });
 
     // Settings can flip this flag (Set up inbox flow); pick it up live.
-    window.addEventListener("inbox-enabled-changed", ((e: CustomEvent<boolean>) => {
-        inboxEnabled = e.detail;
-    }) as EventListener);
+    onMount(() => {
+        const handleInboxEnabled = ((e: CustomEvent<boolean>) => {
+            inboxEnabled = e.detail;
+        }) as EventListener;
+        window.addEventListener("inbox-enabled-changed", handleInboxEnabled);
+        return () => window.removeEventListener("inbox-enabled-changed", handleInboxEnabled);
+    });
 
     /** Nav items, with Inbox gated behind the receiving flag. */
     const navItems = $derived(
@@ -236,13 +225,14 @@ import { errorMessage } from "@/lib/shared/utils/errors";
                 mode !== "inbox" ||
                 document.hidden ||
                 !inboundStatus.ready ||
-                !inboxList.items.length
+                disposed
             )
                 return;
 
             try {
                 const previousNewest = inboxList.items[0]?.id;
                 await inboxList.refreshSilent();
+                if (disposed) return;
 
                 const items = inboxList.items;
                 const oldIndex = previousNewest

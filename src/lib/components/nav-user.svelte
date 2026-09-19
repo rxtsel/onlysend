@@ -15,13 +15,14 @@
     disconnectResend,
     getConnectionStatus,
     listAccounts,
-    setActiveAccount,
     type ConnectionMethod,
     type AccountMeta,
   } from "@/lib/shared/api/auth";
   import { getActiveDomain } from "@/lib/shared/api/domains";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
+  import { page } from "$app/state";
+  import { switchMailAccount } from "@/lib/features/auth/account-switch.svelte";
   import { toast } from "svelte-sonner";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { ConnectionStore } from "@/lib/features/auth/connection-store.svelte";
@@ -61,12 +62,11 @@
   }
 
   async function handleSwitchAccount(accountId: string) {
+    if (accountId === activeAccountId) return;
+    if (page.url.pathname === "/mail/composer" &&
+        !window.confirm("Switch accounts and discard the current draft?")) return;
     try {
-      await setActiveAccount(accountId);
-      await loadData();
-
-      // Notify the app to reload data for the new account
-      window.dispatchEvent(new CustomEvent("account-switched"));
+      await switchMailAccount(accountId, page.url.pathname);
     } catch (err) {
       console.error("Error switching account:", err);
       toast.error("Failed to switch account");
@@ -83,7 +83,6 @@
     if (result.ok) {
       toast.success("Disconnected from Resend");
       showDisconnectConfirm = false;
-      goto("/");
     } else {
       toast.error(result.error);
     }
@@ -190,9 +189,8 @@
         <AlertDialog.Header>
           <AlertDialog.Title>Disconnect from Resend?</AlertDialog.Title>
           <AlertDialog.Description>
-            Your OAuth grant will be revoked and any stored API key removed.
-            You'll be signed out and returned to setup. Your local data
-            (identities, history) stays and revives when you reconnect.
+            This account and its saved credentials will be removed from OnlySend.
+            Other connected accounts and your domains and emails in Resend will not be deleted.
           </AlertDialog.Description>
         </AlertDialog.Header>
         <AlertDialog.Footer>

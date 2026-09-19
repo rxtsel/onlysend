@@ -4,7 +4,8 @@
     import * as Breadcrumb from "@/lib/components/ui/breadcrumb";
     import { Separator } from "@/lib/components/ui/separator";
     import * as Sidebar from "@/lib/components/ui/sidebar";
-    import { Send } from "@lucide/svelte";
+    import { Send, Loader } from "@lucide/svelte";
+    import { accountSwitch } from "@/lib/features/auth/account-switch.svelte";
     import * as AlertDialog from "$lib/components/ui/alert-dialog";
     import { buttonVariants } from "$lib/components/ui/button";
 
@@ -36,6 +37,12 @@
     const listHref = $derived(isInboxRoot || isInboxDetail ? "/mail/inbox" : "/mail/sent");
 </script>
 
+{#if accountSwitch.busy}
+    <div class="flex h-screen items-center justify-center gap-2" role="status" aria-live="polite">
+        <Loader class="animate-spin" aria-hidden="true" /> Switching account…
+    </div>
+{:else}
+{#key accountSwitch.generation}
 <Sidebar.Provider style="--sidebar-width: 450px;" open={!isComposer}>
     <AppSidebar />
     <Sidebar.Inset>
@@ -91,6 +98,8 @@
         </div>
     </Sidebar.Inset>
 </Sidebar.Provider>
+{/key}
+{/if}
 
 {#snippet ConfirmDialog()}
     <AlertDialog.Root bind:open={isConfirmDialogOpen}>

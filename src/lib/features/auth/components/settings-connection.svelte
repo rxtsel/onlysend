@@ -5,7 +5,7 @@
   import * as AlertDialog from "@/lib/components/ui/alert-dialog";
   import ReceivingSetup from "@/lib/features/setup/components/receiving-setup.svelte";
   import { inboundStatus } from "@/lib/shared/inbound-status.svelte";
-import { disconnectResend } from "@/lib/shared/api/auth";
+  import { logoutMailAccount } from "@/lib/features/auth/account-switch.svelte";
   import { ConnectionStore } from "@/lib/features/auth/connection-store.svelte";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
@@ -65,11 +65,10 @@ import { disconnectResend } from "@/lib/shared/api/auth";
     if (isDisconnecting) return;
     try {
       isDisconnecting = true;
-      await disconnectResend();
+      await logoutMailAccount();
       toast.success("Disconnected from Resend");
       showDisconnectConfirm = false;
       onRequestClose?.();
-      goto("/");
     } catch (error) {
       console.error("Error disconnecting:", error);
       toast.error("Failed to disconnect");
@@ -182,9 +181,8 @@ import { disconnectResend } from "@/lib/shared/api/auth";
         <AlertDialog.Header>
           <AlertDialog.Title>Disconnect from Resend?</AlertDialog.Title>
           <AlertDialog.Description>
-            Your OAuth grant will be revoked and any stored API key removed.
-            You'll be signed out and returned to setup. Your local data
-            (identities, history) stays and revives when you reconnect.
+            This account and its saved credentials will be removed from OnlySend.
+            Other connected accounts and your domains and emails in Resend will not be deleted.
           </AlertDialog.Description>
         </AlertDialog.Header>
         <AlertDialog.Footer>

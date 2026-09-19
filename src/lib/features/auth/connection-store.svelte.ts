@@ -1,11 +1,11 @@
 import {
     connectResend,
-    disconnectResend,
     getConnectionStatus,
     getOnboardingState,
     type ConnectionMethod,
 } from "@/lib/shared/api/auth";
 import { getActiveDomain } from "@/lib/shared/api/domains";
+import { logoutMailAccount } from "./account-switch.svelte";
 
 /** Result of an action that may fail; UI decides how to report it. */
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -51,8 +51,7 @@ export class ConnectionStore {
         if (this.isDisconnecting) return { ok: true };
         try {
             this.isDisconnecting = true;
-            await disconnectResend();
-            await this.load();
+            await logoutMailAccount();
             return { ok: true };
         } catch (err) {
             console.error("Error disconnecting:", err);
