@@ -4,10 +4,9 @@
 //! - `settings.json` — user preferences and local data (via settings_store)
 //! - `auth.json` — credentials, DO NOT SHARE (via credentials_store)
 
-
-pub(crate) mod credentials_store;
-pub(crate) mod settings_store;
-
+pub mod credentials_store;
+pub mod http;
+pub mod settings_store;
 
 use serde::Deserialize;
 use serde_json::Value;

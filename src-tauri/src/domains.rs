@@ -280,18 +280,10 @@ fn region_to_enum(value: &str) -> Option<resend_rs::types::Region> {
 
 #[tauri::command]
 pub async fn get_domain(app: AppHandle<Wry>, domain_id: String) -> Result<DomainDetailDto, String> {
-    let resend = client(&app).await?;
-
-    match resend.domains.get(&domain_id).await {
-        Ok(domain) => Ok(to_detail(&domain)),
-        Err(crate_err) => {
-            // Fallback: fetch raw and map leniently, so an unexpected field
-            // in the SDK's typed struct can't break the feature. The raw
-            // body is logged to diagnose the crate failure.
-            println!("[INFO] domains.get via SDK failed (raw fallback in use): {crate_err}");
-            get_domain_raw(&app, &domain_id).await
-        }
-    }
+    // Resolve once. Both parsers consume the same response and credential;
+    // switching accounts cannot retarget a fallback request.
+    let credential = oauth::get_credential(&app).await?;
+    fetch_domain(&crate::infrastructure::http::client(), "https://api.resend.com", &credential, &domain_id).await
 }
 
 #[derive(Deserialize)]
@@ -309,48 +301,84 @@ fn json_str(value: &serde_json::Value) -> String {
     value.as_str().unwrap_or_default().to_string()
 }
 
-async fn get_domain_raw(
-    app: &AppHandle<Wry>,
+async fn fetch_domain(
+    http: &reqwest::Client,
+    base_url: &str,
+    credential: &str,
     domain_id: &str,
 ) -> Result<DomainDetailDto, String> {
-    let credential = oauth::get_credential(app).await?;
-
-    let http = reqwest::Client::builder()
-        .user_agent(concat!("OnlySend/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|e| format!("[ERROR] Failed to build http client: {}", e))?;
-
     let response = http
-        .get(format!("https://api.resend.com/domains/{domain_id}"))
-        .bearer_auth(&credential)
+        .get(format!("{base_url}/domains/{domain_id}"))
+        .bearer_auth(credential)
         .send()
         .await
         .map_err(|e| format!("[ERROR] Domain request failed: {e}"))?;
 
     let status = response.status();
-    let body: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("[ERROR] Invalid domain response: {e}"))?;
-
     if !status.is_success() {
-        println!("[WARN] Raw domain body on failure: {body}");
-        return Err(format!(
-            "[ERROR] Resend rejected the domain lookup (HTTP {}): {}",
-            status,
-            body.get("message").and_then(|v| v.as_str()).unwrap_or("")
-        ));
+        // Do not log or echo arbitrary response bodies (or retry auth/429/5xx).
+        return Err(format!("[ERROR] Resend rejected the domain lookup (HTTP {status})"));
     }
-
-    let detail = parse_raw_domain(body)?;
-    println!(
-        "[INFO] Raw domain fallback used for {}: status={}",
-        detail.name, detail.status
-    );
+    let body: serde_json::Value = response.json().await
+        .map_err(|_| "[ERROR] Invalid domain JSON response".to_string())?;
+    let (detail, diagnostic) = decode_domain(body)?;
+    if let Some(diagnostic) = diagnostic {
+        println!("[WARN] Domain SDK schema mismatch: {diagnostic}; compatible parser used (same response)");
+    }
     Ok(detail)
 }
 
-/// Lenient parser for raw `/domains` payloads (create + get fallback).
+// Only schema names, array indexes and fixed reason codes may enter logs.
+// serde's full error message can contain arbitrary values from the response.
+const DOMAIN_FIELDS: &[&str] = &[
+    "id", "name", "status", "created_at", "region", "capabilities", "sending",
+    "receiving", "records", "record", "type", "value", "ttl", "priority",
+    "open_tracking", "click_tracking", "tracking_subdomain",
+];
+
+fn schema_diagnostic(error: &serde_path_to_error::Error<serde_json::Error>) -> String {
+    use serde_path_to_error::Segment;
+    let mut path = "$".to_string();
+    for segment in error.path().iter() {
+        match segment {
+            Segment::Seq { index } => path.push_str(&format!("[{index}]")),
+            Segment::Map { key } if DOMAIN_FIELDS.contains(&key.as_str()) => {
+                path.push('.');
+                path.push_str(key);
+            }
+            _ => path.push_str(".<unknown>"),
+        }
+    }
+    let message = error.inner().to_string();
+    let reason = if let Some(field) = message.strip_prefix("missing field `").and_then(|s| s.split('`').next()) {
+        if DOMAIN_FIELDS.contains(&field) {
+            path.push('.');
+            path.push_str(field);
+        }
+        "missing_field"
+    } else if message.starts_with("unknown variant") {
+        "unsupported_variant"
+    } else if message.starts_with("invalid type") {
+        "invalid_type"
+    } else {
+        "incompatible_value"
+    };
+    format!("path={path} reason={reason}")
+}
+
+fn decode_domain(body: serde_json::Value) -> Result<(DomainDetailDto, Option<String>), String> {
+    match serde_path_to_error::deserialize::<_, Domain>(&body) {
+        Ok(domain) => Ok((to_detail(&domain), None)),
+        Err(error) => {
+            let diagnostic = schema_diagnostic(&error);
+            let detail = parse_raw_domain(body)
+                .map_err(|_| format!("[ERROR] Invalid domain payload ({diagnostic})"))?;
+            Ok((detail, Some(diagnostic)))
+        }
+    }
+}
+
+/// Lenient parser for raw `/domains` payloads (create + same-response compatibility).
 fn parse_raw_domain(body: serde_json::Value) -> Result<DomainDetailDto, String> {
     let raw: RawDomain = serde_json::from_value(body)
         .map_err(|e| format!("[ERROR] Unexpected domain payload: {e}"))?;
@@ -500,6 +528,98 @@ pub async fn verify_domain(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sdk_payload() -> serde_json::Value {
+        serde_json::json!({
+            "id": "d91cd9bd-1176-453e-8fc1-35364d380206",
+            "name": "example.com", "status": "verified",
+            "created_at": "2026-01-01T00:00:00Z", "region": "us-east-1",
+            "capabilities": { "sending": "enabled", "receiving": "enabled" },
+            "records": []
+        })
+    }
+
+    #[test]
+    fn sdk_compatible_response_needs_no_fallback() {
+        let (detail, diagnostic) = decode_domain(sdk_payload()).unwrap();
+        assert_eq!(detail.status, "verified");
+        assert!(diagnostic.is_none());
+    }
+
+    #[test]
+    fn incompatible_region_reports_path_without_response_values() {
+        let mut body = sdk_payload();
+        body["region"] = serde_json::json!("private-value-not-for-logs");
+        let (detail, diagnostic) = decode_domain(body).unwrap();
+        assert_eq!(detail.name, "example.com");
+        let diagnostic = diagnostic.unwrap();
+        assert!(diagnostic.contains("$.region"));
+        assert!(diagnostic.contains("unsupported_variant"));
+        assert!(!diagnostic.contains("private-value"));
+        assert!(!diagnostic.contains("example.com"));
+    }
+
+    #[test]
+    fn missing_sdk_field_is_identified() {
+        let mut body = sdk_payload();
+        body.as_object_mut().unwrap().remove("created_at");
+        let (_, diagnostic) = decode_domain(body).unwrap();
+        assert_eq!(diagnostic.unwrap(), "path=$.created_at reason=missing_field");
+    }
+
+    #[test]
+    fn malformed_required_field_fails_without_leaking_value() {
+        let mut body = sdk_payload();
+        body["id"] = serde_json::json!({ "secret": "private-value" });
+        let error = decode_domain(body).unwrap_err();
+        assert!(!error.contains("private-value"));
+        assert!(error.contains("$.id"));
+    }
+
+    // A server accepting exactly ONE request: any second fallback request
+    // fails, so a successful lookup proves both parsers shared the response.
+    fn one_response_server(status: &str, body: String) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let status = status.to_owned();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            drop(listener);
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+            let mut request = Vec::new();
+            let mut buf = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut buf).unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&buf[..n]);
+            }
+            write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+        });
+        (format!("http://{address}"), server)
+    }
+
+    #[tokio::test]
+    async fn schema_mismatch_uses_only_one_http_request() {
+        let mut body = sdk_payload();
+        body["region"] = serde_json::json!("future-region");
+        let (url, server) = one_response_server("200 OK", body.to_string());
+        let client = reqwest::Client::builder().no_proxy().timeout(std::time::Duration::from_secs(5)).build().unwrap();
+        let result = fetch_domain(&client, &url, "test-credential", "domain-id").await;
+        server.join().unwrap();
+        assert_eq!(result.unwrap().status, "verified");
+    }
+
+    #[tokio::test]
+    async fn http_error_is_not_retried_or_echoed() {
+        let (url, server) = one_response_server("403 Forbidden", "private-response-body".into());
+        let client = reqwest::Client::builder().no_proxy().timeout(std::time::Duration::from_secs(5)).build().unwrap();
+        let result = fetch_domain(&client, &url, "test-credential", "domain-id").await;
+        server.join().unwrap();
+        let error = result.unwrap_err();
+        assert!(error.contains("403"));
+        assert!(!error.contains("private-response-body"));
+    }
 
     #[test]
     fn region_to_enum_maps_all_known_regions() {
