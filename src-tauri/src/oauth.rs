@@ -1,4 +1,5 @@
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -10,7 +11,6 @@ use tauri::{AppHandle, Emitter, Manager, State, Wry};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::infrastructure::credentials_store as store;
-use crate::infrastructure::settings_store as sstore;
 
 const RESEND_API_BASE: &str = "https://api.resend.com";
 const REDIRECT_URI: &str = "onlysend://oauth/callback";
@@ -24,15 +24,28 @@ const EXPIRY_MARGIN_SECS: i64 = 60;
 struct PendingFlow {
     state: String,
     code_verifier: String,
+    client_id: String,
 }
 
 #[derive(Default)]
 pub struct OAuthState {
     pending: Mutex<Option<PendingFlow>>,
-    /// Single-flight guard: concurrent expired-token holders queue here so
-    /// exactly ONE refresh request hits Resend (rotation reuse would kill
-    /// the whole grant otherwise).
-    refresh_lock: tokio::sync::Mutex<()>,
+    /// Independent single-flight queues; one slow account cannot block another.
+    refresh_locks: Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>,
+}
+
+impl OAuthState {
+    fn refresh_lock(&self, account_id: &str) -> Result<Arc<tokio::sync::Mutex<()>>, String> {
+        let mut locks = self.refresh_locks.lock()
+            .map_err(|_| "[ERROR] Refresh lock poisoned".to_string())?;
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(account_id).and_then(Weak::upgrade) {
+            return Ok(lock);
+        }
+        let lock = Arc::new(tokio::sync::Mutex::new(()));
+        locks.insert(account_id.to_owned(), Arc::downgrade(&lock));
+        Ok(lock)
+    }
 }
 
 #[derive(Serialize)]
@@ -152,6 +165,7 @@ pub async fn connect_resend(
         .map_err(|_| "[ERROR] OAuth state corrupted".to_string())? = Some(PendingFlow {
         state: csrf_state.clone(),
         code_verifier: verifier,
+        client_id: client_id.clone(),
     });
 
     let authorize_url = format!(
@@ -218,38 +232,37 @@ pub fn handle_deep_link(app: AppHandle<Wry>, url: String) {
     });
 }
 
+fn take_matching_flow(pending: &mut Option<PendingFlow>, returned_state: &str) -> Result<PendingFlow, String> {
+    let flow = pending.as_ref()
+        .ok_or_else(|| "[ERROR] No OAuth flow is pending".to_string())?;
+    if flow.state != returned_state {
+        return Err("[ERROR] Invalid state in callback".into());
+    }
+    pending.take().ok_or_else(|| "[ERROR] No OAuth flow is pending".into())
+}
+
 async fn complete_flow(app: &AppHandle<Wry>, url: &str) -> Result<(), String> {
     let state: State<OAuthState> = app.state();
 
-    let pending = {
-        let mut guard = state
-            .pending
-            .lock()
-            .map_err(|_| "[ERROR] OAuth state corrupted".to_string())?;
-        guard.take()
-    }
-    .ok_or_else(|| "[ERROR] No OAuth flow is pending".to_string())?;
-
     let params = parse_query(url);
+    let returned_state = params.get("state")
+        .ok_or_else(|| "[ERROR] Callback missing state".to_string())?;
+    let pending = {
+        let mut guard = state.pending.lock()
+            .map_err(|_| "[ERROR] OAuth state corrupted".to_string())?;
+        take_matching_flow(&mut guard, returned_state)?
+    };
 
     if let Some(error) = params.get("error") {
         let description = params.get("error_description").cloned().unwrap_or_default();
         return Err(format!("Authorization failed: {} {}", error, description).trim_end().to_string());
     }
 
-    let returned_state = params
-        .get("state")
-        .ok_or_else(|| "[ERROR] Callback missing state".to_string())?;
-    if returned_state != &pending.state {
-        return Err("[ERROR] Invalid state in callback".to_string());
-    }
-
     let code = params
         .get("code")
         .ok_or_else(|| "[ERROR] Callback missing code".to_string())?;
 
-    let client_id = get_client_id(app)?;
-    exchange_code(app, code, &pending.code_verifier, &client_id).await
+    exchange_code(app, code, &pending.code_verifier, &pending.client_id).await
 }
 
 async fn exchange_code(
@@ -292,7 +305,6 @@ async fn persist_tokens(
 
         // Reuse of a rotated refresh token revokes the whole grant.
         if matches!(&err, Ok(e) if e.error == "invalid_grant") {
-            store::clear_oauth(app)?;
             return Err("Resend authorization expired. Please connect again.".to_string());
         }
 
@@ -305,14 +317,9 @@ async fn persist_tokens(
     let tokens: TokenSuccess = serde_json::from_value(body)
         .map_err(|e| format!("[ERROR] Invalid token payload: {}", e))?;
 
-    let refresh_token = tokens
-        .refresh_token
-        .or_else(|| {
-            store::load_oauth(app)
-                .ok()
-                .flatten()
-                .map(|r| r.refresh_token)
-        })
+    // A new grant must provide its own refresh token. Never borrow one from
+    // the account that happens to be visible when this callback arrives.
+    let refresh_token = tokens.refresh_token
         .ok_or_else(|| "[ERROR] Missing refresh token".to_string())?;
 
     let record = store::OAuthRecord {
@@ -323,32 +330,26 @@ async fn persist_tokens(
         scope: tokens.scope.unwrap_or_default(),
     };
 
-    // Single-credential invariant: connecting via OAuth replaces any stored API key.
-    store::delete_api_key(app.clone())?;
-
     store::save_oauth(app, &record)
-}
-
-fn get_client_id(app: &AppHandle<Wry>) -> Result<String, String> {
-    // Prefer the client id from an existing OAuth grant, falling back to the
-    // one persisted by DCR (no OAuth record exists yet mid-flow).
-    if let Some(record) = store::load_oauth(app)? {
-        return Ok(record.client_id);
-    }
-
-    store::load_client_id(app)?
-        .ok_or_else(|| "[ERROR] Not connected with Resend".to_string())
 }
 
 /// Returns a valid bearer credential: API key first, otherwise an OAuth access
 /// token, refreshing it when close to expiry.
 pub(crate) async fn get_credential(app: &AppHandle<Wry>) -> Result<String, String> {
-    if let Some(api_key) = store::load_api_key(app)? {
-        return Ok(api_key);
-    }
+    // Compatibility boundary until commands take an explicit accountId.
+    // Capture once: switching the UI must not retarget an in-flight refresh.
+    let account_id = store::active_account_id(app)?;
+    get_account_credential(app, &account_id).await
+}
 
-    let record =
-        store::load_oauth(app)?.ok_or_else(|| "[ERROR] Not authenticated".to_string())?;
+pub(crate) async fn get_account_credential(
+    app: &AppHandle<Wry>,
+    account_id: &str,
+) -> Result<String, String> {
+    let record = match store::account_credential(app, account_id)? {
+        store::ActiveCredential::ApiKey(key) => return Ok(key),
+        store::ActiveCredential::OAuth(record) => record,
+    };
 
     if unix_now() < record.expires_at {
         return Ok(record.access_token);
@@ -357,10 +358,13 @@ pub(crate) async fn get_credential(app: &AppHandle<Wry>) -> Result<String, Strin
     // Single-flight: N concurrent callers produce exactly ONE refresh
     // request. Latecomers re-read the rotated tokens from the store.
     let state: State<OAuthState> = app.state();
-    let _guard = state.refresh_lock.lock().await;
+    let refresh_lock = state.refresh_lock(account_id)?;
+    let _guard = refresh_lock.lock().await;
 
-    let record =
-        store::load_oauth(app)?.ok_or_else(|| "[ERROR] Not authenticated".to_string())?;
+    let record = match store::account_credential(app, account_id)? {
+        store::ActiveCredential::ApiKey(key) => return Ok(key),
+        store::ActiveCredential::OAuth(record) => record,
+    };
     if unix_now() < record.expires_at {
         // Another task refreshed while we waited.
         return Ok(record.access_token);
@@ -389,7 +393,8 @@ pub(crate) async fn get_credential(app: &AppHandle<Wry>) -> Result<String, Strin
         let err: Result<TokenError, _> = serde_json::from_value(body.clone());
 
         if matches!(&err, Ok(e) if e.error == "invalid_grant") {
-            store::clear_oauth(app)?;
+            // Do not clear the active account or a newer grant in response to
+            // an old request. Account-scoped disconnect is handled separately.
             return Err("Resend authorization expired. Please reconnect from settings.".to_string());
         }
 
@@ -411,20 +416,33 @@ pub(crate) async fn get_credential(app: &AppHandle<Wry>) -> Result<String, Strin
         scope: tokens.scope.unwrap_or(record.scope.clone()),
     };
 
-    store::update_active_oauth(app, &new_record)?;
+    store::update_account_oauth(app, account_id, &record, &new_record)?;
 
     Ok(new_record.access_token)
 }
 
-/// Revokes the refresh token (killing the whole grant) and clears local state.
+/// Log out this account: remove its local connection before network I/O.
+/// Other accounts and remote Resend domains/emails are not deleted.
 #[tauri::command]
-/// Full credential logout: revokes the OAuth grant (if any), removes any
-/// stored API key and resets setup flags. Local data (identities, read
-/// markers, cached setup) is intentionally preserved so it revives on
-/// reconnect.
-pub async fn disconnect_resend(app: AppHandle<Wry>) -> Result<(), String> {
-    let record = store::load_oauth(&app)?;
+pub async fn disconnect_resend(app: AppHandle<Wry>, account_id: Option<String>) -> Result<(), String> {
+    let account_id = match account_id {
+        Some(id) => id,
+        None => store::active_account_id(&app)?,
+    };
+    let record = store::remove_account(app, account_id)?;
+    revoke_grant(record).await;
+    Ok(())
+}
 
+/// Removes local credentials/identity. OAuth secrets remain inside Rust.
+#[tauri::command]
+pub async fn remove_account(app: AppHandle<Wry>, account_id: String) -> Result<(), String> {
+    let record = store::remove_account(app, account_id)?;
+    revoke_grant(record).await;
+    Ok(())
+}
+
+async fn revoke_grant(record: Option<store::OAuthRecord>) {
     if let Some(record) = record {
         let form = [
             ("token", record.refresh_token.as_str()),
@@ -434,20 +452,16 @@ pub async fn disconnect_resend(app: AppHandle<Wry>) -> Result<(), String> {
         // Best effort: RFC 7009 says the endpoint always returns 200 anyway.
         let _ = http_client()
             .post(format!("{RESEND_API_BASE}/oauth/revoke"))
+            .timeout(std::time::Duration::from_secs(10))
             .form(&form)
             .send()
             .await;
     }
 
-    store::clear_oauth(&app)?;
-    store::delete_api_key(app.clone())?;
-    sstore::mark_setup_incomplete(app.clone())?;
-    sstore::set_inbox_enabled(app.clone(), false)?;
-
-    println!("[INFO] Resend disconnected (credentials cleared, local data preserved)");
-
-    Ok(())
+    // No account mutation after awaiting: a reconnect or switch may already
+    // have happened. In particular, do not reset another account's setup.
 }
+
 
 /// Parses query parameters out of a callback URL.
 fn parse_query(url: &str) -> std::collections::HashMap<String, String> {
@@ -502,7 +516,43 @@ fn percent_decode(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_query, percent_decode};
+    use super::{parse_query, percent_decode, take_matching_flow, OAuthState, PendingFlow};
+    use std::sync::Arc;
+
+    #[test]
+    fn mismatched_callback_preserves_pending_flow_and_client() {
+        let mut pending = Some(PendingFlow { state: "expected".into(),
+            code_verifier: "verifier".into(), client_id: "original-client".into() });
+        assert!(take_matching_flow(&mut pending, "old-callback").is_err());
+        assert!(pending.is_some());
+        let flow = take_matching_flow(&mut pending, "expected").unwrap();
+        assert_eq!(flow.client_id, "original-client");
+        assert!(pending.is_none());
+        assert!(take_matching_flow(&mut pending, "expected").is_err());
+    }
+
+    #[tokio::test]
+    async fn refresh_queues_are_shared_only_within_one_account() {
+        let state = OAuthState::default();
+        let a = state.refresh_lock("a").unwrap();
+        let another_a = state.refresh_lock("a").unwrap();
+        let b = state.refresh_lock("b").unwrap();
+        assert!(Arc::ptr_eq(&a, &another_a));
+        assert!(!Arc::ptr_eq(&a, &b));
+        let _guard = a.lock().await;
+        assert!(another_a.try_lock().is_err());
+        assert!(b.try_lock().is_ok());
+    }
+
+    #[test]
+    fn unused_refresh_queues_are_reclaimed() {
+        let state = OAuthState::default();
+        drop(state.refresh_lock("a").unwrap());
+        let _b = state.refresh_lock("b").unwrap();
+        let locks = state.refresh_locks.lock().unwrap();
+        assert!(!locks.contains_key("a"));
+        assert!(locks.contains_key("b"));
+    }
 
     #[test]
     fn parses_standard_callback_url() {

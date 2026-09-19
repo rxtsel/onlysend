@@ -77,7 +77,7 @@ pub fn run() {
             infrastructure::credentials_store::delete_api_key,
             infrastructure::credentials_store::list_accounts,
             infrastructure::credentials_store::set_active_account,
-            infrastructure::credentials_store::remove_account,
+            oauth::remove_account,
             infrastructure::settings_store::save_selected_domain,
             infrastructure::settings_store::get_selected_domain,
             infrastructure::settings_store::get_active_domain,

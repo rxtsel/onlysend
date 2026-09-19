@@ -61,7 +61,7 @@ import { getSelectedDomain, saveSelectedDomain } from "@/lib/shared/api/domains"
     try {
       const state = await getOnboardingState();
 
-      if (state.complete) {
+      if (state.complete && state.authenticated) {
         goto("/mail/sent");
         return;
       }

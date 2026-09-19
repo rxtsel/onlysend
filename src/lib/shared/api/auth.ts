@@ -39,11 +39,11 @@ export async function connectResend(): Promise<string> {
 }
 
 /**
- * Full credential logout: revokes the OAuth grant (if any), removes any
- * stored API key and resets setup flags. Local data is preserved.
+ * Log out one account: remove its saved connection and revoke OAuth when possible.
+ * accountId will become required once all callers use account-scoped routes.
  */
-export async function disconnectResend(): Promise<void> {
-  await invoke("disconnect_resend");
+export async function disconnectResend(accountId?: string): Promise<void> {
+  await invoke("disconnect_resend", { accountId });
 }
 
 export async function saveApiKey(apiKey: string): Promise<void> {
@@ -82,6 +82,6 @@ export async function setActiveAccount(accountId: string): Promise<void> {
 /** Removes an account entirely (credential + entry). */
 export async function removeAccount(
   accountId: string,
-): Promise<string | null> {
-  return await invoke<string | null>("remove_account", { accountId });
+): Promise<void> {
+  await invoke("remove_account", { accountId });
 }
