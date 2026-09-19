@@ -15,14 +15,17 @@ export function createEmailList<T>(
   let hasMore = $state(true);
   let currentPage = $state(0);
 
+  let generation = 0;
+
   async function load(append = false, silent = false) {
-    if (silent && isRefreshing) return;
+    if (silent && (isRefreshing || isLoadingMore)) return;
+    const request = ++generation;
 
     try {
       if (append) {
         isLoadingMore = true;
       } else {
-        if (!silent) isRefreshing = true;
+        isRefreshing = true;
         currentPage = 0;
       }
 
@@ -30,6 +33,7 @@ export function createEmailList<T>(
       const offset = page * pageSize;
 
       const newItems = await fetchPage(pageSize, offset);
+      if (request !== generation) return;
 
       if (append) {
         items = [...items, ...newItems];
@@ -41,6 +45,7 @@ export function createEmailList<T>(
 
       hasMore = newItems.length === pageSize;
     } catch (err) {
+      if (request !== generation) return;
       // Automatic (silent) reloads never surface errors to the user.
       if (silent) {
         console.error("Silent email list refresh failed:", err);
@@ -48,9 +53,11 @@ export function createEmailList<T>(
       }
       throw err;
     } finally {
-      isRefreshing = false;
-      isLoadingMore = false;
-      if (!append) isLoading = false;
+      if (request === generation) {
+        isRefreshing = false;
+        isLoadingMore = false;
+        if (!append) isLoading = false;
+      }
     }
   }
 
@@ -63,7 +70,7 @@ export function createEmailList<T>(
   }
 
   async function loadMore() {
-    if (!isLoadingMore && hasMore) {
+    if (!isLoadingMore && !isRefreshing && hasMore) {
       await load(true);
     }
   }
@@ -92,6 +99,10 @@ export function createEmailList<T>(
       isLoading = false;
     },
     clearItems() {
+      generation += 1;
+      isLoading = true;
+      isRefreshing = false;
+      isLoadingMore = false;
       items = [];
       hasMore = true;
       currentPage = 0;

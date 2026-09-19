@@ -1,6 +1,9 @@
 import type { SentEmail } from "@/lib/types";
 
 class EmailCache {
+  private epoch = 0;
+
+  get generation(): number { return this.epoch; }
   private cache = $state<Map<string, SentEmail>>(new Map());
   private listCache = $state<SentEmail[] | null>(null);
   private listCacheTimestamp = $state<number>(0);
@@ -41,6 +44,7 @@ class EmailCache {
 
   // Clear all cache
   clear(): void {
+    this.epoch += 1;
     this.cache.clear();
     this.listCache = null;
     this.listCacheTimestamp = 0;

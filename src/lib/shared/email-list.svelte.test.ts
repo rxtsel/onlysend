@@ -11,6 +11,49 @@ function makeFetcher(pages: Record<number, Item[]>) {
 }
 
 describe("createEmailList", () => {
+  test("reset discards an old account response without clearing the new loading state", async () => {
+    let resolveA!: (items: Item[]) => void;
+    let resolveB!: (items: Item[]) => void;
+    const fetcher = vi.fn()
+      .mockImplementationOnce(() => new Promise<Item[]>((resolve) => { resolveA = resolve; }))
+      .mockImplementationOnce(() => new Promise<Item[]>((resolve) => { resolveB = resolve; }));
+    const list = createEmailList<Item>(fetcher);
+    const a = list.refresh();
+    list.clearItems();
+    const b = list.refresh();
+    resolveA([{ id: 1 }]);
+    await a;
+    expect(list.items).toEqual([]);
+    expect(list.isRefreshing).toBe(true);
+    resolveB([{ id: 2 }]);
+    await b;
+    expect(list.items).toEqual([{ id: 2 }]);
+    expect(list.isRefreshing).toBe(false);
+  });
+
+  test("silent refreshes are single-flight even for an empty inbox", async () => {
+    let resolve!: (items: Item[]) => void;
+    const fetcher = vi.fn(() => new Promise<Item[]>((done) => { resolve = done; }));
+    const list = createEmailList<Item>(fetcher);
+    const first = list.refreshSilent();
+    await list.refreshSilent();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    resolve([]);
+    await first;
+    expect(list.items).toEqual([]);
+    expect(list.isLoading).toBe(false);
+  });
+
+  test("a stale rejection does not surface an error in the new account", async () => {
+    let reject!: (reason: Error) => void;
+    const list = createEmailList<Item>(() => new Promise((_, fail) => { reject = fail; }));
+    const pending = list.refresh();
+    list.clearItems();
+    reject(new Error("old account unauthorized"));
+    await expect(pending).resolves.toBeUndefined();
+    expect(list.items).toEqual([]);
+  });
+
   test("refresh loads first page and clears previous items", async () => {
     const fetcher = makeFetcher({ 0: [{ id: 1 }, { id: 2 }] });
     const list = createEmailList(fetcher, 16);

@@ -13,10 +13,11 @@ export async function listSentEmails(
     if (cached) return cached
   }
 
+  const generation = emailCache.generation;
   const emails = await invoke<SentEmail[]>("list_sent_emails", { limit, offset });
 
   // Cache only the initial load
-  if (offset === 0) {
+  if (offset === 0 && generation === emailCache.generation) {
     emailCache.setList(emails);
   }
 
@@ -32,10 +33,11 @@ export async function getSentEmail(emailId: string): Promise<SentEmail> {
   }
 
   console.log(`Fetching email from API: ${emailId}`);
+  const generation = emailCache.generation;
   const email = await invoke<SentEmail>("get_sent_email", { emailId });
 
-  // Cache the result
-  emailCache.set(emailId, email);
+  // An old account's request may finish after the cache was reset.
+  if (generation === emailCache.generation) emailCache.set(emailId, email);
 
   return email;
 }
