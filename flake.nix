@@ -35,6 +35,15 @@
         librsvg
         openssl
         desktop-file-utils
+
+        # WebKit's multimedia backend requires the app plugin (appsink).
+        gst_all_1.gstreamer
+        gst_all_1.gst-plugins-base
+      ];
+
+      GST_PLUGIN_SYSTEM_PATH_1_0 = pkgs.lib.makeSearchPath "lib/gstreamer-1.0" [
+        pkgs.gst_all_1.gstreamer
+        pkgs.gst_all_1.gst-plugins-base
       ];
 
       shellHook = ''
