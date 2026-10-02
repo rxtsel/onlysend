@@ -36,11 +36,15 @@
     onContinue?: () => void;
   } = $props();
 
+  // Accept the API alias in caches saved before backend normalization.
+  function isReceivingGroup(group: string): boolean {
+    return group === "Receiving MX" || group === "Receiving";
+  }
   const sendingRecords = $derived(
-    detail.records.filter((r) => r.group !== "Receiving MX"),
+    detail.records.filter((r) => !isReceivingGroup(r.group)),
   );
   const receivingRecords = $derived(
-    detail.records.filter((r) => r.group === "Receiving MX"),
+    detail.records.filter((r) => isReceivingGroup(r.group)),
   );
   const receivingEnabled = $derived(
     detail.capabilities.receiving === "enabled",

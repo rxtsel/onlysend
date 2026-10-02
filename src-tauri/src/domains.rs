@@ -366,7 +366,23 @@ fn schema_diagnostic(error: &serde_path_to_error::Error<serde_json::Error>) -> S
     format!("path={path} reason={reason}")
 }
 
-fn decode_domain(body: serde_json::Value) -> Result<(DomainDetailDto, Option<String>), String> {
+/// The live API uses "Receiving" while resend-rs (and our DTO contract)
+/// names the same MX group "Receiving MX". Normalize only this known alias;
+/// DNS names, values, types, statuses and unknown future groups stay untouched.
+fn normalize_receiving_record_group(body: &mut serde_json::Value) {
+    if let Some(records) = body.get_mut("records").and_then(serde_json::Value::as_array_mut) {
+        for record in records {
+            if let Some(group) = record.get_mut("record") {
+                if group.as_str() == Some("Receiving") {
+                    *group = serde_json::Value::String("Receiving MX".into());
+                }
+            }
+        }
+    }
+}
+
+fn decode_domain(mut body: serde_json::Value) -> Result<(DomainDetailDto, Option<String>), String> {
+    normalize_receiving_record_group(&mut body);
     match serde_path_to_error::deserialize::<_, Domain>(&body) {
         Ok(domain) => Ok((to_detail(&domain), None)),
         Err(error) => {
@@ -379,7 +395,8 @@ fn decode_domain(body: serde_json::Value) -> Result<(DomainDetailDto, Option<Str
 }
 
 /// Lenient parser for raw `/domains` payloads (create + same-response compatibility).
-fn parse_raw_domain(body: serde_json::Value) -> Result<DomainDetailDto, String> {
+fn parse_raw_domain(mut body: serde_json::Value) -> Result<DomainDetailDto, String> {
+    normalize_receiving_record_group(&mut body);
     let raw: RawDomain = serde_json::from_value(body)
         .map_err(|e| format!("[ERROR] Unexpected domain payload: {e}"))?;
 
@@ -544,6 +561,54 @@ mod tests {
         let (detail, diagnostic) = decode_domain(sdk_payload()).unwrap();
         assert_eq!(detail.status, "verified");
         assert!(diagnostic.is_none());
+    }
+
+    fn receiving_payload(group: &str) -> serde_json::Value {
+        let mut body = sdk_payload();
+        body["records"] = serde_json::json!([{
+            "record": group, "name": "inbound.example.com", "type": "MX",
+            "ttl": "Auto", "status": "verified", "priority": 10,
+            "value": "inbound-smtp.us-east-1.amazonaws.com"
+        }]);
+        body
+    }
+
+    #[test]
+    fn live_receiving_alias_and_sdk_label_decode_without_fallback() {
+        for group in ["Receiving", "Receiving MX"] {
+            let body = receiving_payload(group);
+            let (sdk_detail, diagnostic) = decode_domain(body.clone()).unwrap();
+            assert!(diagnostic.is_none(), "{diagnostic:?}");
+            let raw_detail = parse_raw_domain(body).unwrap();
+            for detail in [sdk_detail, raw_detail] {
+                let record = &detail.records[0];
+                assert_eq!(record.group, "Receiving MX");
+                assert_eq!(record.record_type, "MX");
+                assert_eq!(record.name, "inbound.example.com");
+                assert_eq!(record.value, "inbound-smtp.us-east-1.amazonaws.com");
+                assert_eq!(record.priority, Some(10));
+                assert_eq!(record.status, "verified");
+            }
+        }
+    }
+
+    #[test]
+    fn receiving_normalization_only_changes_the_known_tag_and_is_idempotent() {
+        let mut body = receiving_payload("Receiving");
+        let mut expected = body.clone();
+        expected["records"][0]["record"] = serde_json::json!("Receiving MX");
+        normalize_receiving_record_group(&mut body);
+        assert_eq!(body, expected);
+        normalize_receiving_record_group(&mut body);
+        assert_eq!(body, expected);
+    }
+
+    #[test]
+    fn unknown_record_groups_still_report_schema_diagnostics() {
+        let body = receiving_payload("FutureRecord");
+        let (detail, diagnostic) = decode_domain(body).unwrap();
+        assert_eq!(detail.records[0].group, "FutureRecord");
+        assert_eq!(diagnostic.as_deref(), Some("path=$.records[0].record reason=unsupported_variant"));
     }
 
     #[test]
