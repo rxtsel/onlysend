@@ -38,6 +38,7 @@ export function needsDns(d: DomainDetail): boolean {
 export type { DomainSummary };
 
 export class DomainSetupStore {
+    constructor(readonly accountId: string) {}
     domains = $state<DomainSummary[]>([]);
     isLoading = $state(true);
     /** Name + Resend id of the currently selected domain. */
@@ -67,7 +68,7 @@ export class DomainSetupStore {
     async load(): Promise<void> {
         this.isLoading = true;
         try {
-            this.domains = await listDomains();
+            this.domains = await listDomains(this.accountId);
         } finally {
             this.isLoading = false;
         }
@@ -96,7 +97,7 @@ export class DomainSetupStore {
     }): Promise<void> {
         this.isCreating = true;
         try {
-            const created = await createDomain(options);
+            const created = await createDomain(this.accountId, options);
             this.applyDetail(created);
             this.selectedName = created.name;
         } finally {
@@ -106,7 +107,7 @@ export class DomainSetupStore {
 
     /** Loads fresh detail for an existing domain and reports pending state. */
     async loadFresh(id: string): Promise<{ detail: DomainDetail; needsDns: boolean }> {
-        const detail = await getDomain(id);
+        const detail = await getDomain(this.accountId, id);
         this.applyDetail(detail);
         const dns = needsDns(detail);
         if (dns) this.maybeAutoVerify();
@@ -116,7 +117,7 @@ export class DomainSetupStore {
     async remove(id: string): Promise<boolean> {
         this.isDeleting = true;
         try {
-            return await deleteDomain(id);
+            return await deleteDomain(this.accountId, id);
         } finally {
             this.isDeleting = false;
         }
@@ -127,7 +128,7 @@ export class DomainSetupStore {
 
         try {
             this.isVerifying = true;
-            this.applyDetail(await verifyDomain(this.setupDetail.id));
+            this.applyDetail(await verifyDomain(this.accountId, this.setupDetail.id));
             this.#startPolling();
         } finally {
             this.isVerifying = false;
@@ -139,7 +140,7 @@ export class DomainSetupStore {
 
         try {
             this.isTogglingReceiving = true;
-            this.applyDetail(await setDomainReceiving(this.setupDetail.id, enable));
+            this.applyDetail(await setDomainReceiving(this.accountId, this.setupDetail.id, enable));
         } finally {
             this.isTogglingReceiving = false;
         }
@@ -193,7 +194,7 @@ export class DomainSetupStore {
             }
 
             try {
-                const fresh = await getDomain(this.setupDetail.id);
+                const fresh = await getDomain(this.accountId, this.setupDetail.id);
                 if (fresh) this.applyDetail(fresh);
             } catch (err) {
                 console.error(err);

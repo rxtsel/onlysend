@@ -15,6 +15,7 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
  * settings dialog: status, active domain, inbox flag, busy flags.
  */
 export class ConnectionStore {
+    constructor(readonly accountId: string) {}
     status = $state<{ method: ConnectionMethod }>({ method: null });
     activeDomain = $state<string | null>(null);
     inboxEnabled = $state(false);
@@ -23,9 +24,9 @@ export class ConnectionStore {
 
     async load(): Promise<void> {
         const [domain, status, onboarding] = await Promise.all([
-            getActiveDomain(),
-            getConnectionStatus(),
-            getOnboardingState(),
+            getActiveDomain(this.accountId),
+            getConnectionStatus(this.accountId),
+            getOnboardingState(this.accountId),
         ]);
         this.activeDomain = domain;
         this.status = status;
@@ -51,7 +52,7 @@ export class ConnectionStore {
         if (this.isDisconnecting) return { ok: true };
         try {
             this.isDisconnecting = true;
-            await logoutMailAccount();
+            await logoutMailAccount(this.accountId);
             return { ok: true };
         } catch (err) {
             console.error("Error disconnecting:", err);

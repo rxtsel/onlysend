@@ -1,6 +1,19 @@
-/**
- * Cross-component signal: true when the active domain has receiving
- * enabled AND its MX record is verified. The inbox root page computes
- * it; the sidebar consumes it to skip API calls that would fail.
- */
-export const inboundStatus = $state({ ready: false });
+// Readiness belongs to a connection, never to the application as a whole.
+const accounts = new Map<string, { ready: boolean }>();
+
+export function getInboundStatus(accountId: string): { ready: boolean } {
+  if (!accountId) throw new Error("Account ID is required");
+  let status = accounts.get(accountId);
+  if (!status) {
+    const created = $state({ ready: false });
+    status = created;
+    accounts.set(accountId, status);
+  }
+  return status;
+}
+
+export function clearInboundStatus(accountId: string): void {
+  const status = accounts.get(accountId);
+  if (status) status.ready = false;
+  accounts.delete(accountId);
+}

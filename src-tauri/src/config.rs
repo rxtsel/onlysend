@@ -4,18 +4,18 @@ use uuid::Uuid;
 use crate::infrastructure::settings_store::{load_from_emails, save_from_emails, FromEmail};
 
 #[tauri::command]
-pub fn list_from_emails(app: AppHandle<Wry>) -> Result<Vec<FromEmail>, String> {
-    load_from_emails(&app)
+pub fn list_from_emails(app: AppHandle<Wry>, account_id: String) -> Result<Vec<FromEmail>, String> {
+    load_from_emails(&app, &account_id)
 }
 
 #[tauri::command]
 pub fn create_from_email(
-    app: AppHandle<Wry>,
+    app: AppHandle<Wry>, account_id: String,
     label: String,
     address: String,
     is_default: bool,
 ) -> Result<FromEmail, String> {
-    let mut emails = load_from_emails(&app)?;
+    let mut emails = load_from_emails(&app, &account_id)?;
 
     if is_default {
         for e in &mut emails {
@@ -31,20 +31,20 @@ pub fn create_from_email(
     };
 
     emails.push(email.clone());
-    save_from_emails(&app, &emails)?;
+    save_from_emails(&app, &account_id, &emails)?;
 
     Ok(email)
 }
 
 #[tauri::command]
 pub fn update_from_email(
-    app: AppHandle<Wry>,
+    app: AppHandle<Wry>, account_id: String,
     id: String,
     label: Option<String>,
     address: Option<String>,
     is_default: Option<bool>,
 ) -> Result<FromEmail, String> {
-    let mut emails = load_from_emails(&app)?;
+    let mut emails = load_from_emails(&app, &account_id)?;
     let mut updated: Option<FromEmail> = None;
 
     if let Some(true) = is_default {
@@ -70,13 +70,13 @@ pub fn update_from_email(
     }
 
     let updated = updated.ok_or_else(|| "From email not found".to_string())?;
-    save_from_emails(&app, &emails)?;
+    save_from_emails(&app, &account_id, &emails)?;
     Ok(updated)
 }
 
 #[tauri::command]
-pub fn delete_from_email(app: AppHandle<Wry>, id: String) -> Result<(), String> {
-    let mut emails = load_from_emails(&app)?;
+pub fn delete_from_email(app: AppHandle<Wry>, account_id: String, id: String) -> Result<(), String> {
+    let mut emails = load_from_emails(&app, &account_id)?;
     let len_before = emails.len();
     emails.retain(|e| e.id != id);
 
@@ -84,6 +84,6 @@ pub fn delete_from_email(app: AppHandle<Wry>, id: String) -> Result<(), String> 
         return Err("From email not found".to_string());
     }
 
-    save_from_emails(&app, &emails)?;
+    save_from_emails(&app, &account_id, &emails)?;
     Ok(())
 }

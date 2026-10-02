@@ -1,4 +1,9 @@
 <script lang="ts">
+  import { provideAccount } from "$lib/features/auth/account-context";
+  import { mailUrl } from "$lib/features/auth/mail-routes";
+  import { listAccounts } from "$lib/shared/api/auth";
+  let accountId = $state("");
+  provideAccount(() => accountId);
   import { goto } from "$app/navigation";
   import { onMount } from "svelte";
   import { fade, fly } from "svelte/transition";
@@ -59,10 +64,13 @@ import { getSelectedDomain, saveSelectedDomain } from "@/lib/shared/api/domains"
   onMount(async () => {
     isChecking = true;
     try {
-      const state = await getOnboardingState();
+      const accounts = await listAccounts();
+      accountId = (accounts.find((a) => a.isActive) ?? accounts[0])?.id ?? "";
+      if (!accountId) return;
+      const state = await getOnboardingState(accountId);
 
       if (state.complete && state.authenticated) {
-        goto("/mail/sent");
+        goto(mailUrl(accountId, "sent"));
         return;
       }
 
@@ -95,18 +103,19 @@ import { getSelectedDomain, saveSelectedDomain } from "@/lib/shared/api/domains"
    * Reconnect fast-path: when local data (identities + domain) survives a
    * disconnect, connecting restores the session without repeating setup.
    */
-  async function handleConnected() {
+  async function handleConnected(id: string) {
+    accountId = id;
     try {
       const [emails, savedDomain] = await Promise.all([
-        listFromEmails(),
-        getSelectedDomain(),
+        listFromEmails(accountId),
+        getSelectedDomain(accountId),
       ]);
 
       if (emails.length > 0 && savedDomain) {
         selectedDomain = savedDomain;
-        await markSetupComplete();
+        await markSetupComplete(accountId);
         toast.success("Welcome back!");
-        goto("/mail/sent");
+        goto(mailUrl(accountId, "sent"));
         return;
       }
     } catch (err) {
@@ -126,10 +135,10 @@ import { getSelectedDomain, saveSelectedDomain } from "@/lib/shared/api/domains"
       isSaving = true;
 
       await Promise.all([
-        saveSelectedDomain(selectedDomain),
-        markSetupComplete(),
+        saveSelectedDomain(accountId, selectedDomain),
+        markSetupComplete(accountId),
         ...emailOptions.map((opt, i) =>
-          createFromEmail({
+          createFromEmail(accountId, {
             label: opt.label,
             address: opt.address,
             isDefault: i === 0,
@@ -138,7 +147,7 @@ import { getSelectedDomain, saveSelectedDomain } from "@/lib/shared/api/domains"
       ]);
 
       toast.success("Setup complete! Welcome to OnlySend");
-      goto("/mail/sent");
+      goto(mailUrl(accountId, "sent"));
     } catch (err) {
       console.error(err);
       toast.error("Failed to save. Try again.");

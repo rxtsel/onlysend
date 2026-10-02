@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { useAccountId } from "$lib/features/auth/account-context";
+  const accountId = useAccountId();
   import { onMount } from "svelte";
   import { fly } from "svelte/transition";
   import { toast } from "svelte-sonner";
@@ -40,7 +42,7 @@
     onContinue: () => void;
   } = $props();
 
-  const store = new DomainSetupStore();
+  const store = new DomainSetupStore(accountId);
 
   /* ---------------------------------------------------------
    * VIEW SWITCHING (slide + height animation)
@@ -196,7 +198,7 @@
       detail.capabilities.receiving === "enabled" &&
       detail.records.length > 0 &&
       detail.records.every((r) => r.status === "verified");
-    setInboxEnabled(enabled).catch(console.error);
+    setInboxEnabled(accountId, enabled).catch(console.error);
   }
 
   onMount(() => {

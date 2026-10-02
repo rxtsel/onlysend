@@ -7,6 +7,10 @@
 </script>
 
 <script lang="ts">
+  import { useAccountId } from "$lib/features/auth/account-context";
+  import { mailUrl } from "$lib/features/auth/mail-routes";
+  const accountId = useAccountId();
+  const inboundStatus = getInboundStatus(accountId);
     import NavUser from "./nav-user.svelte";
     import { useSidebar } from "@/lib/components/ui/sidebar/context.svelte.js";
     import * as Sidebar from "@/lib/components/ui/sidebar/index.js";
@@ -31,7 +35,7 @@
 import { authErrorToast, isAuthError } from "@/lib/shared/services/auth-toast.svelte";
 import { errorMessage } from "@/lib/shared/utils/errors";
     import { createEmailList } from "../shared/email-list.svelte";
-    import { inboundStatus } from "../shared/inbound-status.svelte";
+    import { getInboundStatus } from "../shared/inbound-status.svelte";
 
     // Live update when receiving becomes verified anywhere in the app.
     $effect(() => {
@@ -51,13 +55,13 @@ import { errorMessage } from "@/lib/shared/utils/errors";
     type Mode = "inbox" | "sent";
 
     const mode = $derived(
-        page.url.pathname.startsWith("/mail/inbox") ? ("inbox" as const) : ("sent" as const),
+        page.url.pathname.startsWith(mailUrl(accountId, "inbox")) ? ("inbox" as const) : ("sent" as const),
     );
 
     const data = {
         navMain: [
-            { title: "Inbox", url: "/mail/inbox", icon: InboxIcon, mode: "inbox" as const },
-            { title: "All Sent", url: "/mail/sent", icon: SendIcon, mode: "sent" as const },
+            { title: "Inbox", url: mailUrl(accountId, "inbox"), icon: InboxIcon, mode: "inbox" as const },
+            { title: "All Sent", url: mailUrl(accountId, "sent"), icon: SendIcon, mode: "sent" as const },
         ],
     };
 
@@ -89,11 +93,11 @@ import { errorMessage } from "@/lib/shared/utils/errors";
         return mail.from.split("@")[1]?.toLowerCase() ?? "";
     }
     const sentList = createEmailList<SentEmail>((limit, offset) =>
-        listSentEmails(limit, offset, true),
+        listSentEmails(accountId, limit, offset, true),
     );
 
     const inboxList = createEmailList<InboundEmail>((limit, offset) =>
-        listInboundEmails(limit, offset),
+        listInboundEmails(accountId, limit, offset),
     );
 
     const activeList = $derived(mode === "inbox" ? inboxList : sentList);
@@ -183,8 +187,8 @@ import { errorMessage } from "@/lib/shared/utils/errors";
     onMount(async () => {
         try {
             const [ids, state] = await Promise.all([
-                getReadInboundIds(),
-                getOnboardingState(),
+                getReadInboundIds(accountId),
+                getOnboardingState(accountId),
             ]);
             if (disposed) return;
             readIds = new Set(ids);
@@ -203,17 +207,16 @@ import { errorMessage } from "@/lib/shared/utils/errors";
         return () => window.removeEventListener("inbox-enabled-changed", handleInboxEnabled);
     });
 
-    /** Nav items, with Inbox gated behind the receiving flag. */
-    const navItems = $derived(
-        data.navMain.filter((item) => item.mode !== "inbox" || inboxEnabled),
-    );
+    // Keep Inbox reachable even before receiving is configured for this
+    // account; the page owns setup/readiness, not a global navigation flag.
+    const navItems = data.navMain;
 
     async function handleEmailClick(mailId: string) {
         if (mode === "inbox" && !readIds.has(mailId)) {
             readIds = new Set([...readIds, mailId]);
-            markInboundRead(mailId).catch(console.error);
+            markInboundRead(accountId, mailId).catch(console.error);
         }
-        goto(`/mail/${mode}/${mailId}`);
+        goto(mailUrl(accountId, mode, mailId));
     }
 
     /* ---------------------------------------------------------
@@ -278,7 +281,7 @@ import { errorMessage } from "@/lib/shared/utils/errors";
                         class="size-8 justify-center rounded-lg transition-colors p-0"
                     >
                         <a
-                            href="/mail/composer"
+                            href={mailUrl(accountId, "composer")}
                             class="flex h-full w-full items-center justify-center"
                             onclick={() => {
                                 if (sidebar.open) sidebar.setOpen(false);

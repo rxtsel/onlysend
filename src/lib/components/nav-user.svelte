@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { useAccountId } from "$lib/features/auth/account-context";
+  import { mailUrl } from "$lib/features/auth/mail-routes";
+  const accountId = useAccountId();
   import {
     ChevronsUpDownIcon,
     CheckIcon,
@@ -31,7 +34,7 @@
 
   const sidebar = useSidebar();
 
-  const connection = new ConnectionStore();
+  const connection = new ConnectionStore(accountId);
   const activeDomain = $derived(connection.activeDomain);
   let method = $state<ConnectionMethod>(null);
   let isDisconnecting = $state(false);
@@ -54,8 +57,7 @@
 
     try {
       accounts = await listAccounts();
-      activeAccountId =
-        accounts.find((a) => a.isActive)?.id ?? accounts[0]?.id ?? null;
+      activeAccountId = accountId;
     } catch (err) {
       console.error("Error loading accounts:", err);
     }
@@ -63,7 +65,7 @@
 
   async function handleSwitchAccount(accountId: string) {
     if (accountId === activeAccountId) return;
-    if (page.url.pathname === "/mail/composer" &&
+    if (page.url.pathname === mailUrl(accountId, "composer") &&
         !window.confirm("Switch accounts and discard the current draft?")) return;
     try {
       await switchMailAccount(accountId, page.url.pathname);
@@ -104,13 +106,13 @@
             class="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground md:h-8 md:p-0"
           >
             <Blobatar
-              name={activeDomain ?? "onlysend"}
+              name={accountId}
               size={32}
               class="rounded-lg"
             />
             <div class="grid flex-1 text-start text-sm leading-tight">
               <span class="truncate font-medium">
-                {activeDomain ?? "OnlySend"}
+                {accounts.find((account) => account.id === accountId)?.label ?? "Account"}
               </span>
               <span class="truncate text-xs text-muted-foreground">
                 {connectionLabel}
@@ -129,13 +131,13 @@
         <DropdownMenu.Label class="p-0 font-normal">
           <div class="flex items-center gap-2 px-1 py-1.5 text-start text-sm">
             <Blobatar
-              name={activeDomain ?? "onlysend"}
+              name={accountId}
               size={32}
               class="rounded-lg"
             />
             <div class="grid flex-1 text-start text-sm leading-tight">
               <span class="truncate font-medium">
-                {activeDomain ?? "OnlySend"}
+                {accounts.find((account) => account.id === accountId)?.label ?? "Account"}
               </span>
               <span class="truncate text-xs text-muted-foreground">
                 {connectionLabel}
@@ -154,7 +156,7 @@
                 onclick={() => handleSwitchAccount(account.id)}
                 class={account.id === activeAccountId ? "bg-accent" : ""}
               >
-                <Blobatar name={account.label} size={20} class="rounded" />
+                <Blobatar name={account.id} size={20} class="rounded" />
                 <span class="truncate">{account.label}</span>
                 {#if account.id === activeAccountId}
                   <CheckIcon class="ms-auto size-3 text-primary" />

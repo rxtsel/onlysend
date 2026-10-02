@@ -1,6 +1,9 @@
 <script lang="ts">
+  import { useAccountId } from "$lib/features/auth/account-context";
+  const accountId = useAccountId();
+  const inboundStatus = getInboundStatus(accountId);
   import ReceivingSetup from "@/lib/features/setup/components/receiving-setup.svelte";
-  import { inboundStatus } from "@/lib/shared/inbound-status.svelte";
+  import { getInboundStatus } from "@/lib/shared/inbound-status.svelte";
   import { Inbox } from "@lucide/svelte";
 </script>
 

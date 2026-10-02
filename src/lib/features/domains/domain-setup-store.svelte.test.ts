@@ -119,7 +119,7 @@ describe("DomainSetupStore", () => {
         mocks.getDomain.mockImplementation(() =>
             Promise.resolve(detail()),
         );
-        store = new DomainSetupStore();
+        store = new DomainSetupStore("account-a");
     });
 
     test("load fetches the domain list", async () => {
@@ -176,7 +176,7 @@ describe("DomainSetupStore", () => {
 
         await store.verify();
 
-        expect(mocks.verifyDomain).toHaveBeenCalledWith("d1");
+        expect(mocks.verifyDomain).toHaveBeenCalledWith("account-a", "d1");
         expect(store.isVerifying).toBe(false);
         // Stop the bounded polling so the test ends deterministically.
         store.stopWork();
@@ -191,7 +191,7 @@ describe("DomainSetupStore", () => {
 
         await store.toggleReceiving(false);
 
-        expect(mocks.setDomainReceiving).toHaveBeenCalledWith("d1", false);
+        expect(mocks.setDomainReceiving).toHaveBeenCalledWith("account-a", "d1", false);
         expect(store.setupDetail?.capabilities.receiving).toBe("disabled");
     });
 
@@ -201,6 +201,6 @@ describe("DomainSetupStore", () => {
         const result = await store.remove("d1");
 
         expect(result).toBe(true);
-        expect(mocks.deleteDomain).toHaveBeenCalledWith("d1");
+        expect(mocks.deleteDomain).toHaveBeenCalledWith("account-a", "d1");
     });
 });

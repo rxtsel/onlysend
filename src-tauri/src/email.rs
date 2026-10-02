@@ -37,9 +37,9 @@ pub struct EmailComposerData {
 }
 
 #[tauri::command]
-pub async fn send_email(app: AppHandle<Wry>, data: EmailComposerData) -> Result<(), String> {
+pub async fn send_email(app: AppHandle<Wry>, account_id: String, data: EmailComposerData) -> Result<(), String> {
     // Bearer credential: API key or OAuth access token
-    let credential = oauth::get_credential(&app).await?;
+    let credential = oauth::get_account_credential(&app, &account_id).await?;
 
     let resend = Resend::new(&credential);
 

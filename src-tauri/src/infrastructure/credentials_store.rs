@@ -3,16 +3,12 @@
 //! Per-account invariant: an account holds EITHER an API key OR an OAuth
 //! grant — saving one clears the other on the same account.
 //!
-//! Some functions are intentionally ahead of the frontend (multi-account
-//! switcher is planned). Suppressing dead_code until the UI catches up.
-#![allow(dead_code)]
 
 use std::sync::{Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{AppHandle, Wry};
-use uuid::Uuid;
 
 use super::{delete_key, read_raw_key, read_string_key, write_key, AUTH_FILE};
 
@@ -27,10 +23,6 @@ fn lock_accounts() -> Result<MutexGuard<'static, ()>, String> {
 const ACCOUNTS_KEY: &str = "accounts";
 const ACTIVE_ACCOUNT_KEY: &str = "active_account_id";
 const CLIENT_ID_KEY: &str = "resend_oauth_client_id";
-const API_KEY_RECORD: &str = "resend_api_key";
-const OAUTH_RECORD: &str = "resend_oauth";
-/// Legacy single-credential keys from pre-multi-account builds.
-const LEGACY_KEYS: &[&str] = &["resend_api_key", "resend_oauth"];
 
 /* ---------------------------------------------------------
  * Types
@@ -82,10 +74,7 @@ pub enum ActiveCredential {
  * Internals
  * --------------------------------------------------------- */
 pub(crate) fn read_accounts(app: &AppHandle<Wry>) -> Result<Vec<AccountCredential>, String> {
-    for key in LEGACY_KEYS {
-        let _ = delete_key(app, AUTH_FILE, key);
-    }
-
+    // Reading accounts must not delete legacy credentials; migration is explicit.
     match read_raw_key(app, AUTH_FILE, ACCOUNTS_KEY)? {
         Some(raw) => serde_json::from_value(raw.clone())
             .map_err(|e| format!("[ERROR] Failed to parse accounts: {e}")),
@@ -95,15 +84,6 @@ pub(crate) fn read_accounts(app: &AppHandle<Wry>) -> Result<Vec<AccountCredentia
 
 fn write_accounts(app: &AppHandle<Wry>, accounts: &[AccountCredential]) -> Result<(), String> {
     write_key(app, AUTH_FILE, ACCOUNTS_KEY, json!(accounts))
-}
-
-fn persist_with_active(
-    app: &AppHandle<Wry>,
-    accounts: &[AccountCredential],
-    active_id: &str,
-) -> Result<(), String> {
-    write_accounts(app, accounts)?;
-    write_key(app, AUTH_FILE, ACTIVE_ACCOUNT_KEY, json!(active_id))
 }
 
 pub(crate) fn read_active_id(
@@ -140,57 +120,6 @@ pub(crate) fn account_credential(app: &AppHandle<Wry>, account_id: &str) -> Resu
     credential_for(&read_accounts(app)?, account_id)
 }
 
-pub(crate) fn active_credential(
-    app: &AppHandle<Wry>,
-) -> Result<Option<ActiveCredential>, String> {
-    let accounts = read_accounts(app)?;
-    let active_id = read_active_id(app, &accounts)?;
-
-    Ok(accounts
-        .iter()
-        .find(|a| Some(&a.id) == active_id.as_ref())
-        .and_then(|a| match a.method.as_str() {
-            "api_key" => a.api_key.clone().map(ActiveCredential::ApiKey),
-            "oauth" => a.oauth.clone().map(ActiveCredential::OAuth),
-            _ => None,
-        }))
-}
-
-pub(crate) fn has_any_credential(app: &AppHandle<Wry>) -> Result<bool, String> {
-    let accounts = read_accounts(app)?;
-    Ok(accounts.iter().any(|account| credential_for(&accounts, &account.id).is_ok()))
-}
-
-pub(crate) fn active_label(app: &AppHandle<Wry>) -> Result<Option<String>, String> {
-    let accounts = read_accounts(app)?;
-    let active_id = read_active_id(app, &accounts)?;
-
-    Ok(accounts
-        .iter()
-        .find(|a| Some(&a.id) == active_id.as_ref())
-        .map(|a| a.label.clone()))
-}
-
-pub(crate) fn load_api_key(app: &AppHandle<Wry>) -> Result<Option<String>, String> {
-    let accounts = read_accounts(app)?;
-    let active_id = read_active_id(app, &accounts)?;
-
-    Ok(accounts
-        .iter()
-        .find(|a| Some(&a.id) == active_id.as_ref() && a.method == "api_key")
-        .and_then(|a| a.api_key.clone()))
-}
-
-pub(crate) fn load_oauth(app: &AppHandle<Wry>) -> Result<Option<OAuthRecord>, String> {
-    let accounts = read_accounts(app)?;
-    let active_id = read_active_id(app, &accounts)?;
-
-    Ok(accounts
-        .iter()
-        .find(|a| Some(&a.id) == active_id.as_ref() && a.method == "oauth")
-        .and_then(|a| a.oauth.clone()))
-}
-
 pub(crate) fn load_client_id(app: &AppHandle<Wry>) -> Result<Option<String>, String> {
     read_string_key(app, AUTH_FILE, CLIENT_ID_KEY)
 }
@@ -202,52 +131,8 @@ pub(crate) fn save_client_id(app: &AppHandle<Wry>, client_id: &str) -> Result<()
 /* ---------------------------------------------------------
  * Mutations
  * --------------------------------------------------------- */
-/// Upserts the OAuth grant on a specific account (rotation) or creates a
-/// fresh account entry (new connect), marking it active.
-pub fn upsert_account_oauth(
-    app: &AppHandle<Wry>,
-    account_id: Option<&str>,
-    record: &OAuthRecord,
-) -> Result<String, String> {
-    let _guard = lock_accounts()?;
-    let mut accounts = read_accounts(app)?;
-
-    let target_id = account_id.and_then(|id| {
-        accounts
-            .iter()
-            .position(|a| a.id == id)
-            .map(|pos| accounts[pos].id.clone())
-    });
-
-    let id = match target_id {
-        Some(existing) => {
-            if let Some(a) = accounts.iter_mut().find(|a| a.id == existing) {
-                a.method = "oauth".into();
-                a.oauth = Some(record.clone());
-                a.api_key = None;
-            }
-            existing
-        }
-        None => {
-            let new_id = Uuid::new_v4().to_string();
-            accounts.push(AccountCredential {
-                id: new_id.clone(),
-                label: format!("Account {}", accounts.len() + 1),
-                method: "oauth".into(),
-                api_key: None,
-                oauth: Some(record.clone()),
-            });
-            new_id
-        }
-    };
-
-    persist_with_active(app, &accounts, &id)?;
-    Ok(id)
-}
-
-/// Replaces the active account's credential with an API key (creating the
-/// entry when none exists).
-pub fn upsert_api_key_active(app: &AppHandle<Wry>, api_key: &str) -> Result<(), String> {
+/// Creates a new API-key connection and returns its stable local ID.
+pub fn create_api_key_account(app: &AppHandle<Wry>, api_key: &str) -> Result<String, String> {
     let _guard = lock_accounts()?;
     let mut accounts = read_accounts(app)?;
     let label = format!("Account {}", accounts.len() + 1);
@@ -262,26 +147,8 @@ pub fn upsert_api_key_active(app: &AppHandle<Wry>, api_key: &str) -> Result<(), 
 
     let id = accounts.last().unwrap().id.clone();
     write_accounts(app, &accounts)?;
-    write_key(app, AUTH_FILE, ACTIVE_ACCOUNT_KEY, json!(id))
-}
-
-fn disconnect_credential(accounts: &mut [AccountCredential], account_id: &str) -> Result<Option<OAuthRecord>, String> {
-    let account = accounts.iter_mut().find(|a| a.id == account_id)
-        .ok_or_else(|| "[ERROR] Unknown account".to_string())?;
-    account.api_key = None;
-    Ok(account.oauth.take())
-}
-
-pub(crate) fn disconnect_account(app: &AppHandle<Wry>, account_id: &str) -> Result<Option<OAuthRecord>, String> {
-    let _guard = lock_accounts()?;
-    let mut accounts = read_accounts(app)?;
-    let previous = disconnect_credential(&mut accounts, account_id)?;
-    write_accounts(app, &accounts)?;
-    Ok(previous)
-}
-
-pub(crate) fn clear_oauth(app: &AppHandle<Wry>) -> Result<(), String> {
-    delete_key(app, AUTH_FILE, OAUTH_RECORD)
+    write_key(app, AUTH_FILE, ACTIVE_ACCOUNT_KEY, json!(id))?;
+    Ok(id)
 }
 
 /* ---------------------------------------------------------
@@ -295,8 +162,8 @@ pub struct ConnectionStatus {
 }
 
 #[tauri::command]
-pub fn get_connection_status(app: AppHandle<Wry>) -> Result<ConnectionStatus, String> {
-    let method = active_credential(&app)?.map(|c| match c {
+pub fn get_connection_status(app: AppHandle<Wry>, account_id: String) -> Result<ConnectionStatus, String> {
+    let method = Some(match account_credential(&app, &account_id)? {
         ActiveCredential::ApiKey(_) => "api_key".to_string(),
         ActiveCredential::OAuth(_) => "oauth".to_string(),
     });
@@ -305,27 +172,26 @@ pub fn get_connection_status(app: AppHandle<Wry>) -> Result<ConnectionStatus, St
 }
 
 #[tauri::command]
-pub fn has_api_key(app: AppHandle<Wry>) -> Result<bool, String> {
-    Ok(load_api_key(&app)?.is_some())
+pub fn has_api_key(app: AppHandle<Wry>, account_id: String) -> Result<bool, String> {
+    Ok(matches!(account_credential(&app, &account_id)?, ActiveCredential::ApiKey(_)))
 }
 
 #[tauri::command]
-pub fn save_api_key(app: AppHandle<Wry>, api_key: String) -> Result<(), String> {
-    upsert_api_key_active(&app, &api_key)
+pub fn save_api_key(app: AppHandle<Wry>, api_key: String) -> Result<String, String> {
+    create_api_key_account(&app, &api_key)
 }
 
 #[tauri::command]
-pub fn get_api_key(app: AppHandle<Wry>) -> Result<Option<String>, String> {
-    load_api_key(&app)
+pub fn get_api_key(app: AppHandle<Wry>, account_id: String) -> Result<Option<String>, String> {
+    Ok(match account_credential(&app, &account_id)? {
+        ActiveCredential::ApiKey(key) => Some(key),
+        ActiveCredential::OAuth(_) => None,
+    })
 }
 
 #[tauri::command]
-pub fn delete_api_key(app: AppHandle<Wry>, account_id: Option<String>) -> Result<(), String> {
+pub fn delete_api_key(app: AppHandle<Wry>, account_id: String) -> Result<(), String> {
     let _guard = lock_accounts()?;
-    let account_id = match account_id {
-        Some(id) => id,
-        None => active_account_id(&app)?,
-    };
     let mut accounts = read_accounts(&app)?;
     let account = accounts.iter_mut().find(|account| account.id == account_id)
         .ok_or_else(|| "[ERROR] Unknown account".to_string())?;
@@ -387,7 +253,7 @@ pub(crate) fn remove_account(
 }
 
 /// Saves the OAuth grant as a NEW account entry (fresh connect).
-pub fn save_oauth(app: &AppHandle<Wry>, record: &OAuthRecord) -> Result<(), String> {
+pub fn save_oauth(app: &AppHandle<Wry>, record: &OAuthRecord) -> Result<String, String> {
     let _guard = lock_accounts()?;
     let mut accounts = read_accounts(app)?;
     let label = format!("Account {}", accounts.len() + 1);
@@ -402,7 +268,8 @@ pub fn save_oauth(app: &AppHandle<Wry>, record: &OAuthRecord) -> Result<(), Stri
 
     let id = accounts.last().unwrap().id.clone();
     write_accounts(app, &accounts)?;
-    write_key(app, AUTH_FILE, ACTIVE_ACCOUNT_KEY, json!(id))
+    write_key(app, AUTH_FILE, ACTIVE_ACCOUNT_KEY, json!(id))?;
+    Ok(id)
 }
 
 /// Compare-and-swap prevents a late refresh from overwriting a replacement
@@ -464,6 +331,25 @@ mod tests {
     }
 
     #[test]
+    fn explicit_resolution_never_uses_the_first_account_as_fallback() {
+        let accounts = vec![account("a"), account("b")];
+        match credential_for(&accounts, "b").unwrap() {
+            ActiveCredential::OAuth(grant) => assert_eq!(grant, record("b")),
+            _ => panic!("expected oauth"),
+        }
+        assert!(credential_for(&accounts, "missing").is_err());
+        assert!(credential_for(&accounts, "").is_err());
+    }
+
+    #[test]
+    fn disconnected_account_does_not_resolve_another_accounts_credentials() {
+        let mut accounts = vec![account("a"), account("b")];
+        accounts[0].oauth = None;
+        assert!(credential_for(&accounts, "a").is_err());
+        assert!(credential_for(&accounts, "b").is_ok());
+    }
+
+    #[test]
     fn refresh_only_updates_its_original_account() {
         let mut accounts = vec![account("a"), account("b")];
         rotate_oauth(&mut accounts, "a", &record("a"), &record("rotated")).unwrap();
@@ -486,30 +372,6 @@ mod tests {
         accounts[0].oauth = Some(record("reconnected"));
         assert!(rotate_oauth(&mut accounts, "a", &record("a"), &record("late")).is_err());
         assert_eq!(accounts[0].oauth, Some(record("reconnected")));
-    }
-
-    #[test]
-    fn disconnect_preserves_identity_and_other_account() {
-        let mut accounts = vec![account("a"), account("b")];
-        assert_eq!(disconnect_credential(&mut accounts, "a").unwrap(), Some(record("a")));
-        assert_eq!(accounts[0].id, "a");
-        assert_eq!(accounts[0].label, "a");
-        assert!(credential_for(&accounts, "a").is_err());
-        assert!(credential_for(&accounts, "b").is_ok());
-        assert!(rotate_oauth(&mut accounts, "a", &record("a"), &record("late")).is_err());
-        assert_eq!(disconnect_credential(&mut accounts, "a").unwrap(), None);
-    }
-
-    #[test]
-    fn disconnect_api_key_and_unknown_account() {
-        let mut accounts = vec![account("a")];
-        accounts[0].method = "api_key".into();
-        accounts[0].oauth = None;
-        accounts[0].api_key = Some("test-key".into());
-        assert!(disconnect_credential(&mut accounts, "missing").is_err());
-        assert!(credential_for(&accounts, "a").is_ok());
-        disconnect_credential(&mut accounts, "a").unwrap();
-        assert!(credential_for(&accounts, "a").is_err());
     }
 
     #[test]

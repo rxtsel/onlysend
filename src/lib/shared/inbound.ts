@@ -25,22 +25,24 @@ export interface InboundEmailDetail extends InboundEmail {
 }
 
 export async function listInboundEmails(
+  accountId: string,
   limit?: number,
   offset?: number,
 ): Promise<InboundEmail[]> {
-  return await invoke<InboundEmail[]>("list_inbound_emails", { limit, offset });
+  return await invoke<InboundEmail[]>("list_inbound_emails", { accountId, limit, offset });
 }
 
 export async function getInboundEmail(
+  accountId: string,
   emailId: string,
 ): Promise<InboundEmailDetail> {
-  return await invoke<InboundEmailDetail>("get_inbound_email", { emailId });
+  return await invoke<InboundEmailDetail>("get_inbound_email", { accountId, emailId });
 }
 
-export async function getReadInboundIds(): Promise<string[]> {
-  return await invoke<string[]>("get_read_inbound_ids");
+export async function getReadInboundIds(accountId: string): Promise<string[]> {
+  return await invoke<string[]>("get_read_inbound_ids", { accountId });
 }
 
-export async function markInboundRead(emailId: string): Promise<void> {
-  await invoke("mark_inbound_read", { emailId });
+export async function markInboundRead(accountId: string, emailId: string): Promise<void> {
+  await invoke("mark_inbound_read", { accountId, emailId });
 }

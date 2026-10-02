@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export async function hasApiKey(): Promise<boolean> {
-  return await invoke<boolean>("has_api_key");
+export async function hasApiKey(accountId: string): Promise<boolean> {
+  return await invoke<boolean>("has_api_key", { accountId });
 }
 
 /** True when onboarding was completed with either API key or OAuth. */
@@ -11,16 +11,16 @@ export interface OnboardingState {
   inboxEnabled: boolean;
 }
 
-export async function getOnboardingState(): Promise<OnboardingState> {
-  return await invoke<OnboardingState>("get_onboarding_state");
+export async function getOnboardingState(accountId: string): Promise<OnboardingState> {
+  return await invoke<OnboardingState>("get_onboarding_state", { accountId });
 }
 
-export async function setInboxEnabled(enabled: boolean): Promise<void> {
-  await invoke("set_inbox_enabled", { enabled });
+export async function setInboxEnabled(accountId: string, enabled: boolean): Promise<void> {
+  await invoke("set_inbox_enabled", { accountId, enabled });
 }
 
-export async function markSetupComplete(): Promise<void> {
-  await invoke("mark_setup_complete");
+export async function markSetupComplete(accountId: string): Promise<void> {
+  await invoke("mark_setup_complete", { accountId });
 }
 
 export type ConnectionMethod = "oauth" | "api_key" | null;
@@ -29,8 +29,8 @@ export interface ConnectionStatus {
   method: ConnectionMethod;
 }
 
-export async function getConnectionStatus(): Promise<ConnectionStatus> {
-  return await invoke<ConnectionStatus>("get_connection_status");
+export async function getConnectionStatus(accountId: string): Promise<ConnectionStatus> {
+  return await invoke<ConnectionStatus>("get_connection_status", { accountId });
 }
 
 /** Starts the OAuth flow and resolves with the authorization URL. */
@@ -40,14 +40,14 @@ export async function connectResend(): Promise<string> {
 
 /**
  * Log out one account: remove its saved connection and revoke OAuth when possible.
- * accountId will become required once all callers use account-scoped routes.
+ * The caller must identify the account explicitly.
  */
-export async function disconnectResend(accountId?: string): Promise<void> {
+export async function disconnectResend(accountId: string): Promise<void> {
   await invoke("disconnect_resend", { accountId });
 }
 
-export async function saveApiKey(apiKey: string): Promise<void> {
-  await invoke("save_api_key", { apiKey });
+export async function saveApiKey(apiKey: string): Promise<string> {
+  return await invoke<string>("save_api_key", { apiKey });
 }
 
 /* ---------------------------------------------------------

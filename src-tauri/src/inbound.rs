@@ -91,8 +91,8 @@ fn sanitize_email_html(html: &str) -> String {
         .to_string()
 }
 
-async fn client(app: &AppHandle<Wry>) -> Result<Resend, String> {
-    let credential = oauth::get_credential(app).await?;
+async fn client(app: &AppHandle<Wry>, account_id: &str) -> Result<Resend, String> {
+    let credential = oauth::get_account_credential(app, account_id).await?;
     Ok(Resend::new(&credential))
 }
 
@@ -113,11 +113,11 @@ fn derive_domain(email: &resend_rs::types::InboundEmail) -> String {
 
 #[tauri::command]
 pub async fn list_inbound_emails(
-    app: AppHandle<Wry>,
+    app: AppHandle<Wry>, account_id: String,
     limit: Option<usize>,
     offset: Option<usize>,
 ) -> Result<Vec<InboundEmailDto>, String> {
-    let resend = client(&app).await?;
+    let resend = client(&app, &account_id).await?;
 
     // Unified across every enabled domain: one request feeds all views.
     let lim = limit.unwrap_or(12);
@@ -150,10 +150,10 @@ pub async fn list_inbound_emails(
 
 #[tauri::command]
 pub async fn get_inbound_email(
-    app: AppHandle<Wry>,
+    app: AppHandle<Wry>, account_id: String,
     email_id: String,
 ) -> Result<InboundEmailDetailDto, String> {
-    let resend = client(&app).await?;
+    let resend = client(&app, &account_id).await?;
 
     let email = resend
         .receiving

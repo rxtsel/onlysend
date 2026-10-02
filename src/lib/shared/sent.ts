@@ -3,47 +3,48 @@ import type { SentEmail } from "../types/sent.type";
 import { emailCache } from "@/lib/features/sending/email-cache.svelte";
 
 export async function listSentEmails(
+  accountId: string,
   limit?: number,
   offset?: number,
   forceRefresh = false
 ): Promise<SentEmail[]> {
   // Only use cache for initial load (offset 0)
   if (!forceRefresh && offset === 0) {
-    const cached = emailCache.getList();
+    const cached = emailCache.getList(accountId, limit);
     if (cached) return cached
   }
 
-  const generation = emailCache.generation;
-  const emails = await invoke<SentEmail[]>("list_sent_emails", { limit, offset });
+  const generation = emailCache.generation(accountId);
+  const emails = await invoke<SentEmail[]>("list_sent_emails", { accountId, limit, offset });
 
   // Cache only the initial load
-  if (offset === 0 && generation === emailCache.generation) {
-    emailCache.setList(emails);
+  if (offset === 0 && generation === emailCache.generation(accountId)) {
+    emailCache.setList(accountId, emails, limit);
   }
 
   return emails;
 }
 
-export async function getSentEmail(emailId: string): Promise<SentEmail> {
+export async function getSentEmail(accountId: string, emailId: string): Promise<SentEmail> {
   // Check cache first
-  const cached = emailCache.get(emailId);
+  const cached = emailCache.get(accountId, emailId);
   if (cached) {
     console.log(`Using cached email: ${emailId}`);
     return cached;
   }
 
   console.log(`Fetching email from API: ${emailId}`);
-  const generation = emailCache.generation;
-  const email = await invoke<SentEmail>("get_sent_email", { emailId });
+  const generation = emailCache.generation(accountId);
+  const email = await invoke<SentEmail>("get_sent_email", { accountId, emailId });
 
   // An old account's request may finish after the cache was reset.
-  if (generation === emailCache.generation) emailCache.set(emailId, email);
+  if (generation === emailCache.generation(accountId)) emailCache.set(accountId, emailId, email);
 
   return email;
 }
 
-export function invalidateEmailCache(): void {
-  emailCache.invalidateList();
+export function invalidateEmailCache(accountId: string): void {
+  emailCache.invalidateList(accountId);
 }
 
 // For conditional render beetween html or Editor Tap component

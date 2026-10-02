@@ -9,32 +9,39 @@
     import * as AlertDialog from "$lib/components/ui/alert-dialog";
     import { buttonVariants } from "$lib/components/ui/button";
 
-    let { children } = $props();
+    import { provideAccount } from "$lib/features/auth/account-context";
+    import { mailUrl } from "$lib/features/auth/mail-routes";
+
+    let { children, data } = $props();
+    const accountId = $derived(data.accountId);
+    provideAccount(() => accountId);
+    const sentHref = $derived(mailUrl(accountId, "sent"));
+    const inboxHref = $derived(mailUrl(accountId, "inbox"));
 
     let isConfirmDialogOpen = $state(false);
 
     const pathname = $derived(page.url.pathname);
 
     // Route helpers
-    const isSentRoot = $derived(pathname === "/mail/sent");
-    const isSentDetail = $derived(pathname.startsWith("/mail/sent/"));
-    const isComposer = $derived(pathname === "/mail/composer");
-    const isInboxRoot = $derived(pathname === "/mail/inbox");
-    const isInboxDetail = $derived(pathname.startsWith("/mail/inbox/"));
+    const isSentRoot = $derived(pathname === sentHref);
+    const isSentDetail = $derived(pathname.startsWith(`${sentHref}/`));
+    const isComposer = $derived(pathname === mailUrl(accountId, "composer"));
+    const isInboxRoot = $derived(pathname === inboxHref);
+    const isInboxDetail = $derived(pathname.startsWith(`${inboxHref}/`));
     const isMailView = $derived(
       isSentRoot || isSentDetail || isInboxRoot || isInboxDetail,
     );
 
-    // Extract only the id when we are on /mail/sent/:id or /mail/inbox/:id
+    // Detail IDs are always interpreted within the explicit route account.
     const emailId = $derived(
       isSentDetail
-        ? pathname.slice("/mail/sent/".length)
+        ? pathname.slice(sentHref.length + 1)
         : isInboxDetail
-          ? pathname.slice("/mail/inbox/".length)
+          ? pathname.slice(inboxHref.length + 1)
           : "",
     );
     const listTitle = $derived(isInboxRoot || isInboxDetail ? "Inbox" : "All sent");
-    const listHref = $derived(isInboxRoot || isInboxDetail ? "/mail/inbox" : "/mail/sent");
+    const listHref = $derived(isInboxRoot || isInboxDetail ? inboxHref : sentHref);
 </script>
 
 {#if accountSwitch.busy}
@@ -42,7 +49,7 @@
         <Loader class="animate-spin" aria-hidden="true" /> Switching account…
     </div>
 {:else}
-{#key accountSwitch.generation}
+{#key `${accountId}:${accountSwitch.generation}`}
 <Sidebar.Provider style="--sidebar-width: 450px;" open={!isComposer}>
     <AppSidebar />
     <Sidebar.Inset>
@@ -94,7 +101,9 @@
         </header>
 
         <div class="flex flex-1 flex-col gap-4 p-4">
-            {@render children()}
+            {#key page.params.id ?? "root"}
+                {@render children()}
+            {/key}
         </div>
     </Sidebar.Inset>
 </Sidebar.Provider>

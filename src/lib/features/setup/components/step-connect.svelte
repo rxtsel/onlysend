@@ -37,7 +37,7 @@
     onConnected,
   }: {
     apiKeyValue?: string;
-    onConnected: () => void;
+    onConnected: (accountId: string) => void;
   } = $props();
 
   let view = $state<View>("buttons");
@@ -58,10 +58,10 @@
   onMount(() => {
     let unlisten: (() => void) | undefined;
 
-    listen<{ success: boolean; warning?: string; error?: string }>(
+    listen<{ success: boolean; accountId?: string; warning?: string; error?: string }>(
       "oauth://done",
       (event) => {
-        if (event.payload.success) {
+        if (event.payload.success && event.payload.accountId) {
           if (event.payload.warning === "send_only") {
             switchView("buttons");
             toast.warning(
@@ -71,7 +71,7 @@
             return;
           }
 
-          onConnected();
+          onConnected(event.payload.accountId);
           return;
         }
 
@@ -125,31 +125,25 @@
   let isVerifying = $state(false);
 
   async function verifyAndContinue() {
+    if (isVerifying) return;
     isVerifying = true;
-
     try {
-      const probe = await probeFullAccess(apiKeyValue);
-
-      if (!probe.fullAccess) {
-        const msg =
-          "This API key only has sending access. OnlySend needs Full access to manage your emails and domains.";
-        errors.apiKey = msg;
-        toast.error(msg, ALERT);
-        return;
+      try {
+        const probe = await probeFullAccess(apiKeyValue);
+        if (!probe.fullAccess) {
+          const msg = "This API key only has sending access. OnlySend needs Full access to manage your emails and domains.";
+          errors.apiKey = msg;
+          toast.error(msg, ALERT);
+          return;
+        }
+      } catch {
+        toast.warning("Could not verify permissions right now, continuing anyway.", ALERT);
       }
-
-      // Persist immediately so later wizard steps (domains) can use it.
-      await saveApiKey(apiKeyValue);
-      onConnected();
-    } catch (err) {
-      // Network/API failure: warn but don't block the user.
-      console.error(err);
-      toast.warning(
-        "Could not verify the API key permissions right now, continuing anyway.",
-        ALERT,
-      );
-      await saveApiKey(apiKeyValue);
-      onConnected();
+      // Create exactly once and carry the returned identity into the wizard.
+      const accountId = await saveApiKey(apiKeyValue);
+      onConnected(accountId);
+    } catch {
+      toast.error("Failed to save the connection. Please try again.");
     } finally {
       isVerifying = false;
     }

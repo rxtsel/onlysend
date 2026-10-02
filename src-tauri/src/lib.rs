@@ -32,12 +32,14 @@ pub fn run() {
             println!("🚀 Store initialized");
 
             // D: Proactive credential warm-up — refresh before the UI fires
-            // its parallel loads. Single-flight in get_credential makes this
+            // its parallel loads. Per-account single-flight makes this
             // race-safe. Silent: failures surface on actual use.
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(err) = oauth::get_credential(&handle).await {
-                    println!("[INFO] Credential warm-up skipped: {err}");
+                if let Ok(account_id) = infrastructure::credentials_store::active_account_id(&handle) {
+                    if let Err(err) = oauth::get_account_credential(&handle, &account_id).await {
+                        println!("[INFO] Credential warm-up skipped: {err}");
+                    }
                 }
             });
 

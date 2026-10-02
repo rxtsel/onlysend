@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { useAccountId } from "$lib/features/auth/account-context";
+  import { mailUrl } from "$lib/features/auth/mail-routes";
+  const accountId = useAccountId();
   import { page } from "$app/state";
   import { onMount } from "svelte";
 
@@ -28,10 +31,10 @@
     try {
       isLoading = true;
       error = null;
-      email = await getInboundEmail(emailId);
+      email = await getInboundEmail(accountId, emailId);
 
       // Opening an email marks it as read.
-      markInboundRead(email.id).catch(console.error);
+      markInboundRead(accountId, email.id).catch(console.error);
     } catch (err) {
       console.error("Error loading email:", err);
       error = "Failed to load email";
@@ -56,12 +59,7 @@
     loadEmail();
   });
 
-  // Reload when route params change
-  $effect(() => {
-    if (page.params.id) {
-      loadEmail();
-    }
-  });
+  // The layout keys detail pages by account and message ID.
 </script>
 
 <div class="flex h-full flex-col">
@@ -74,7 +72,7 @@
   {:else if error || !email}
     <div class="flex flex-col items-center justify-center h-full gap-4">
       <div class="text-muted-foreground">{error || "Email not found"}</div>
-      <Button variant="outline" onclick={() => goto("/mail/inbox")}>
+      <Button variant="outline" onclick={() => goto(mailUrl(accountId, "inbox"))}>
         <ArrowLeft class="mr-2 h-4 w-4" />
         Back to Inbox
       </Button>

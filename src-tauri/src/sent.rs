@@ -22,12 +22,12 @@ pub struct SentEmail {
 
 #[tauri::command]
 pub async fn list_sent_emails(
-    app: AppHandle<Wry>,
+    app: AppHandle<Wry>, account_id: String,
     limit: Option<usize>,
     offset: Option<usize>,
 ) -> Result<Vec<SentEmail>, String> {
     // Bearer credential: API key or OAuth access token
-    let credential = oauth::get_credential(&app).await?;
+    let credential = oauth::get_account_credential(&app, &account_id).await?;
 
     let resend = Resend::new(&credential);
 
@@ -72,9 +72,9 @@ pub async fn list_sent_emails(
 }
 
 #[tauri::command]
-pub async fn get_sent_email(app: AppHandle<Wry>, email_id: String) -> Result<SentEmail, String> {
+pub async fn get_sent_email(app: AppHandle<Wry>, account_id: String, email_id: String) -> Result<SentEmail, String> {
     // Bearer credential: API key or OAuth access token
-    let credential = oauth::get_credential(&app).await?;
+    let credential = oauth::get_account_credential(&app, &account_id).await?;
 
     let resend = Resend::new(&credential);
 

@@ -177,14 +177,14 @@ fn to_domain_dto(domain: &Domain) -> DomainDto {
     }
 }
 
-async fn client(app: &AppHandle<Wry>) -> Result<Resend, String> {
-    let credential = oauth::get_credential(app).await?;
+async fn client(app: &AppHandle<Wry>, account_id: &str) -> Result<Resend, String> {
+    let credential = oauth::get_account_credential(app, account_id).await?;
     Ok(Resend::new(&credential))
 }
 
 #[tauri::command]
-pub async fn list_domains(app: AppHandle<Wry>) -> Result<Vec<DomainDto>, String> {
-    let resend = client(&app).await?;
+pub async fn list_domains(app: AppHandle<Wry>, account_id: String) -> Result<Vec<DomainDto>, String> {
+    let resend = client(&app, &account_id).await?;
 
     let response = resend
         .domains
@@ -197,7 +197,7 @@ pub async fn list_domains(app: AppHandle<Wry>) -> Result<Vec<DomainDto>, String>
 
 #[tauri::command]
 pub async fn create_domain(
-    app: AppHandle<Wry>,
+    app: AppHandle<Wry>, account_id: String,
     name: String,
     region: Option<String>,
     enable_receiving: Option<bool>,
@@ -206,7 +206,7 @@ pub async fn create_domain(
 
     // Without inbound, the plain SDK path covers everything.
     if !enable_receiving {
-        let resend = client(&app).await?;
+        let resend = client(&app, &account_id).await?;
 
         let mut options = resend_rs::types::CreateDomainOptions::new(&name);
         if let Some(r) = region.as_deref().and_then(region_to_enum) {
@@ -224,7 +224,7 @@ pub async fn create_domain(
 
     // With inbound ON we must send capabilities in the same request, and the
     // SDK has no setter for them: raw POST it is (single request).
-    let credential = oauth::get_credential(&app).await?;
+    let credential = oauth::get_account_credential(&app, &account_id).await?;
 
     let http = reqwest::Client::builder()
         .user_agent(concat!("OnlySend/", env!("CARGO_PKG_VERSION")))
@@ -279,10 +279,10 @@ fn region_to_enum(value: &str) -> Option<resend_rs::types::Region> {
 }
 
 #[tauri::command]
-pub async fn get_domain(app: AppHandle<Wry>, domain_id: String) -> Result<DomainDetailDto, String> {
+pub async fn get_domain(app: AppHandle<Wry>, account_id: String, domain_id: String) -> Result<DomainDetailDto, String> {
     // Resolve once. Both parsers consume the same response and credential;
     // switching accounts cannot retarget a fallback request.
-    let credential = oauth::get_credential(&app).await?;
+    let credential = oauth::get_account_credential(&app, &account_id).await?;
     fetch_domain(&crate::infrastructure::http::client(), "https://api.resend.com", &credential, &domain_id).await
 }
 
@@ -462,10 +462,10 @@ fn parse_raw_domain(mut body: serde_json::Value) -> Result<DomainDetailDto, Stri
 /// Permanently deletes a domain from Resend.
 #[tauri::command]
 pub async fn delete_domain(
-    app: AppHandle<Wry>,
+    app: AppHandle<Wry>, account_id: String,
     domain_id: String,
 ) -> Result<bool, String> {
-    let resend = client(&app).await?;
+    let resend = client(&app, &account_id).await?;
 
     let response = resend
         .domains
@@ -486,11 +486,11 @@ pub async fn delete_domain(
 /// Uses a raw PATCH because resend-rs does not expose a capabilities setter.
 #[tauri::command]
 pub async fn set_domain_receiving(
-    app: AppHandle<Wry>,
+    app: AppHandle<Wry>, account_id: String,
     domain_id: String,
     enable: bool,
 ) -> Result<DomainDetailDto, String> {
-    let credential = oauth::get_credential(&app).await?;
+    let credential = oauth::get_account_credential(&app, &account_id).await?;
 
     let http = reqwest::Client::builder()
         .user_agent(concat!("OnlySend/", env!("CARGO_PKG_VERSION")))
@@ -521,15 +521,15 @@ pub async fn set_domain_receiving(
         ));
     }
 
-    get_domain(app, domain_id).await
+    get_domain(app, account_id, domain_id).await
 }
 
 #[tauri::command]
 pub async fn verify_domain(
-    app: AppHandle<Wry>,
+    app: AppHandle<Wry>, account_id: String,
     domain_id: String,
 ) -> Result<DomainDetailDto, String> {
-    let resend = client(&app).await?;
+    let resend = client(&app, &account_id).await?;
 
     // Triggers the asynchronous verification process.
     let _ = resend
@@ -539,7 +539,7 @@ pub async fn verify_domain(
         .map_err(|e| permissions::map_resend_error("Failed to trigger verification", e))?;
 
     // Return the (now pending) state so the UI can start polling.
-    get_domain(app, domain_id).await
+    get_domain(app, account_id, domain_id).await
 }
 
 #[cfg(test)]

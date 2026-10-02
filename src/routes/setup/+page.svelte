@@ -1,4 +1,9 @@
 <script lang="ts">
+  import { provideAccount } from "$lib/features/auth/account-context";
+  import { mailUrl } from "$lib/features/auth/mail-routes";
+  import { listAccounts } from "$lib/shared/api/auth";
+  let accountId = $state("");
+  provideAccount(() => accountId);
   import { goto } from "$app/navigation";
   import { fly } from "svelte/transition";
   import { toast } from "svelte-sonner";
@@ -56,9 +61,9 @@
       isSaving = true;
 
       await Promise.all([
-        saveSelectedDomain(selectedDomain),
+        saveSelectedDomain(accountId, selectedDomain),
         ...emailOptions.map((opt, i) =>
-          createFromEmail({
+          createFromEmail(accountId, {
             label: opt.label,
             address: opt.address,
             isDefault: i === 0,
@@ -66,9 +71,9 @@
         ),
       ]);
 
-      await markSetupComplete();
+      await markSetupComplete(accountId);
       toast.success("Account added!");
-      goto("/mail/sent");
+      goto(mailUrl(accountId, "sent"));
     } catch (err) {
       console.error(err);
       toast.error("Failed to save. Try again.");
@@ -96,7 +101,7 @@
   </header>
 
   {#if step === 1}
-    <StepConnect onConnected={nextStep} />
+    <StepConnect onConnected={(id) => { accountId = id; nextStep(); }} />
   {:else if step === 2}
     <StepDomains bind:domain={selectedDomain} onContinue={nextStep} />
   {:else}
@@ -110,7 +115,7 @@
   {/if}
 
   <p class="mt-6">
-    <Button variant="link" size="sm" onclick={() => goto("/mail/sent")}>
+    <Button variant="link" size="sm" onclick={() => goto("/")}>
       Back to app
     </Button>
   </p>

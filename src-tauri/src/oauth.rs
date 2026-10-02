@@ -202,21 +202,21 @@ pub fn handle_deep_link(app: AppHandle<Wry>, url: String) {
     tauri::async_runtime::spawn(async move {
         let result = complete_flow(&app, &url).await;
         match result {
-            Ok(()) => {
+            Ok(account_id) => {
                 println!("[INFO] Resend OAuth flow completed successfully");
 
                 // Warn when the grant only allows sending: OnlySend needs
                 // full_access for listing emails, domains, etc.
-                let send_only = store::load_oauth(&app)
-                    .ok()
-                    .flatten()
-                    .map(|r| !r.scope.contains("full_access"))
-                    .unwrap_or(false);
+                let send_only = match store::account_credential(&app, &account_id) {
+                    Ok(store::ActiveCredential::OAuth(record)) => !record.scope.contains("full_access"),
+                    _ => false,
+                };
 
                 let _ = app.emit(
                     "oauth://done",
                     serde_json::json!({
                         "success": true,
+                        "accountId": account_id,
                         "warning": if send_only { Some("send_only") } else { None },
                     }),
                 );
@@ -241,7 +241,7 @@ fn take_matching_flow(pending: &mut Option<PendingFlow>, returned_state: &str) -
     pending.take().ok_or_else(|| "[ERROR] No OAuth flow is pending".into())
 }
 
-async fn complete_flow(app: &AppHandle<Wry>, url: &str) -> Result<(), String> {
+async fn complete_flow(app: &AppHandle<Wry>, url: &str) -> Result<String, String> {
     let state: State<OAuthState> = app.state();
 
     let params = parse_query(url);
@@ -270,7 +270,7 @@ async fn exchange_code(
     code: &str,
     verifier: &str,
     client_id: &str,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let form = [
         ("grant_type", "authorization_code"),
         ("client_id", client_id),
@@ -286,7 +286,7 @@ async fn persist_tokens(
     app: &AppHandle<Wry>,
     client_id: &str,
     form: [(&str, &str); 5],
-) -> Result<(), String> {
+) -> Result<String, String> {
     let response = http_client()
         .post(format!("{RESEND_API_BASE}/oauth/token"))
         .form(&form)
@@ -331,15 +331,6 @@ async fn persist_tokens(
     };
 
     store::save_oauth(app, &record)
-}
-
-/// Returns a valid bearer credential: API key first, otherwise an OAuth access
-/// token, refreshing it when close to expiry.
-pub(crate) async fn get_credential(app: &AppHandle<Wry>) -> Result<String, String> {
-    // Compatibility boundary until commands take an explicit accountId.
-    // Capture once: switching the UI must not retarget an in-flight refresh.
-    let account_id = store::active_account_id(app)?;
-    get_account_credential(app, &account_id).await
 }
 
 pub(crate) async fn get_account_credential(
@@ -424,11 +415,7 @@ pub(crate) async fn get_account_credential(
 /// Log out this account: remove its local connection before network I/O.
 /// Other accounts and remote Resend domains/emails are not deleted.
 #[tauri::command]
-pub async fn disconnect_resend(app: AppHandle<Wry>, account_id: Option<String>) -> Result<(), String> {
-    let account_id = match account_id {
-        Some(id) => id,
-        None => store::active_account_id(&app)?,
-    };
+pub async fn disconnect_resend(app: AppHandle<Wry>, account_id: String) -> Result<(), String> {
     let record = store::remove_account(app, account_id)?;
     revoke_grant(record).await;
     Ok(())

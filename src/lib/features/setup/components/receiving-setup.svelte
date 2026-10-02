@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { useAccountId } from "$lib/features/auth/account-context";
+  const accountId = useAccountId();
+  const inboundStatus = getInboundStatus(accountId);
   import { onMount } from "svelte";
   import { fly } from "svelte/transition";
   import { cubicInOut } from "svelte/easing";
@@ -20,7 +23,7 @@
   } from "@/lib/shared/api/domains";
   import { setInboxEnabled } from "@/lib/shared/api/auth";
   import { toast } from "svelte-sonner";
-  import { inboundStatus } from "@/lib/shared/inbound-status.svelte";
+  import { getInboundStatus } from "@/lib/shared/inbound-status.svelte";
   import DnsRecordsCard from "@/lib/features/setup/components/dns-records-card.svelte";
 
   import { Button } from "@/lib/components/ui/button";
@@ -79,7 +82,7 @@
     if (disposed) return;
     inboundStatus.ready = current === "ready";
     if (current !== "loading") {
-      setInboxEnabled(current === "ready").catch(console.error);
+      setInboxEnabled(accountId, current === "ready").catch(console.error);
     }
   }
 
@@ -88,7 +91,7 @@
     detail = d;
 
     // Persist last-known state so the card renders instantly next time.
-    saveInboundSetupCache(JSON.parse(JSON.stringify(d))).catch(console.error);
+    saveInboundSetupCache(accountId, JSON.parse(JSON.stringify(d))).catch(console.error);
 
     if (d.status !== "verified") {
       rxState = "domain-unverified";
@@ -101,7 +104,7 @@
   }
 
   async function loadDetail(id: string) {
-    applyDetail(await getDomain(id));
+    applyDetail(await getDomain(accountId, id));
   }
 
   function allRecordsVerified(d: DomainDetail): boolean {
@@ -124,7 +127,7 @@
       }
 
       try {
-        const updated = await getDomain(detail.id);
+        const updated = await getDomain(accountId, detail.id);
         if (disposed) return;
         detail = updated;
         if (allRecordsVerified(detail)) {
@@ -143,7 +146,7 @@
 
     try {
       isEnabling = true;
-      const updated = await setDomainReceiving(detail.id, true);
+      const updated = await setDomainReceiving(accountId, detail.id, true);
       if (disposed) return;
       detail = updated;
       toast.success("Receiving enabled. Add the MX record below.");
@@ -162,7 +165,7 @@
 
     try {
       isVerifying = true;
-      const updated = await verifyDomain(detail.id);
+      const updated = await verifyDomain(accountId, detail.id);
       if (disposed) return;
       detail = updated;
       startPollingIfPending();
@@ -178,7 +181,7 @@
     (async () => {
       // 1) Instant paint from the local cache (no request).
       try {
-        const cached = await getInboundSetupCache();
+        const cached = await getInboundSetupCache(accountId);
         if (disposed) return;
         if (cached) {
           applyDetail(cached as DomainDetail);
@@ -191,7 +194,7 @@
       //    verification checks run only when the user clicks Verify/Enable.
       try {
         if (disposed) return;
-        const domains = await listDomains();
+        const domains = await listDomains(accountId);
         if (disposed) return;
         const active =
           domains.find((d) => d.status === "verified") ?? domains[0] ?? null;

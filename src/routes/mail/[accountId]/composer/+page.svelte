@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { useAccountId } from "$lib/features/auth/account-context";
+  import { mailUrl } from "$lib/features/auth/mail-routes";
+  const accountId = useAccountId();
   import * as Popover from "$lib/components/ui/popover";
   import { invalidateEmailCache } from "@/lib/shared/sent";
   import { Input } from "@/lib/components/ui/input";
@@ -14,10 +17,10 @@
   import Button from "@/lib/components/ui/button/button.svelte";
   import { emailComposerSchema } from "@/lib/schemas/email-composer.schema";
   import { toast } from "svelte-sonner";
-  import { goto } from "$app/navigation";
+  import { goto, beforeNavigate } from "$app/navigation";
   import { invoke } from "@tauri-apps/api/core";
   import type { AttachmentPayload, FromEmail } from "@/lib/types";
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { listFromEmails, formatFromEmail } from "@/lib/shared/from-emails";
 
   let toEmails = $state<Tag[]>([]);
@@ -39,6 +42,13 @@
   let messageIdPopoverOpen = $state(false);
 
   let errors: Record<string, string> = $state({});
+  let disposed = false;
+  let sent = false;
+  onDestroy(() => { disposed = true; });
+  beforeNavigate(({ cancel }) => {
+    if (!sent && (subject || content || toEmails.length || files.length) &&
+        !window.confirm("Leave this page and discard the current draft?")) cancel();
+  });
 
   async function handleSubmit(event: Event) {
     event.preventDefault();
@@ -78,8 +88,11 @@
     }
 
     try {
-      await invoke("send_email", { data: parsed.data });
+      await invoke("send_email", { accountId, data: parsed.data });
 
+      invalidateEmailCache(accountId);
+      if (disposed) return;
+      sent = true;
       // Reset form and states
       toEmails = [];
       from = "";
@@ -97,10 +110,9 @@
 
       toast.success("Email send successfully!");
       // Bust the list cache so the sidebar shows the new email immediately
-      invalidateEmailCache();
       window.dispatchEvent(new CustomEvent("email-sent"));
 
-      goto("/mail/sent");
+      goto(mailUrl(accountId, "sent"));
     } catch (err) {
       console.error(err);
       toast.error("Failed to send email. Please try again.");
@@ -110,7 +122,7 @@
   // Get From email options
   onMount(async () => {
     try {
-      const list = await listFromEmails();
+      const list = await listFromEmails(accountId);
       fromEmails = list;
 
       const defaultFrom = list.find((f) => f.isDefault) ?? list[0];

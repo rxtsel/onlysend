@@ -1,10 +1,13 @@
 <script lang="ts">
+  import { useAccountId } from "$lib/features/auth/account-context";
+  const accountId = useAccountId();
+  const inboundStatus = getInboundStatus(accountId);
   import { toast } from "svelte-sonner";
 
   import { Button } from "@/lib/components/ui/button";
   import * as AlertDialog from "@/lib/components/ui/alert-dialog";
   import ReceivingSetup from "@/lib/features/setup/components/receiving-setup.svelte";
-  import { inboundStatus } from "@/lib/shared/inbound-status.svelte";
+  import { getInboundStatus } from "@/lib/shared/inbound-status.svelte";
   import { logoutMailAccount } from "@/lib/features/auth/account-switch.svelte";
   import { ConnectionStore } from "@/lib/features/auth/connection-store.svelte";
   import { onMount } from "svelte";
@@ -19,7 +22,7 @@
   } = $props();
 
   // Connection state
-  const connectionStore = new ConnectionStore();
+  const connectionStore = new ConnectionStore(accountId);
   let isConnecting = $state(false);
   let isDisconnecting = $state(false);
   let inboxEnabled = $state(false);
@@ -65,7 +68,7 @@
     if (isDisconnecting) return;
     try {
       isDisconnecting = true;
-      await logoutMailAccount();
+      await logoutMailAccount(accountId);
       toast.success("Disconnected from Resend");
       showDisconnectConfirm = false;
       onRequestClose?.();

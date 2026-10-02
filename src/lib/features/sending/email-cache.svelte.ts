@@ -1,60 +1,49 @@
 import type { SentEmail } from "@/lib/types";
 
+type AccountCache = {
+  emails: Map<string, SentEmail>;
+  lists: Map<number, { emails: SentEmail[]; timestamp: number }>;
+};
+
+/** Separate account buckets; generations stop late logout responses repopulating them. */
 class EmailCache {
-  private epoch = 0;
+  private accounts = new Map<string, AccountCache>();
+  private epochs = new Map<string, number>();
+  private readonly ttl = 5 * 60 * 1000;
 
-  get generation(): number { return this.epoch; }
-  private cache = $state<Map<string, SentEmail>>(new Map());
-  private listCache = $state<SentEmail[] | null>(null);
-  private listCacheTimestamp = $state<number>(0);
+  generation(accountId: string): number { return this.epochs.get(accountId) ?? 0; }
 
-  // Cache TTL: 5 minutes for list, indefinite for individual emails
-  private readonly LIST_CACHE_TTL = 5 * 60 * 1000;
-
-  // Get a single email from cache
-  get(id: string): SentEmail | undefined {
-    return this.cache.get(id);
-  }
-
-  // Set a single email in cache
-  set(id: string, email: SentEmail): void {
-    this.cache.set(id, email);
-  }
-
-  // Get list from cache if still valid
-  getList(): SentEmail[] | null {
-    const now = Date.now();
-    if (this.listCache && (now - this.listCacheTimestamp) < this.LIST_CACHE_TTL) {
-      return this.listCache;
+  private bucket(accountId: string): AccountCache {
+    if (!accountId) throw new Error("Account ID is required");
+    let bucket = this.accounts.get(accountId);
+    if (!bucket) {
+      bucket = { emails: new Map(), lists: new Map() };
+      this.accounts.set(accountId, bucket);
     }
-    return null;
+    return bucket;
   }
 
-  // Set list in cache
-  setList(emails: SentEmail[]): void {
-    this.listCache = emails;
-    this.listCacheTimestamp = Date.now();
+  get(accountId: string, id: string): SentEmail | undefined {
+    return this.bucket(accountId).emails.get(id);
   }
-
-  // Invalidate list cache (e.g., after sending a new email)
-  invalidateList(): void {
-    this.listCache = null;
-    this.listCacheTimestamp = 0;
+  set(accountId: string, id: string, email: SentEmail): void {
+    this.bucket(accountId).emails.set(id, email);
   }
-
-  // Clear all cache
-  clear(): void {
-    this.epoch += 1;
-    this.cache.clear();
-    this.listCache = null;
-    this.listCacheTimestamp = 0;
+  getList(accountId: string, limit = 12): SentEmail[] | null {
+    const list = this.bucket(accountId).lists.get(limit);
+    return list && Date.now() - list.timestamp < this.ttl ? list.emails : null;
   }
-
-  // Check if an email exists in cache
-  has(id: string): boolean {
-    return this.cache.has(id);
+  setList(accountId: string, emails: SentEmail[], limit = 12): void {
+    this.bucket(accountId).lists.set(limit, { emails, timestamp: Date.now() });
+  }
+  invalidateList(accountId: string): void {
+    this.bucket(accountId).lists.clear();
+    this.epochs.set(accountId, this.generation(accountId) + 1);
+  }
+  clear(accountId: string): void {
+    this.accounts.delete(accountId);
+    this.epochs.set(accountId, this.generation(accountId) + 1);
   }
 }
 
-// Export singleton instance
 export const emailCache = new EmailCache();

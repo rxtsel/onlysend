@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { useAccountId } from "$lib/features/auth/account-context";
+  const accountId = useAccountId();
   import { toast } from "svelte-sonner";
   import type { ZodError } from "zod/v4";
 
@@ -52,8 +54,8 @@
   async function loadData() {
     try {
       const [emails, domain] = await Promise.all([
-        listFromEmails(),
-        getActiveDomain(),
+        listFromEmails(accountId),
+        getActiveDomain(accountId),
       ]);
       fromEmails = emails;
       activeDomain = domain;
@@ -115,7 +117,7 @@
       });
 
       if (isEditingFromEmail && editingId) {
-        await updateFromEmail({
+        await updateFromEmail(accountId, {
           id: editingId,
           label: validated.label,
           address: validated.address,
@@ -123,7 +125,7 @@
         });
         toast.success("Email option updated");
       } else {
-        await createFromEmail({
+        await createFromEmail(accountId, {
           label: validated.label,
           address: validated.address,
           isDefault: fromEmails.length === 0,
@@ -147,7 +149,7 @@
 
   async function setDefault(id: string) {
     try {
-      await updateFromEmail({ id, isDefault: true });
+      await updateFromEmail(accountId, { id, isDefault: true });
       toast.success("Default sender updated");
       await loadData();
     } catch (error) {
@@ -158,7 +160,7 @@
 
   async function handleDelete(id: string) {
     try {
-      await deleteFromEmail(id);
+      await deleteFromEmail(accountId, id);
       toast.success("Email option deleted");
       if (editingId === id) resetForm();
       await loadData();
