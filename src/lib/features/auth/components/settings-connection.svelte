@@ -68,7 +68,7 @@
     if (isDisconnecting) return;
     try {
       isDisconnecting = true;
-      await logoutMailAccount(accountId);
+      if (!await logoutMailAccount(accountId)) return;
       toast.success("Disconnected from Resend");
       showDisconnectConfirm = false;
       onRequestClose?.();

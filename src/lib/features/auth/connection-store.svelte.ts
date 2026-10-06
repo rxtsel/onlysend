@@ -8,7 +8,7 @@ import { getActiveDomain } from "@/lib/shared/api/domains";
 import { logoutMailAccount } from "./account-switch.svelte";
 
 /** Result of an action that may fail; UI decides how to report it. */
-export type ActionResult = { ok: true } | { ok: false; error: string };
+export type ActionResult = { ok: true; cancelled?: boolean } | { ok: false; error: string };
 
 /**
  * Centralizes connection state shared by the sidebar identity and the
@@ -52,8 +52,8 @@ export class ConnectionStore {
         if (this.isDisconnecting) return { ok: true };
         try {
             this.isDisconnecting = true;
-            await logoutMailAccount(this.accountId);
-            return { ok: true };
+            const disconnected = await logoutMailAccount(this.accountId);
+            return { ok: true, cancelled: !disconnected };
         } catch (err) {
             console.error("Error disconnecting:", err);
             return { ok: false, error: "Failed to disconnect" };

@@ -1,6 +1,5 @@
 <script lang="ts">
   import { useAccountId } from "$lib/features/auth/account-context";
-  import { mailUrl } from "$lib/features/auth/mail-routes";
   const accountId = useAccountId();
   import {
     ChevronsUpDownIcon,
@@ -65,8 +64,6 @@
 
   async function handleSwitchAccount(accountId: string) {
     if (accountId === activeAccountId) return;
-    if (page.url.pathname === mailUrl(accountId, "composer") &&
-        !window.confirm("Switch accounts and discard the current draft?")) return;
     try {
       await switchMailAccount(accountId, page.url.pathname);
     } catch (err) {
@@ -82,10 +79,10 @@
     const result = await connection.disconnect();
     isDisconnecting = false;
 
-    if (result.ok) {
+    if (result.ok && !result.cancelled) {
       toast.success("Disconnected from Resend");
       showDisconnectConfirm = false;
-    } else {
+    } else if (!result.ok) {
       toast.error(result.error);
     }
   }

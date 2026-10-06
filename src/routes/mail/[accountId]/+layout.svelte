@@ -45,11 +45,12 @@
 </script>
 
 {#if accountSwitch.busy}
-    <div class="flex h-screen items-center justify-center gap-2" role="status" aria-live="polite">
+    <div class="fixed inset-x-0 top-0 flex items-center justify-center gap-2 bg-background p-3" role="status" aria-live="polite">
         <Loader class="animate-spin" aria-hidden="true" /> Switching account…
     </div>
-{:else}
-{#key `${accountId}:${accountSwitch.generation}`}
+{/if}
+<!-- Keep the old tree mounted until navigation succeeds or is cancelled. -->
+{#key accountId}
 <Sidebar.Provider style="--sidebar-width: 450px;" open={!isComposer}>
     <AppSidebar />
     <Sidebar.Inset>
@@ -108,7 +109,6 @@
     </Sidebar.Inset>
 </Sidebar.Provider>
 {/key}
-{/if}
 
 {#snippet ConfirmDialog()}
     <AlertDialog.Root bind:open={isConfirmDialogOpen}>

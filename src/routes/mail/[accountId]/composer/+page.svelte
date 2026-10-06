@@ -1,6 +1,7 @@
 <script lang="ts">
   import { useAccountId } from "$lib/features/auth/account-context";
   import { mailUrl } from "$lib/features/auth/mail-routes";
+  import { registerDraftGuard, allowAccountNavigation } from "$lib/features/auth/draft-navigation";
   const accountId = useAccountId();
   import * as Popover from "$lib/components/ui/popover";
   import { invalidateEmailCache } from "@/lib/shared/sent";
@@ -26,6 +27,7 @@
   let toEmails = $state<Tag[]>([]);
   let fromEmails = $state<FromEmail[]>([]);
   let from = $state<string>("");
+  let initialFrom = "";
   let subject = $state<string>("");
   let content = $state<string>("");
   let files = $state<File[]>([]);
@@ -44,10 +46,14 @@
   let errors: Record<string, string> = $state({});
   let disposed = false;
   let sent = false;
-  onDestroy(() => { disposed = true; });
+  const unregisterGuard = registerDraftGuard(accountId, () =>
+    sent || !(subject || content || toEmails.length || ccEmails.length ||
+      bccEmails.length || files.length || isReplyToEnabled || messageId || from !== initialFrom) ||
+    window.confirm("Leave this page and discard the current draft?"),
+  );
+  onDestroy(() => { disposed = true; unregisterGuard(); });
   beforeNavigate(({ cancel }) => {
-    if (!sent && (subject || content || toEmails.length || files.length) &&
-        !window.confirm("Leave this page and discard the current draft?")) cancel();
+    if (!allowAccountNavigation(accountId)) cancel();
   });
 
   async function handleSubmit(event: Event) {
@@ -114,6 +120,7 @@
 
       goto(mailUrl(accountId, "sent"));
     } catch (err) {
+      if (disposed) return;
       console.error(err);
       toast.error("Failed to send email. Please try again.");
     }
@@ -123,12 +130,14 @@
   onMount(async () => {
     try {
       const list = await listFromEmails(accountId);
+      if (disposed) return;
       fromEmails = list;
 
       const defaultFrom = list.find((f) => f.isDefault) ?? list[0];
 
       if (defaultFrom) {
         from = formatFromEmail(defaultFrom);
+        initialFrom = from;
       }
     } catch (e) {
       console.error("[fromEmails] load error", e);
