@@ -17,7 +17,7 @@ beforeEach(() => {
     emailCache.clear(id);
     clearInboundStatus(id);
     getInboundStatus(id).ready = true;
-    emailCache.setList(id, []);
+    emailCache.setList(id, { items: [], hasMore: false, nextCursor: null });
   }
 });
 
@@ -28,7 +28,7 @@ test("logout names the account and preserves other account caches", async () => 
   expect(accountSwitch.busy).toBe(false);
   expect(emailCache.getList("a")).toBeNull();
   expect(getInboundStatus("a").ready).toBe(false);
-  expect(emailCache.getList("b")).toEqual([]);
+  expect(emailCache.getList("b")).toEqual({ items: [], hasMore: false, nextCursor: null });
   expect(getInboundStatus("b").ready).toBe(true);
 });
 
@@ -37,14 +37,14 @@ test("failed logout restores the view without navigating or deleting cache", asy
   await expect(logoutMailAccount("a")).rejects.toThrow("store failure");
   expect(goto).not.toHaveBeenCalled();
   expect(accountSwitch.busy).toBe(false);
-  expect(emailCache.getList("a")).toEqual([]);
+  expect(emailCache.getList("a")).toEqual({ items: [], hasMore: false, nextCursor: null });
 });
 
 test("switch navigates to explicit account mailbox without the previous email ID", async () => {
   await switchMailAccount("b", "/mail/a/inbox/email-from-a");
   expect(goto).toHaveBeenCalledWith("/mail/b/inbox");
   expect(accountSwitch.busy).toBe(false);
-  expect(emailCache.getList("a")).toEqual([]);
+  expect(emailCache.getList("a")).toEqual({ items: [], hasMore: false, nextCursor: null });
 });
 
 test("failed navigation releases the loading boundary", async () => {
@@ -62,7 +62,7 @@ test("cancelled draft departure does not navigate or remove credentials", async 
     expect(goto).not.toHaveBeenCalled();
     expect(disconnectResend).not.toHaveBeenCalled();
     expect(accountSwitch.busy).toBe(false);
-    expect(emailCache.getList("a")).toEqual([]);
+    expect(emailCache.getList("a")).toEqual({ items: [], hasMore: false, nextCursor: null });
   } finally { cleanup(); }
 });
 

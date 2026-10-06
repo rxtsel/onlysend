@@ -1,8 +1,9 @@
 import type { SentEmail } from "@/lib/types";
+import type { EmailPage } from "$lib/shared/email-page";
 
 type AccountCache = {
   emails: Map<string, SentEmail>;
-  lists: Map<number, { emails: SentEmail[]; timestamp: number }>;
+  lists: Map<number, { page: EmailPage<SentEmail>; timestamp: number }>;
 };
 
 /** Separate account buckets; generations stop late logout responses repopulating them. */
@@ -29,12 +30,12 @@ class EmailCache {
   set(accountId: string, id: string, email: SentEmail): void {
     this.bucket(accountId).emails.set(id, email);
   }
-  getList(accountId: string, limit = 12): SentEmail[] | null {
+  getList(accountId: string, limit = 12): EmailPage<SentEmail> | null {
     const list = this.bucket(accountId).lists.get(limit);
-    return list && Date.now() - list.timestamp < this.ttl ? list.emails : null;
+    return list && Date.now() - list.timestamp < this.ttl ? list.page : null;
   }
-  setList(accountId: string, emails: SentEmail[], limit = 12): void {
-    this.bucket(accountId).lists.set(limit, { emails, timestamp: Date.now() });
+  setList(accountId: string, page: EmailPage<SentEmail>, limit = 12): void {
+    this.bucket(accountId).lists.set(limit, { page, timestamp: Date.now() });
   }
   invalidateList(accountId: string): void {
     this.bucket(accountId).lists.clear();

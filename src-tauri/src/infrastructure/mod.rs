@@ -6,6 +6,9 @@
 
 pub mod credentials_store;
 pub mod http;
+pub mod pagination;
+#[cfg(test)]
+pub(crate) mod pagination_test_server;
 pub mod settings_store;
 
 use serde::Deserialize;

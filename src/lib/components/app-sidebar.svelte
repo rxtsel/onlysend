@@ -76,12 +76,12 @@ import { errorMessage } from "@/lib/shared/utils/errors";
     function domainOf(mail: InboundEmail | SentEmail): string {
         return mailDomains(mail).join(", ");
     }
-    const sentList = createEmailList<SentEmail>((limit, offset) =>
-        listSentEmails(accountId, limit, offset, true),
+    const sentList = createEmailList<SentEmail>((limit, after) =>
+        listSentEmails(accountId, limit, after, true),
     );
 
-    const inboxList = createEmailList<InboundEmail>((limit, offset) =>
-        listInboundEmails(accountId, limit, offset),
+    const inboxList = createEmailList<InboundEmail>((limit, after) =>
+        listInboundEmails(accountId, limit, after),
     );
 
     const activeList = $derived(mode === "inbox" ? inboxList : sentList);
@@ -352,6 +352,13 @@ import { errorMessage } from "@/lib/shared/utils/errors";
                                 <div class="h-3 bg-muted w-1/2 rounded"></div>
                             </div>
                         {/each}
+                    {:else if activeList.error && activeList.items.length === 0}
+                        <div class="p-8 text-center text-sm text-muted-foreground" role="alert">
+                            {activeList.error}
+                            <Button variant="outline" size="sm" onclick={handleRefresh}>
+                                Retry
+                            </Button>
+                        </div>
                     {:else if activeList.items.length === 0 && !activeList.isRefreshing}
                         <div
                             class="p-8 text-center text-sm text-muted-foreground"

@@ -1,28 +1,29 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { SentEmail } from "../types/sent.type";
 import { emailCache } from "@/lib/features/sending/email-cache.svelte";
+import type { EmailPage } from "./email-page";
 
 export async function listSentEmails(
   accountId: string,
   limit?: number,
-  offset?: number,
+  after: string | null = null,
   forceRefresh = false
-): Promise<SentEmail[]> {
-  // Only use cache for initial load (offset 0)
-  if (!forceRefresh && offset === 0) {
+): Promise<EmailPage<SentEmail>> {
+  // Cache the first page together with its continuation metadata.
+  if (!forceRefresh && after === null) {
     const cached = emailCache.getList(accountId, limit);
     if (cached) return cached
   }
 
   const generation = emailCache.generation(accountId);
-  const emails = await invoke<SentEmail[]>("list_sent_emails", { accountId, limit, offset });
+  const page = await invoke<EmailPage<SentEmail>>("list_sent_emails", { accountId, limit, after });
 
   // Cache only the initial load
-  if (offset === 0 && generation === emailCache.generation(accountId)) {
-    emailCache.setList(accountId, emails, limit);
+  if (after === null && generation === emailCache.generation(accountId)) {
+    emailCache.setList(accountId, page, limit);
   }
 
-  return emails;
+  return page;
 }
 
 export async function getSentEmail(accountId: string, emailId: string): Promise<SentEmail> {

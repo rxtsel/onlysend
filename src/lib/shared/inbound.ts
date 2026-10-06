@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { EmailPage } from "./email-page";
 
 export interface InboundEmail {
   id: string;
@@ -29,9 +30,9 @@ export interface InboundEmailDetail extends Omit<InboundEmail, "domain" | "domai
 export async function listInboundEmails(
   accountId: string,
   limit?: number,
-  offset?: number,
-): Promise<InboundEmail[]> {
-  return await invoke<InboundEmail[]>("list_inbound_emails", { accountId, limit, offset });
+  after: string | null = null,
+): Promise<EmailPage<InboundEmail>> {
+  return await invoke<EmailPage<InboundEmail>>("list_inbound_emails", { accountId, limit, after });
 }
 
 export async function getInboundEmail(

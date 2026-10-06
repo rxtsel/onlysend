@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use ammonia::Builder;
-use resend_rs::list_opts::ListOptions;
+use crate::infrastructure::pagination::{email_page, list_options, EmailPage};
 use resend_rs::types::GetInboundEmailOptions;
 use resend_rs::{Resend, types::InboundAttachment};
 use serde::Serialize;
@@ -118,26 +118,25 @@ fn recipient_domains(received_for: &[String], to: &[String]) -> Vec<String> {
 pub async fn list_inbound_emails(
     app: AppHandle<Wry>, account_id: String,
     limit: Option<usize>,
-    offset: Option<usize>,
-) -> Result<Vec<InboundEmailDto>, String> {
+    after: Option<String>,
+) -> Result<EmailPage<InboundEmailDto>, String> {
+    let _ = list_options(limit, after.as_deref())?;
     let resend = client(&app, &account_id).await?;
+    fetch_inbound_page(&resend, limit, after.as_deref()).await
+}
 
-    // Unified across every enabled domain: one request feeds all views.
-    let lim = limit.unwrap_or(12);
-    let off = offset.unwrap_or(0);
-    let list_opts = ListOptions::default().with_limit((lim + off).clamp(1, 100) as u8);
-
-    let response = resend
-        .receiving
-        .list(list_opts)
-        .await
-        .map_err(|e| permissions::map_resend_error("Failed to fetch inbox", e))?;
+async fn fetch_inbound_page(resend: &Resend, limit: Option<usize>, after: Option<&str>) -> Result<EmailPage<InboundEmailDto>, String> {
+    let options = list_options(limit, after)?;
+    // Account-wide history, one fixed-size page after the previous page's ID.
+    let response = match after {
+        Some(cursor) => resend.receiving.list(options.list_after(cursor)).await,
+        None => resend.receiving.list(options).await,
+    }.map_err(|e| permissions::map_resend_error("Failed to fetch inbox", e))?;
+    let has_more = response.has_more;
 
     let items = response
         .data
         .iter()
-        .skip(off)
-        .take(lim)
         .map(|email| {
             let domains = recipient_domains(&email.received_for, &email.to);
             InboundEmailDto {
@@ -152,7 +151,7 @@ pub async fn list_inbound_emails(
         })
         .collect();
 
-    Ok(items)
+    email_page(items, has_more, after, |email: &InboundEmailDto| &email.id)
 }
 
 #[tauri::command]
@@ -182,7 +181,27 @@ pub async fn get_inbound_email(
 
 #[cfg(test)]
 mod tests {
-    use super::{sanitize_email_html, recipient_domains};
+    use super::{sanitize_email_html, recipient_domains, fetch_inbound_page};
+    use crate::infrastructure::pagination_test_server::mock_history;
+
+    #[tokio::test]
+    async fn inbound_sdk_pages_traverse_history_and_keep_every_receiving_domain() {
+        let (resend, server, expected) = mock_history("/emails/receiving");
+        let mut after = None;
+        let mut ids = Vec::new();
+        for _ in 0..4 {
+            let page = fetch_inbound_page(&resend, Some(100), after.as_deref()).await.unwrap();
+            for email in &page.items {
+                assert_eq!(email.domains, vec!["a.example", "b.example"]);
+                ids.push(email.id.clone());
+            }
+            assert_eq!(page.has_more, ids.len() < expected.len());
+            after = page.next_cursor;
+        }
+        server.join().unwrap();
+        assert_eq!(ids, expected);
+        assert!(after.is_none());
+    }
 
     #[test]
     fn receiving_domains_use_every_envelope_recipient_not_sender_or_header() {
@@ -193,7 +212,6 @@ mod tests {
         assert!(recipient_domains(&["invalid".into()], &header).is_empty());
         assert!(recipient_domains(&[], &[]).is_empty());
     }
-
 
     #[test]
     fn strips_script_tags_and_content() {

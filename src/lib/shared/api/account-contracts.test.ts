@@ -35,7 +35,7 @@ const cases: Array<[string, () => Promise<unknown>]> = [
   ["create_from_email", () => senders.createFromEmail(accountId, { label: "Support", address: "support@example.com" })],
   ["update_from_email", () => senders.updateFromEmail(accountId, { id: "sender", label: "Updated" })],
   ["delete_from_email", () => senders.deleteFromEmail(accountId, "sender")],
-  ["list_inbound_emails", () => inbox.listInboundEmails(accountId, 16, 0)],
+  ["list_inbound_emails", () => inbox.listInboundEmails(accountId, 16, null)],
   ["get_inbound_email", () => inbox.getInboundEmail(accountId, "message")],
   ["get_read_inbound_ids", () => inbox.getReadInboundIds(accountId)],
   ["mark_inbound_read", () => inbox.markInboundRead(accountId, "message")],

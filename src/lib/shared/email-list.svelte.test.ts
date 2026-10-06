@@ -1,127 +1,233 @@
 import { describe, expect, test, vi } from "vitest";
 import { createEmailList } from "./email-list.svelte.js";
+import type { EmailPage } from "./email-page";
 
-type Item = { id: number };
-
-function makeFetcher(pages: Record<number, Item[]>) {
-  return vi.fn((limit: number, offset: number): Promise<Item[]> => {
-    const page = offset / limit;
-    return Promise.resolve(pages[page] ?? []);
-  });
+type Item = { id: string };
+function page(ids: string[], nextCursor: string | null = null): EmailPage<Item> {
+  return { items: ids.map((id) => ({ id })), hasMore: nextCursor !== null, nextCursor };
+}
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
 }
 
-describe("createEmailList", () => {
-  test("reset discards an old account response without clearing the new loading state", async () => {
-    let resolveA!: (items: Item[]) => void;
-    let resolveB!: (items: Item[]) => void;
-    const fetcher = vi.fn()
-      .mockImplementationOnce(() => new Promise<Item[]>((resolve) => { resolveA = resolve; }))
-      .mockImplementationOnce(() => new Promise<Item[]>((resolve) => { resolveB = resolve; }));
+describe("createEmailList cursor pagination", () => {
+  test("reset discards old account items and cursor without clearing new loading state", async () => {
+    const a = deferred<EmailPage<Item>>();
+    const b = deferred<EmailPage<Item>>();
+    const fetcher = vi.fn().mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise).mockResolvedValue(page(["b2"]));
     const list = createEmailList<Item>(fetcher);
-    const a = list.refresh();
+    const old = list.refresh();
     list.clearItems();
-    const b = list.refresh();
-    resolveA([{ id: 1 }]);
-    await a;
+    const current = list.refresh();
+    a.resolve(page(["a1"], "a-cursor"));
+    await old;
     expect(list.items).toEqual([]);
     expect(list.isRefreshing).toBe(true);
-    resolveB([{ id: 2 }]);
-    await b;
-    expect(list.items).toEqual([{ id: 2 }]);
-    expect(list.isRefreshing).toBe(false);
+    expect(list.hasMore).toBe(false);
+    b.resolve(page(["b1"], "b-cursor"));
+    await current;
+    await list.loadMore();
+    expect(fetcher).toHaveBeenLastCalledWith(16, "b-cursor");
+    expect(list.items).toEqual([{ id: "b1" }, { id: "b2" }]);
   });
 
   test("silent refreshes are single-flight even for an empty inbox", async () => {
-    let resolve!: (items: Item[]) => void;
-    const fetcher = vi.fn(() => new Promise<Item[]>((done) => { resolve = done; }));
-    const list = createEmailList<Item>(fetcher);
+    const result = deferred<EmailPage<Item>>();
+    const fetcher = vi.fn(() => result.promise);
+    const list = createEmailList(fetcher);
     const first = list.refreshSilent();
     await list.refreshSilent();
     expect(fetcher).toHaveBeenCalledTimes(1);
-    resolve([]);
+    result.resolve(page([]));
     await first;
     expect(list.items).toEqual([]);
     expect(list.isLoading).toBe(false);
+    expect(list.hasMore).toBe(false);
   });
 
-  test("a stale rejection does not surface an error in the new account", async () => {
-    let reject!: (reason: Error) => void;
-    const list = createEmailList<Item>(() => new Promise((_, fail) => { reject = fail; }));
+  test("stale rejection does not surface an error in another account", async () => {
+    const result = deferred<EmailPage<Item>>();
+    const list = createEmailList(() => result.promise);
     const pending = list.refresh();
     list.clearItems();
-    reject(new Error("old account unauthorized"));
+    result.reject(new Error("old account unauthorized"));
     await expect(pending).resolves.toBeUndefined();
+    expect(list.error).toBeNull();
+  });
+
+  test("permissions error is not empty history and retry clears it", async () => {
+    const fetcher = vi.fn().mockRejectedValueOnce(new Error("Insufficient permissions")).mockResolvedValue(page([]));
+    const list = createEmailList<Item>(fetcher);
+    await expect(list.refresh()).rejects.toThrow("Insufficient permissions");
+    expect(list.error).toContain("Insufficient permissions");
+    expect(list.isLoading).toBe(false);
+    await list.refresh();
     expect(list.items).toEqual([]);
+    expect(list.error).toBeNull();
   });
 
-  test("refresh loads first page and clears previous items", async () => {
-    const fetcher = makeFetcher({ 0: [{ id: 1 }, { id: 2 }] });
-    const list = createEmailList(fetcher, 16);
-
-    await list.refresh();
-
-    expect(list.items).toEqual([{ id: 1 }, { id: 2 }]);
-    expect(list.isLoading).toBe(false);
-    expect(list.hasMore).toBe(false);
-    expect(fetcher).toHaveBeenCalledWith(16, 0);
-  });
-
-  test("loadMore appends the next page", async () => {
-    const fetcher = makeFetcher({
-      0: [{ id: 1 }, { id: 2 }],
-      1: [{ id: 3 }],
-    });
-    const list = createEmailList(fetcher, 2);
-
-    await list.refresh();
-    expect(list.items.map((i) => i.id)).toEqual([1, 2]);
-    expect(list.hasMore).toBe(true);
-
+  test("load more starts only after a successful first page", async () => {
+    const fetcher = vi.fn().mockResolvedValue(page([]));
+    const list = createEmailList<Item>(fetcher);
     await list.loadMore();
-    expect(list.items.map((i) => i.id)).toEqual([1, 2, 3]);
-    // Partial page means no more data
-    expect(list.hasMore).toBe(false);
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
-  test("full page keeps hasMore true", async () => {
-    const pages: Record<number, Item[]> = {
-      0: Array.from({ length: 16 }, (_, i) => ({ id: i })),
-      1: Array.from({ length: 16 }, (_, i) => ({ id: i + 100 })),
-    };
-    const list = createEmailList(makeFetcher(pages), 16);
-
+  test("short pages can continue and full pages can end according to the API", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(page(["1"], "1"))
+      .mockResolvedValueOnce(page(["2", "3"]));
+    const list = createEmailList<Item>(fetcher, 2);
     await list.refresh();
     expect(list.hasMore).toBe(true);
-
+    expect(fetcher).toHaveBeenNthCalledWith(1, 2, null);
     await list.loadMore();
-    expect(list.items).toHaveLength(32);
+    expect(fetcher).toHaveBeenNthCalledWith(2, 2, "1");
+    expect(list.items.map((item) => item.id)).toEqual(["1", "2", "3"]);
+    expect(list.hasMore).toBe(false);
+    await list.loadMore();
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
-  test("silent errors are swallowed and state is preserved", async () => {
-    let shouldFail = false;
-    const fetcher = vi.fn(() =>
-      shouldFail
-        ? Promise.reject(new Error("boom"))
-        : Promise.resolve([{ id: 1 }]),
-    );
-    const list = createEmailList<Item>(fetcher as any);
-
-    await list.refreshSilent().catch(() => {
-      throw new Error("silent refresh must not throw");
+  test("cursor traversal loads more than 100 and 255 messages with fixed request size", async () => {
+    const all = Array.from({ length: 321 }, (_, index) => ({ id: `message-${index}` }));
+    const fetcher = vi.fn(async (limit: number, after: string | null): Promise<EmailPage<Item>> => {
+      const start = after === null ? 0 : all.findIndex((item) => item.id === after) + 1;
+      const items = all.slice(start, start + limit);
+      const hasMore = start + items.length < all.length;
+      return { items, hasMore, nextCursor: hasMore ? items.at(-1)!.id : null };
     });
-
-    // Failed initial load still flips isLoading off so UI isn't stuck
-    expect(list.isLoading).toBe(false);
-
-    shouldFail = false;
+    const list = createEmailList(fetcher);
     await list.refresh();
-    expect(list.items.length).toBe(1);
+    while (list.hasMore) await list.loadMore();
+    expect(list.items).toEqual(all);
+    expect(fetcher).toHaveBeenCalledTimes(21);
+    expect(fetcher.mock.calls.every(([limit]) => limit === 16)).toBe(true);
+    expect(new Set(list.items.map((item) => item.id)).size).toBe(321);
   });
 
-  test("non-silent errors propagate to the caller", async () => {
-    const fetcher = vi.fn(() => Promise.reject(new Error("boom")));
-    const list = createEmailList<Item>(fetcher as any);
+  test("new arrivals between pages do not shift the continuation or duplicate messages", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(page(["a", "b"], "b"))
+      .mockResolvedValueOnce(page(["b", "c", "d"], "d"));
+    const list = createEmailList<Item>(fetcher, 2);
+    await list.refresh();
+    await list.loadMore();
+    expect(fetcher).toHaveBeenLastCalledWith(2, "b");
+    expect(list.items.map((item) => item.id)).toEqual(["a", "b", "c", "d"]);
+  });
 
-    await expect(list.refresh()).rejects.toThrow("boom");
+  test("failed load more retries the same cursor without losing history", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(page(["1"], "cursor-one"))
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(page(["2"]));
+    const list = createEmailList<Item>(fetcher);
+    await list.refresh();
+    await expect(list.loadMore()).rejects.toThrow("offline");
+    expect(list.items).toEqual([{ id: "1" }]);
+    expect(list.hasMore).toBe(true);
+    expect(list.isLoadingMore).toBe(false);
+    await list.loadMore();
+    expect(fetcher).toHaveBeenNthCalledWith(2, 16, "cursor-one");
+    expect(fetcher).toHaveBeenNthCalledWith(3, 16, "cursor-one");
+    expect(list.items).toEqual([{ id: "1" }, { id: "2" }]);
+    expect(list.error).toBeNull();
+  });
+
+  test("concurrent load more and polling cannot race cursors", async () => {
+    const more = deferred<EmailPage<Item>>();
+    const fetcher = vi.fn().mockResolvedValueOnce(page(["1"], "cursor-one")).mockReturnValueOnce(more.promise);
+    const list = createEmailList<Item>(fetcher);
+    await list.refresh();
+    const pending = list.loadMore();
+    await list.loadMore();
+    await list.refreshSilent();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    more.resolve(page(["2"]));
+    await pending;
+    expect(list.items).toEqual([{ id: "1" }, { id: "2" }]);
+  });
+
+  test("explicit refresh resets pagination and supersedes a slow load-more response", async () => {
+    const more = deferred<EmailPage<Item>>();
+    const fetcher = vi.fn().mockResolvedValueOnce(page(["1"], "old"))
+      .mockReturnValueOnce(more.promise).mockResolvedValueOnce(page(["new"], "new-cursor"))
+      .mockResolvedValue(page(["end"]));
+    const list = createEmailList<Item>(fetcher);
+    await list.refresh();
+    const pending = list.loadMore();
+    await list.refresh();
+    more.resolve(page(["obsolete"], "obsolete-cursor"));
+    await pending;
+    expect(list.items).toEqual([{ id: "new" }]);
+    await list.loadMore();
+    expect(fetcher).toHaveBeenLastCalledWith(16, "new-cursor");
+  });
+
+  test("silent refresh preserves older pages and their tail cursor", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(page(["a", "b"], "b"))
+      .mockResolvedValueOnce(page(["c", "d"], "d"))
+      .mockResolvedValueOnce(page(["new", "a"], "a"))
+      .mockResolvedValueOnce(page(["e"]));
+    const list = createEmailList<Item>(fetcher, 2);
+    await list.refresh();
+    await list.loadMore();
+    await list.refreshSilent();
+    expect(list.items.map((item) => item.id)).toEqual(["new", "a", "b", "c", "d"]);
+    await list.loadMore();
+    expect(fetcher).toHaveBeenLastCalledWith(2, "d");
+    expect(list.items.at(-1)?.id).toBe("e");
+  });
+
+  test("silent refresh without overlap resets to the head to avoid skipping unseen emails", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(page(["old"], "old"))
+      .mockResolvedValueOnce(page(["newest", "newer"], "newer"))
+      .mockResolvedValueOnce(page(["gap", "old"]));
+    const list = createEmailList<Item>(fetcher, 2);
+    await list.refresh();
+    await list.refreshSilent();
+    expect(list.items.map((item) => item.id)).toEqual(["newest", "newer"]);
+    await list.loadMore();
+    expect(fetcher).toHaveBeenLastCalledWith(2, "newer");
+    expect(list.items.map((item) => item.id)).toEqual(["newest", "newer", "gap", "old"]);
+  });
+
+  test("failed silent refresh preserves items and their continuation for retry", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(page(["1"], "one"))
+      .mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(page(["2"]));
+    const list = createEmailList<Item>(fetcher);
+    await list.refresh();
+    await expect(list.refreshSilent()).resolves.toBeUndefined();
+    expect(list.error).toContain("offline");
+    expect(list.items).toEqual([{ id: "1" }]);
+    await list.loadMore();
+    expect(fetcher).toHaveBeenLastCalledWith(16, "one");
+  });
+
+  test.each([
+    { items: [], hasMore: true, nextCursor: "two" },
+    { items: [{ id: "2" }], hasMore: true, nextCursor: null },
+    { items: [{ id: "2" }], hasMore: true, nextCursor: "one" },
+  ])("malformed continuation reports an error rather than silently truncating history: %j", async (invalid) => {
+    const fetcher = vi.fn().mockResolvedValueOnce(page(["1"], "one")).mockResolvedValueOnce(invalid)
+      .mockResolvedValueOnce(page(["2"]));
+    const list = createEmailList<Item>(fetcher);
+    await list.refresh();
+    await expect(list.loadMore()).rejects.toThrow("did not advance");
+    expect(list.items).toEqual([{ id: "1" }]);
+    expect(list.hasMore).toBe(true);
+    await list.loadMore();
+    expect(fetcher).toHaveBeenLastCalledWith(16, "one");
+  });
+
+  test("cursor cycles are rejected", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(page(["1"], "one"))
+      .mockResolvedValueOnce(page(["2"], "two")).mockResolvedValueOnce(page(["3"], "one"));
+    const list = createEmailList<Item>(fetcher);
+    await list.refresh();
+    await list.loadMore();
+    await expect(list.loadMore()).rejects.toThrow("did not advance");
+    expect(list.items.map((item) => item.id)).toEqual(["1", "2"]);
   });
 });
