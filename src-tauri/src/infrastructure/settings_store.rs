@@ -1,9 +1,6 @@
-//! Local data persisted in settings.json, scoped by explicit account ID.
-//!
-//! Entities like from_emails and read markers are keyed with the active
-//! account ID. Global legacy values are preserved, never copied across accounts.
-//!
-//! This is the JSON adapter SQLite will replace (plan 011).
+//! Account-scoped settings. Domain preferences and read markers use SQLite;
+//! onboarding, identities and remaining legacy settings still use JSON.
+//! Global legacy values are preserved, never assigned to an arbitrary account.
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -15,9 +12,7 @@ const SETUP_COMPLETE_KEY: &str = "setup_complete";
 const INBOX_ENABLED_KEY: &str = "inbox_enabled";
 const FROM_EMAILS_KEY: &str = "from_emails";
 const INBOUND_SETUP_CACHE_KEY: &str = "inbound_setup";
-const READ_INBOUND_KEY: &str = "read_inbound_ids";
-/// Cap so the read-marker list can't grow unbounded.
-pub(crate) const READ_INBOUND_CAP: usize = 200;
+use super::database::local_state;
 
 /* ---------------------------------------------------------
  * Scoped key helpers
@@ -54,17 +49,28 @@ pub struct OnboardingState {
 }
 
 #[tauri::command]
-pub fn get_onboarding_state(app: AppHandle<Wry>, account_id: String) -> Result<OnboardingState, String> {
-    let complete = read_raw_key(&app, STORE_FILE, &scoped_key(&app, &account_id, SETUP_COMPLETE_KEY)?)?
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+pub fn get_onboarding_state(
+    app: AppHandle<Wry>,
+    account_id: String,
+) -> Result<OnboardingState, String> {
+    let complete = read_raw_key(
+        &app,
+        STORE_FILE,
+        &scoped_key(&app, &account_id, SETUP_COMPLETE_KEY)?,
+    )?
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
 
     let authenticated =
         crate::infrastructure::credentials_store::account_credential(&app, &account_id).is_ok();
 
-    let inbox_enabled = read_raw_key(&app, STORE_FILE, &scoped_key(&app, &account_id, INBOX_ENABLED_KEY)?)?
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let inbox_enabled = read_raw_key(
+        &app,
+        STORE_FILE,
+        &scoped_key(&app, &account_id, INBOX_ENABLED_KEY)?,
+    )?
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
 
     Ok(OnboardingState {
         // Existing account-scoped identities indicate a completed legacy setup.
@@ -76,7 +82,11 @@ pub fn get_onboarding_state(app: AppHandle<Wry>, account_id: String) -> Result<O
 
 /// Legacy delivery observation, independent of access to inbox history.
 #[tauri::command]
-pub fn set_inbox_enabled(app: AppHandle<Wry>, account_id: String, enabled: bool) -> Result<(), String> {
+pub fn set_inbox_enabled(
+    app: AppHandle<Wry>,
+    account_id: String,
+    enabled: bool,
+) -> Result<(), String> {
     write_scoped(&app, &account_id, INBOX_ENABLED_KEY, json!(enabled))
 }
 
@@ -90,7 +100,8 @@ pub fn mark_setup_complete(app: AppHandle<Wry>, account_id: String) -> Result<()
  * --------------------------------------------------------- */
 #[tauri::command]
 pub fn get_inbound_setup_cache(
-    app: AppHandle<Wry>, account_id: String,
+    app: AppHandle<Wry>,
+    account_id: String,
 ) -> Result<Option<serde_json::Value>, String> {
     let key = scoped_key(&app, &account_id, INBOUND_SETUP_CACHE_KEY)?;
     read_raw_key(&app, STORE_FILE, &key)
@@ -98,7 +109,8 @@ pub fn get_inbound_setup_cache(
 
 #[tauri::command]
 pub fn save_inbound_setup_cache(
-    app: AppHandle<Wry>, account_id: String,
+    app: AppHandle<Wry>,
+    account_id: String,
     detail: serde_json::Value,
 ) -> Result<(), String> {
     let key = scoped_key(&app, &account_id, INBOUND_SETUP_CACHE_KEY)?;
@@ -109,7 +121,11 @@ pub fn save_inbound_setup_cache(
  * Selected domain
  * --------------------------------------------------------- */
 #[tauri::command]
-pub fn save_selected_domain(app: AppHandle<Wry>, account_id: String, domain: String) -> Result<(), String> {
+pub fn save_selected_domain(
+    app: AppHandle<Wry>,
+    account_id: String,
+    domain: String,
+) -> Result<(), String> {
     write_scoped(&app, &account_id, "selected_domain", json!(domain))
 }
 
@@ -117,39 +133,55 @@ pub(crate) fn load_selected_domain(
     app: &AppHandle<Wry>,
     account_id: &str,
 ) -> Result<Option<String>, String> {
-    read_string_key(app, STORE_FILE, &scoped_key(app, account_id, "selected_domain")?)
+    read_string_key(
+        app,
+        STORE_FILE,
+        &scoped_key(app, account_id, "selected_domain")?,
+    )
 }
 
 #[tauri::command]
-pub fn get_active_domain(app: AppHandle<Wry>, account_id: String) -> Result<Option<String>, String> {
+pub fn get_active_domain(
+    app: AppHandle<Wry>,
+    account_id: String,
+) -> Result<Option<String>, String> {
     load_selected_domain(&app, &account_id)
 }
 
 #[tauri::command]
-pub fn get_selected_domain(app: AppHandle<Wry>, account_id: String) -> Result<Option<String>, String> {
+pub fn get_selected_domain(
+    app: AppHandle<Wry>,
+    account_id: String,
+) -> Result<Option<String>, String> {
     load_selected_domain(&app, &account_id)
 }
 
 /* ---------------------------------------------------------
  * Domain inclusion (local setup preference, never a remote mail filter)
  * --------------------------------------------------------- */
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DomainPreferences {
     pub included_domain_ids: Vec<String>,
 }
 
 #[tauri::command]
-pub fn get_domain_preferences(app: AppHandle<Wry>, account_id: String) -> Result<Option<DomainPreferences>, String> {
-    let key = scoped_key(&app, &account_id, "domain_preferences")?;
-    read_typed(&app, STORE_FILE, &key, "domain preferences")
+pub async fn get_domain_preferences(
+    app: AppHandle<Wry>,
+    account_id: String,
+) -> Result<Option<DomainPreferences>, String> {
+    let database = local_state::for_account(&app, &account_id).await?;
+    local_state::preferences(&database, account_id).await
 }
 
 #[tauri::command]
-pub fn save_domain_preferences(app: AppHandle<Wry>, account_id: String, preferences: DomainPreferences) -> Result<(), String> {
-    // Persist the entire selection, including an intentionally empty one.
-    // Unknown/deleted IDs remain available for review, never mapped by name.
-    write_scoped(&app, &account_id, "domain_preferences", json!(preferences))
+pub async fn save_domain_preferences(
+    app: AppHandle<Wry>,
+    account_id: String,
+    preferences: DomainPreferences,
+) -> Result<(), String> {
+    let database = local_state::for_account(&app, &account_id).await?;
+    local_state::save_preferences(&database, account_id, preferences).await
 }
 
 /* ---------------------------------------------------------
@@ -164,7 +196,10 @@ pub struct FromEmail {
     pub is_default: bool,
 }
 
-pub(crate) fn load_from_emails(app: &AppHandle<Wry>, account_id: &str) -> Result<Vec<FromEmail>, String> {
+pub(crate) fn load_from_emails(
+    app: &AppHandle<Wry>,
+    account_id: &str,
+) -> Result<Vec<FromEmail>, String> {
     let key = scoped_key(app, account_id, FROM_EMAILS_KEY)?;
     Ok(read_typed(app, STORE_FILE, &key, "from_emails")?.unwrap_or_default())
 }
@@ -182,23 +217,25 @@ pub(crate) fn save_from_emails(
  * Inbound read markers (per-account)
  * --------------------------------------------------------- */
 #[tauri::command]
-pub fn get_read_inbound_ids(app: AppHandle<Wry>, account_id: String) -> Result<Vec<String>, String> {
-    let key = scoped_key(&app, &account_id, READ_INBOUND_KEY)?;
-    Ok(read_typed(&app, STORE_FILE, &key, "read ids")?.unwrap_or_default())
+pub async fn get_read_inbound_ids(
+    app: AppHandle<Wry>,
+    account_id: String,
+) -> Result<Vec<String>, String> {
+    let database = local_state::for_account(&app, &account_id).await?;
+    database
+        .run(move |connection| local_state::read_ids(connection, &account_id))
+        .await
 }
 
 #[tauri::command]
-pub fn mark_inbound_read(app: AppHandle<Wry>, account_id: String, email_id: String) -> Result<(), String> {
-    let key = scoped_key(&app, &account_id, READ_INBOUND_KEY)?;
-    let mut ids: Vec<String> =
-        read_typed(&app, STORE_FILE, &key, "read ids")?.unwrap_or_default();
-
-    if ids.contains(&email_id) {
-        return Ok(());
-    }
-
-    ids.insert(0, email_id);
-    ids.truncate(crate::infrastructure::settings_store::READ_INBOUND_CAP);
-
-    write_key(&app, STORE_FILE, &key, json!(ids))
+pub async fn mark_inbound_read(
+    app: AppHandle<Wry>,
+    account_id: String,
+    email_id: String,
+) -> Result<(), String> {
+    let database = local_state::for_account(&app, &account_id).await?;
+    database.run(move |connection| {
+        connection.execute("INSERT INTO read_markers VALUES (?1, 'inbox', ?2) ON CONFLICT(account_id,mailbox,email_id) DO NOTHING", rusqlite::params![account_id, email_id])?;
+        Ok(())
+    }).await
 }

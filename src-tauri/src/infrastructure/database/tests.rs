@@ -2,23 +2,23 @@ use super::{migrate, Database, MIGRATIONS};
 use rusqlite::{params, Connection};
 use std::path::PathBuf;
 
-struct TemporaryDatabase {
+pub(super) struct TemporaryDatabase {
     directory: PathBuf,
 }
 
 impl TemporaryDatabase {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             directory: std::env::temp_dir()
                 .join(format!("onlysend-db-test-{}", uuid::Uuid::new_v4())),
         }
     }
 
-    fn path(&self) -> PathBuf {
+    pub(super) fn path(&self) -> PathBuf {
         self.directory.join("nested").join("onlysend.sqlite3")
     }
 
-    fn database(&self) -> Database {
+    pub(super) fn database(&self) -> Database {
         Database::new(self.path())
     }
 }
@@ -49,7 +49,7 @@ async fn initializes_real_file_with_versioned_schema_and_connection_pragmas() {
         })
         .await
         .unwrap();
-    assert_eq!(version, 1);
+    assert_eq!(version, MIGRATIONS.len() as i64);
     assert_eq!(journal, "wal");
     assert_eq!(foreign_keys, 1);
     assert_eq!(timeout, 5000);
@@ -214,7 +214,9 @@ async fn failed_migration_rolls_back_schema_and_version_preserving_existing_data
             connection.execute("INSERT INTO account_state VALUES ('a')", [])?;
             let broken =
                 "CREATE TABLE partial_migration (id TEXT); INSERT INTO missing_table VALUES (1);";
-            assert!(migrate(connection, &[MIGRATIONS[0], broken]).is_err());
+            let mut upgrade = MIGRATIONS.to_vec();
+            upgrade.push(broken);
+            assert!(migrate(connection, &upgrade).is_err());
             let version: i64 =
                 connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
             let partial: i64 = connection.query_row(
@@ -224,7 +226,7 @@ async fn failed_migration_rolls_back_schema_and_version_preserving_existing_data
             )?;
             let accounts: i64 =
                 connection.query_row("SELECT count(*) FROM account_state", [], |row| row.get(0))?;
-            assert_eq!(version, 1);
+            assert_eq!(version, MIGRATIONS.len() as i64);
             assert_eq!(partial, 0);
             assert_eq!(accounts, 1);
             migrate(connection, MIGRATIONS).unwrap();

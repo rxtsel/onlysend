@@ -12,7 +12,10 @@ use std::time::Duration;
 use rusqlite::{Connection, TransactionBehavior};
 use tokio::sync::Semaphore;
 
-const MIGRATIONS: &[&str] = &[include_str!("migrations/001_local_state.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("migrations/001_local_state.sql"),
+    include_str!("migrations/002_json_imports.sql"),
+];
 pub(crate) const DATABASE_FILE: &str = "onlysend.sqlite3";
 
 #[derive(Clone)]
@@ -90,6 +93,22 @@ fn open(path: &Path) -> Result<Connection, String> {
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("Could not create local database directory: {error}"))?;
     }
+    // Mail content is private user data. SQLite inherits database permissions
+    // for WAL/SHM files; credentials are still never stored here.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .open(path)
+            .map_err(|error| format!("Could not open private local database: {error}"))?;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|error| format!("Could not protect local database: {error}"))?;
+    }
     let mut connection = Connection::open(path).map_err(sql_error)?;
     connection
         .busy_timeout(Duration::from_secs(5))
@@ -108,6 +127,24 @@ fn open(path: &Path) -> Result<Connection, String> {
         .pragma_update(None, "synchronous", "FULL")
         .map_err(sql_error)?;
     migrate(&mut connection, MIGRATIONS)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for suffix in ["-wal", "-shm"] {
+            let mut sidecar = path.as_os_str().to_os_string();
+            sidecar.push(suffix);
+            match std::fs::set_permissions(
+                Path::new(&sidecar),
+                std::fs::Permissions::from_mode(0o600),
+            ) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(format!("Could not protect local database sidecar: {error}"))
+                }
+            }
+        }
+    }
     Ok(connection)
 }
 
@@ -133,6 +170,8 @@ fn migrate(connection: &mut Connection, migrations: &[&str]) -> Result<(), Strin
     }
     transaction.commit().map_err(sql_error)
 }
+
+pub(crate) mod local_state;
 
 #[cfg(test)]
 mod tests;
