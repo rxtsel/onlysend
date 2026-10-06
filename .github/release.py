@@ -79,6 +79,34 @@ def prepare(root, version, tags):
     config_path.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n")
 
 
+def stage(source, output, platform):
+    """Validate one platform's bundles before uploading a workflow artifact."""
+    if platform not in PLATFORMS:
+        raise ValueError("Unsupported release platform")
+    if not source.is_dir():
+        raise ValueError(f"Bundle directory does not exist: {source}")
+    extension = PLATFORMS[platform]
+    required = [extension]
+    if platform == "linux-x86_64":
+        required.append(".deb")
+    elif platform.startswith("darwin-"):
+        required.append(".dmg")
+    files = []
+    for suffix in required:
+        matches = [file for file in source.rglob("*") if file.is_file() and not file.is_symlink() and file.name.endswith(suffix)]
+        if len(matches) != 1 or matches[0].stat().st_size == 0:
+            raise ValueError(f"Expected exactly one nonempty {suffix} bundle for {platform}")
+        files.append(matches[0])
+        if suffix == extension:
+            signature = Path(str(matches[0]) + ".sig")
+            if not signature.is_file() or signature.is_symlink() or not signature.read_text().strip():
+                raise ValueError(f"Missing updater signature for {platform}")
+            files.append(signature)
+    output.mkdir(parents=True, exist_ok=False)
+    for file in files:
+        shutil.copyfile(file, output / file.name)
+
+
 def collect(source, output, version, repository, notes):
     semver(version)
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", repository):
@@ -148,12 +176,17 @@ if __name__ == "__main__":
     collect_args = commands.add_parser("collect")
     for name in ("source", "output", "version", "repository", "notes"):
         collect_args.add_argument(name)
+    stage_args = commands.add_parser("stage")
+    for name in ("source", "output", "platform"):
+        stage_args.add_argument(name)
     verify_args = commands.add_parser("verify")
     verify_args.add_argument("output")
     args = parser.parse_args()
     if args.command == "prepare":
         tags = subprocess.check_output(["git", "tag", "--list"], text=True).splitlines()
         prepare(Path.cwd(), args.version, tags)
+    elif args.command == "stage":
+        stage(Path(args.source), Path(args.output), args.platform)
     elif args.command == "verify":
         verify(Path(args.output), os.environ["PUBLIC_KEY"])
     else:

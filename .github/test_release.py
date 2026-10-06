@@ -76,6 +76,49 @@ class ArtifactTests(unittest.TestCase):
             self.assertFalse((output / "latest.json").exists())
 
 
+class StagingTests(unittest.TestCase):
+    fixtures = ArtifactTests.fixtures
+
+    def test_staged_workflow_artifacts_feed_the_complete_release_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "builds"; source.mkdir(); self.fixtures(source)
+            downloaded = root / "downloaded"
+            for platform in release.PLATFORMS:
+                release.stage(source / (platform + "-bundle"), downloaded / (platform + "-bundles"), platform)
+            output = root / "release"
+            release.collect(downloaded, output, "0.2.0", "rxtsel/onlysend", "Notes")
+            manifest = json.loads((output / "latest.json").read_text())
+            self.assertEqual(set(manifest["platforms"]), set(release.PLATFORMS))
+            self.assertEqual(len(list((downloaded / "linux-x86_64-bundles").iterdir())), 3)
+            self.assertEqual(len(list((downloaded / "windows-x86_64-bundles").iterdir())), 2)
+            self.assertEqual(len(list((downloaded / "darwin-aarch64-bundles").iterdir())), 3)
+
+    def test_stage_rejects_missing_empty_or_duplicate_bundles_before_upload(self):
+        for failure in ("missing", "empty", "duplicate", "signature", "blank-signature"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp); self.fixtures(root)
+                source = root / "linux-x86_64-bundle"
+                if failure == "missing": (source / "OnlySend.deb").unlink()
+                elif failure == "empty": (source / "OnlySend.AppImage").write_bytes(b"")
+                elif failure == "duplicate": (source / "Other.AppImage").write_bytes(b"duplicate")
+                elif failure == "signature": (source / "OnlySend.AppImage.sig").unlink()
+                else: (source / "OnlySend.AppImage.sig").write_text(" ")
+                output = root / "upload"
+                with self.assertRaises(ValueError): release.stage(source, output, "linux-x86_64")
+                self.assertFalse(output.exists())
+
+    def test_stage_does_not_include_other_files_or_updater_secrets(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); self.fixtures(root)
+            source = root / "windows-x86_64-bundle"
+            (source / "private.key").write_text("fixture only")
+            (source / "OnlySend.msi").write_bytes(b"not selected")
+            output = root / "upload"
+            release.stage(source, output, "windows-x86_64")
+            self.assertEqual({file.name for file in output.iterdir()}, {"OnlySend.exe", "OnlySend.exe.sig"})
+
+
 class SignatureTests(unittest.TestCase):
     def test_verification_decodes_tauri_wrappers_and_uses_the_matching_asset(self):
         with tempfile.TemporaryDirectory() as temp:
