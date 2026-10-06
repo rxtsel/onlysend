@@ -13,7 +13,8 @@ export default defineConfig(async () => ({
     : {}),
   test: {
     // Logic-only tests — no DOM rendering, so Node's default env is enough.
-    environment: "node"
+    environment: "node",
+    include: ["src/**/*.test.{ts,js}"],
   },
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
