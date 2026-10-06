@@ -8,10 +8,14 @@ use serde_json::{json, Value};
 
 pub fn mock_history(path: &'static str) -> (Resend, thread::JoinHandle<()>, Vec<String>) {
     let ids: Vec<String> = (1..=321).map(|number| format!("00000000-0000-4000-8000-{number:012}")).collect();
-    let data: Vec<Value> = ids.iter().map(|id| json!({
+    let data: Vec<Value> = ids.iter().enumerate().map(|(index, id)| json!({
         "id": id, "from": "Support <support@a.example>", "to": ["one@a.example", "two@b.example"],
         "received_for": ["one@a.example", "two@b.example"],
-        "subject": "Fixture email", "created_at": "2026-01-01T00:00:00Z",
+        "subject": "Fixture email", "created_at": if index % 2 == 0 {
+            "2026-01-01T00:00:00Z"
+        } else {
+            "2026-01-01 00:00:00.000000+00"
+        },
         "message_id": "<fixture@example.com>", "last_event": "delivered",
         "html": null, "text": null, "bcc": [], "cc": [], "reply_to": [],
     })).collect();

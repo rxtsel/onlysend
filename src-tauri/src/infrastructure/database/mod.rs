@@ -15,6 +15,7 @@ use tokio::sync::Semaphore;
 const MIGRATIONS: &[&str] = &[
     include_str!("migrations/001_local_state.sql"),
     include_str!("migrations/002_json_imports.sql"),
+    include_str!("migrations/003_mail_archive.sql"),
 ];
 pub(crate) const DATABASE_FILE: &str = "onlysend.sqlite3";
 
@@ -172,6 +173,10 @@ fn migrate(connection: &mut Connection, migrations: &[&str]) -> Result<(), Strin
 }
 
 pub(crate) mod local_state;
+pub(crate) mod mail;
+pub(crate) mod sync;
 
+#[cfg(test)]
+mod archive_tests;
 #[cfg(test)]
 mod tests;

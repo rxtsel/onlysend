@@ -1,7 +1,12 @@
+use crate::infrastructure::database::{
+    local_state,
+    mail::{self, Mailbox},
+    sync,
+};
+use crate::infrastructure::pagination::{email_page, list_options, EmailPage};
 use crate::oauth;
 use crate::permissions;
 use resend_rs::Resend;
-use crate::infrastructure::pagination::{email_page, list_options, EmailPage};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Wry};
 
@@ -23,25 +28,71 @@ pub struct SentEmail {
 
 #[tauri::command]
 pub async fn list_sent_emails(
-    app: AppHandle<Wry>, account_id: String,
+    app: AppHandle<Wry>,
+    account_id: String,
     limit: Option<usize>,
     after: Option<String>,
 ) -> Result<EmailPage<SentEmail>, String> {
     let _ = list_options(limit, after.as_deref())?;
-    // Bearer credential: API key or OAuth access token
-    let credential = oauth::get_account_credential(&app, &account_id).await?;
-
-    let resend = Resend::new(&credential);
-    fetch_sent_page(&resend, limit, after.as_deref()).await
+    let database = local_state::for_account(&app, &account_id).await?;
+    let result = async {
+        let credential = oauth::get_account_credential(&app, &account_id).await?;
+        let resend = Resend::new(&credential);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            fetch_sent_page(&resend, limit, after.as_deref()),
+        )
+        .await
+        .map_err(|_| "Sent request timed out".to_string())?
+    }
+    .await;
+    match result {
+        Ok(page) => {
+            crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
+            mail::store_page(
+                &database,
+                account_id.clone(),
+                Mailbox::Sent,
+                limit.unwrap_or(12),
+                after.clone(),
+                &page,
+            )
+            .await?;
+            if after.is_none() {
+                if sync::start(&app, account_id, Mailbox::Sent, limit.unwrap_or(12), false)
+                    .await
+                    .is_err()
+                {
+                    eprintln!("[WARN] Could not start sent archive download");
+                }
+            }
+            Ok(page)
+        }
+        Err(error) => mail::cached_page(
+            &database,
+            account_id,
+            Mailbox::Sent,
+            limit.unwrap_or(12),
+            after,
+            Some(error.clone()),
+        )
+        .await?
+        .ok_or(error),
+    }
 }
 
-async fn fetch_sent_page(resend: &Resend, limit: Option<usize>, after: Option<&str>) -> Result<EmailPage<SentEmail>, String> {
+pub(crate) async fn fetch_sent_page(
+    resend: &Resend,
+    limit: Option<usize>,
+    after: Option<&str>,
+) -> Result<EmailPage<SentEmail>, String> {
     let options = list_options(limit, after)?;
     // Each request fetches one remote page, retaining the captured account.
     let response = match after {
         Some(cursor) => resend.emails.list(options.list_after(cursor)).await,
         None => resend.emails.list(options).await,
-    }.map_err(|e| permissions::map_resend_error("Failed to fetch sent emails", e))?;
+    }
+    .map_err(|e| permissions::map_resend_error("Failed to fetch sent emails", e))?;
     let has_more = response.has_more;
 
     let sent_emails: Vec<SentEmail> = response
@@ -80,7 +131,9 @@ mod tests {
         let mut after = None;
         let mut ids = Vec::new();
         for _ in 0..4 {
-            let page = fetch_sent_page(&resend, Some(100), after.as_deref()).await.unwrap();
+            let page = fetch_sent_page(&resend, Some(100), after.as_deref())
+                .await
+                .unwrap();
             ids.extend(page.items.iter().map(|email| email.id.clone()));
             assert_eq!(page.has_more, ids.len() < expected.len());
             after = page.next_cursor;
@@ -92,7 +145,22 @@ mod tests {
 }
 
 #[tauri::command]
-pub async fn get_sent_email(app: AppHandle<Wry>, account_id: String, email_id: String) -> Result<SentEmail, String> {
+pub async fn get_sent_email(
+    app: AppHandle<Wry>,
+    account_id: String,
+    email_id: String,
+) -> Result<SentEmail, String> {
+    let database = local_state::for_account(&app, &account_id).await?;
+    if let Some(json) = mail::cached_detail(
+        &database,
+        account_id.clone(),
+        "sent".into(),
+        email_id.clone(),
+    )
+    .await?
+    {
+        return serde_json::from_str(&json).map_err(|_| "Could not read downloaded email".into());
+    }
     // Bearer credential: API key or OAuth access token
     let credential = oauth::get_account_credential(&app, &account_id).await?;
 
@@ -105,7 +173,11 @@ pub async fn get_sent_email(app: AppHandle<Wry>, account_id: String, email_id: S
         .await
         .map_err(|e| permissions::map_resend_error("Failed to fetch email", e))?;
 
-    Ok(SentEmail {
+    let search_text = email
+        .text
+        .clone()
+        .unwrap_or_else(|| mail::plain_html(email.html.as_deref().unwrap_or_default()));
+    let detail = SentEmail {
         id: email.id.to_string(),
         from: email.from,
         to: email.to,
@@ -121,5 +193,16 @@ pub async fn get_sent_email(app: AppHandle<Wry>, account_id: String, email_id: S
                 Some(rt.join(", "))
             }
         }),
-    })
+    };
+    crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
+    mail::store_detail(
+        &database,
+        account_id,
+        Mailbox::Sent,
+        email_id,
+        &detail,
+        search_text,
+    )
+    .await?;
+    Ok(detail)
 }

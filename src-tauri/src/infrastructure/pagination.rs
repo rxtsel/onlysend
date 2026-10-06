@@ -1,13 +1,22 @@
 //! Cursor pages preserve Resend's continuation signal instead of guessing from length.
 use resend_rs::list_opts::ListOptions;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageCache {
+    pub downloaded_at: i64,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmailPage<T> {
     pub items: Vec<T>,
     pub has_more: bool,
     pub next_cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache: Option<PageCache>,
 }
 
 pub fn list_options(limit: Option<usize>, after: Option<&str>) -> Result<ListOptions, String> {
@@ -21,9 +30,16 @@ pub fn list_options(limit: Option<usize>, after: Option<&str>) -> Result<ListOpt
     Ok(ListOptions::default().with_limit(limit as u8))
 }
 
-pub fn email_page<T>(items: Vec<T>, has_more: bool, after: Option<&str>, id: impl Fn(&T) -> &str) -> Result<EmailPage<T>, String> {
+pub fn email_page<T>(
+    items: Vec<T>,
+    has_more: bool,
+    after: Option<&str>,
+    id: impl Fn(&T) -> &str,
+) -> Result<EmailPage<T>, String> {
     let next_cursor = if has_more {
-        let last = items.last().ok_or("[ERROR] Resend returned an empty page with more emails")?;
+        let last = items
+            .last()
+            .ok_or("[ERROR] Resend returned an empty page with more emails")?;
         let cursor = id(last);
         if cursor.is_empty() || Some(cursor) == after {
             return Err("[ERROR] Resend returned a non-advancing email cursor".into());
@@ -32,7 +48,12 @@ pub fn email_page<T>(items: Vec<T>, has_more: bool, after: Option<&str>, id: imp
     } else {
         None
     };
-    Ok(EmailPage { items, has_more, next_cursor })
+    Ok(EmailPage {
+        items,
+        has_more,
+        next_cursor,
+        cache: None,
+    })
 }
 
 #[cfg(test)]

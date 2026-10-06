@@ -1,16 +1,21 @@
 use std::collections::{HashMap, HashSet};
 
-use ammonia::Builder;
+use crate::infrastructure::database::{
+    local_state,
+    mail::{self, Mailbox},
+    sync,
+};
 use crate::infrastructure::pagination::{email_page, list_options, EmailPage};
+use ammonia::Builder;
 use resend_rs::types::GetInboundEmailOptions;
-use resend_rs::{Resend, types::InboundAttachment};
-use serde::Serialize;
+use resend_rs::{types::InboundAttachment, Resend};
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Wry};
 
 use crate::oauth;
 use crate::permissions;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InboundEmailDto {
     pub id: String,
@@ -24,7 +29,7 @@ pub struct InboundEmailDto {
     pub domains: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InboundAttachmentDto {
     pub id: String,
@@ -33,7 +38,7 @@ pub struct InboundAttachmentDto {
     pub size: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InboundEmailDetailDto {
     pub id: String,
@@ -65,10 +70,42 @@ fn set(items: &[&'static str]) -> HashSet<&'static str> {
 /// sandboxed iframe as the second security boundary.
 fn sanitize_email_html(html: &str) -> String {
     let tags = set(&[
-        "a", "b", "blockquote", "br", "center", "code", "div", "em", "h1",
-        "h2", "h3", "h4", "h5", "h6", "hr", "i", "img", "li", "ol", "p",
-        "pre", "s", "span", "strong", "sub", "sup", "table", "tbody", "td",
-        "tfoot", "th", "thead", "tr", "u", "ul", "font",
+        "a",
+        "b",
+        "blockquote",
+        "br",
+        "center",
+        "code",
+        "div",
+        "em",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "hr",
+        "i",
+        "img",
+        "li",
+        "ol",
+        "p",
+        "pre",
+        "s",
+        "span",
+        "strong",
+        "sub",
+        "sup",
+        "table",
+        "tbody",
+        "td",
+        "tfoot",
+        "th",
+        "thead",
+        "tr",
+        "u",
+        "ul",
+        "font",
     ]);
 
     let tag_attributes: HashMap<&str, HashSet<&str>> = HashMap::from([
@@ -101,12 +138,19 @@ async fn client(app: &AppHandle<Wry>, account_id: &str) -> Result<Resend, String
 /// Derives the recipient domain from the email's own addresses. Resend has
 /// no server-side domain filter, so the unified inbox carries this badge.
 fn recipient_domains(received_for: &[String], to: &[String]) -> Vec<String> {
-    let recipients = if received_for.is_empty() { to } else { received_for };
+    let recipients = if received_for.is_empty() {
+        to
+    } else {
+        received_for
+    };
     let mut domains = Vec::new();
     for recipient in recipients {
         if let Some((_, host)) = recipient.rsplit_once('@') {
             let host = host.trim().trim_end_matches('>').to_lowercase();
-            if !host.is_empty() && !host.chars().any(char::is_whitespace) && !domains.contains(&host) {
+            if !host.is_empty()
+                && !host.chars().any(char::is_whitespace)
+                && !domains.contains(&host)
+            {
                 domains.push(host);
             }
         }
@@ -116,22 +160,70 @@ fn recipient_domains(received_for: &[String], to: &[String]) -> Vec<String> {
 
 #[tauri::command]
 pub async fn list_inbound_emails(
-    app: AppHandle<Wry>, account_id: String,
+    app: AppHandle<Wry>,
+    account_id: String,
     limit: Option<usize>,
     after: Option<String>,
 ) -> Result<EmailPage<InboundEmailDto>, String> {
     let _ = list_options(limit, after.as_deref())?;
-    let resend = client(&app, &account_id).await?;
-    fetch_inbound_page(&resend, limit, after.as_deref()).await
+    let database = local_state::for_account(&app, &account_id).await?;
+    let result = async {
+        let resend = client(&app, &account_id).await?;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            fetch_inbound_page(&resend, limit, after.as_deref()),
+        )
+        .await
+        .map_err(|_| "Inbox request timed out".to_string())?
+    }
+    .await;
+    match result {
+        Ok(page) => {
+            crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
+            mail::store_page(
+                &database,
+                account_id.clone(),
+                Mailbox::Inbox,
+                limit.unwrap_or(12),
+                after.clone(),
+                &page,
+            )
+            .await?;
+            if after.is_none() {
+                if sync::start(&app, account_id, Mailbox::Inbox, limit.unwrap_or(12), false)
+                    .await
+                    .is_err()
+                {
+                    eprintln!("[WARN] Could not start inbox archive download");
+                }
+            }
+            Ok(page)
+        }
+        Err(error) => mail::cached_page(
+            &database,
+            account_id,
+            Mailbox::Inbox,
+            limit.unwrap_or(12),
+            after,
+            Some(error.clone()),
+        )
+        .await?
+        .ok_or(error),
+    }
 }
 
-async fn fetch_inbound_page(resend: &Resend, limit: Option<usize>, after: Option<&str>) -> Result<EmailPage<InboundEmailDto>, String> {
+pub(crate) async fn fetch_inbound_page(
+    resend: &Resend,
+    limit: Option<usize>,
+    after: Option<&str>,
+) -> Result<EmailPage<InboundEmailDto>, String> {
     let options = list_options(limit, after)?;
     // Account-wide history, one fixed-size page after the previous page's ID.
     let response = match after {
         Some(cursor) => resend.receiving.list(options.list_after(cursor)).await,
         None => resend.receiving.list(options).await,
-    }.map_err(|e| permissions::map_resend_error("Failed to fetch inbox", e))?;
+    }
+    .map_err(|e| permissions::map_resend_error("Failed to fetch inbox", e))?;
     let has_more = response.has_more;
 
     let items = response
@@ -156,9 +248,24 @@ async fn fetch_inbound_page(resend: &Resend, limit: Option<usize>, after: Option
 
 #[tauri::command]
 pub async fn get_inbound_email(
-    app: AppHandle<Wry>, account_id: String,
+    app: AppHandle<Wry>,
+    account_id: String,
     email_id: String,
 ) -> Result<InboundEmailDetailDto, String> {
+    let database = local_state::for_account(&app, &account_id).await?;
+    if let Some(json) = mail::cached_detail(
+        &database,
+        account_id.clone(),
+        "inbox".into(),
+        email_id.clone(),
+    )
+    .await?
+    {
+        let mut detail: InboundEmailDetailDto = serde_json::from_str(&json)
+            .map_err(|_| "Could not read downloaded email".to_string())?;
+        detail.html = detail.html.as_deref().map(sanitize_email_html);
+        return Ok(detail);
+    }
     let resend = client(&app, &account_id).await?;
 
     let email = resend
@@ -167,7 +274,11 @@ pub async fn get_inbound_email(
         .await
         .map_err(|e| permissions::map_resend_error("Failed to fetch email", e))?;
 
-    Ok(InboundEmailDetailDto {
+    let search_text = email
+        .text
+        .clone()
+        .unwrap_or_else(|| mail::plain_html(email.html.as_deref().unwrap_or_default()));
+    let detail = InboundEmailDetailDto {
         id: email.id.to_string(),
         from: email.from.clone(),
         to: email.to.clone(),
@@ -176,12 +287,23 @@ pub async fn get_inbound_email(
         html: email.html.as_deref().map(sanitize_email_html),
         text: email.text.clone(),
         attachments: email.attachments.iter().map(map_attachment).collect(),
-    })
+    };
+    crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
+    mail::store_detail(
+        &database,
+        account_id,
+        Mailbox::Inbox,
+        email_id,
+        &detail,
+        search_text,
+    )
+    .await?;
+    Ok(detail)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{sanitize_email_html, recipient_domains, fetch_inbound_page};
+    use super::{fetch_inbound_page, recipient_domains, sanitize_email_html};
     use crate::infrastructure::pagination_test_server::mock_history;
 
     #[tokio::test]
@@ -190,7 +312,9 @@ mod tests {
         let mut after = None;
         let mut ids = Vec::new();
         for _ in 0..4 {
-            let page = fetch_inbound_page(&resend, Some(100), after.as_deref()).await.unwrap();
+            let page = fetch_inbound_page(&resend, Some(100), after.as_deref())
+                .await
+                .unwrap();
             for email in &page.items {
                 assert_eq!(email.domains, vec!["a.example", "b.example"]);
                 ids.push(email.id.clone());
@@ -205,9 +329,16 @@ mod tests {
 
     #[test]
     fn receiving_domains_use_every_envelope_recipient_not_sender_or_header() {
-        let envelope = vec!["one@a.example".into(), "Two <two@B.example>".into(), "again@a.example".into()];
+        let envelope = vec![
+            "one@a.example".into(),
+            "Two <two@B.example>".into(),
+            "again@a.example".into(),
+        ];
         let header = vec!["other@c.example".into()];
-        assert_eq!(recipient_domains(&envelope, &header), vec!["a.example", "b.example"]);
+        assert_eq!(
+            recipient_domains(&envelope, &header),
+            vec!["a.example", "b.example"]
+        );
         assert_eq!(recipient_domains(&[], &header), vec!["c.example"]);
         assert!(recipient_domains(&["invalid".into()], &header).is_empty());
         assert!(recipient_domains(&[], &[]).is_empty());
