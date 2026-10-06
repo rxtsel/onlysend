@@ -5,6 +5,8 @@ mod inbound;
 mod oauth;
 mod permissions;
 mod sent;
+#[cfg(desktop)]
+mod updates;
 
 pub mod infrastructure;
 
@@ -21,6 +23,8 @@ pub fn run() {
         // instances to this one (the deep-link event fires automatically).
         let builder = builder.plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}));
         builder.plugin(tauri_plugin_deep_link::init())
+            .plugin(tauri_plugin_updater::Builder::new().build())
+            .manage(updates::UpdateState::default())
     };
 
     builder
@@ -84,6 +88,14 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            #[cfg(desktop)]
+            updates::check_app_update,
+            #[cfg(desktop)]
+            updates::refresh_app_update,
+            #[cfg(desktop)]
+            updates::download_app_update,
+            #[cfg(desktop)]
+            updates::install_app_update,
             infrastructure::credentials_store::has_api_key,
             infrastructure::settings_store::get_onboarding_state,
             infrastructure::settings_store::set_inbox_enabled,

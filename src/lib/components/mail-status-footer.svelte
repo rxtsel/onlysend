@@ -4,6 +4,8 @@
   import { buttonVariants } from "$lib/components/ui/button";
   import { archiveStatusPresentation, type ArchiveFooterData } from "$lib/shared/archive-status";
   import type { Mailbox } from "$lib/shared/local-mail";
+  import { appUpdate } from "$lib/shared/app-update.svelte";
+  import AppUpdateControl from "$lib/components/app-update-control.svelte";
 
   let { data, mailbox }: { data: ArchiveFooterData; mailbox: Mailbox } = $props();
   const view = $derived(archiveStatusPresentation(data));
@@ -60,4 +62,8 @@
     </span>
   {/if}
   <span class="sr-only" role="status" aria-live="polite">{mailboxLabel}: {view.label}</span>
+  <div class="ml-auto flex shrink-0 items-center gap-3">
+    <AppUpdateControl />
+    <span class="tabular-nums" title="Current application version" aria-label={`Current version ${appUpdate.state.currentVersion}`}>v{appUpdate.state.currentVersion}</span>
+  </div>
 </footer>

@@ -8,6 +8,14 @@ export function registerDraftGuard(accountId: string, confirm: () => boolean): (
   return () => { if (guards.get(accountId) === guard) guards.delete(accountId); };
 }
 
+/** Updates can exit the whole app. Approval must not leak into later navigation. */
+export function confirmAppDeparture(): boolean {
+  for (const guard of guards.values()) {
+    if (!guard.confirm()) return false;
+  }
+  return true;
+}
+
 /** Confirm before destructive account operations, while the draft is mounted. */
 export function approveAccountDeparture(accountId: string): boolean {
   const guard = guards.get(accountId);

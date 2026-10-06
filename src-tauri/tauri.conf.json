@@ -29,10 +29,12 @@
     "targets": [
       "appimage",
       "deb",
-      "rpm",
       "dmg",
-      "msi"
+      "nsis"
     ],
+    "macOS": {
+      "signingIdentity": "-"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -42,6 +44,11 @@
     ]
   },
   "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": ["https://github.com/rxtsel/onlysend/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
+    },
     "deep-link": {
       "desktop": {
         "schemes": ["onlysend"]

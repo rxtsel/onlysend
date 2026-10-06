@@ -1,12 +1,16 @@
+import { readFileSync } from "node:fs";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vitest/config";
 import { sveltekit } from "@sveltejs/kit/vite";
 
 const host = process.env.TAURI_DEV_HOST;
+// Read metadata in the config process, never as a browser-served JSON module.
+const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [tailwindcss(), sveltekit()],
+  define: { __APP_VERSION__: JSON.stringify(version) },
   // Vitest: use browser entry points of packages even though tests run in Node
   ...(process.env.VITEST
     ? { resolve: { conditions: ["browser"] } }

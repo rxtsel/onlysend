@@ -3,7 +3,8 @@
   import * as Dialog from "@/lib/components/ui/dialog";
   import * as Sidebar from "@/lib/components/ui/sidebar";
   import { Button } from "@/lib/components/ui/button";
-  import { Mail, Settings, Plug, Globe } from "@lucide/svelte";
+  import { Mail, Settings, Plug, Globe, Info } from "@lucide/svelte";
+  import SettingsAbout from "$lib/components/settings-about.svelte";
   import SettingsDomains from "$lib/features/domains/components/settings-domains.svelte";
   import * as Select from "$lib/components/ui/select";
   import SettingsSenderOptions from "@/lib/features/sending/components/settings-sender-options.svelte";
@@ -13,6 +14,7 @@
     { name: "Sender options", icon: Mail },
     { name: "Connection", icon: Plug },
     { name: "Domains & receiving", icon: Globe },
+    { name: "About", icon: Info },
   ];
 
   let open = $state(false);
@@ -120,6 +122,8 @@
             <SettingsConnection onRequestClose={() => (open = false)} />
           {:else if activeItem === "Domains & receiving"}
             <SettingsDomains />
+          {:else if activeItem === "About"}
+            <SettingsAbout />
           {/if}
         </div>
       </main>
