@@ -231,3 +231,60 @@ describe("createEmailList cursor pagination", () => {
     expect(list.items.map((item) => item.id)).toEqual(["1", "2"]);
   });
 });
+
+describe("downloaded snapshots", () => {
+  test("shows disk data before remote completion and then replaces it", async () => {
+    const remote = deferred<EmailPage<Item>>();
+    const disk = { ...page(["disk"], "disk-cursor"), cache: { downloadedAt: 123, error: null } };
+    const list = createEmailList<Item>(() => remote.promise, 16, async () => disk);
+    const pending = list.refresh();
+    await vi.waitFor(() => expect(list.items).toEqual([{ id: "disk" }]));
+    expect(list.isLoading).toBe(false);
+    expect(list.isRefreshing).toBe(true);
+    expect(list.cacheInfo?.downloadedAt).toBe(123);
+    remote.resolve(page(["fresh"]));
+    await pending;
+    expect(list.items).toEqual([{ id: "fresh" }]);
+    expect(list.cacheInfo).toBeNull();
+  });
+
+  test("fallback keeps its remote error visible instead of claiming a successful sync", async () => {
+    const cached = { ...page(["disk"], "older"), cache: { downloadedAt: 123, error: "Missing permissions" } };
+    const list = createEmailList<Item>(async () => cached);
+    await list.refresh();
+    expect(list.error).toBe("Missing permissions");
+    expect(list.cacheInfo?.downloadedAt).toBe(123);
+    expect(list.hasMore).toBe(true);
+  });
+
+  test("clearing an account discards a late disk response before any remote request", async () => {
+    const disk = deferred<EmailPage<Item> | null>();
+    const fetcher = vi.fn(async () => page(["remote"]));
+    const list = createEmailList<Item>(fetcher, 16, () => disk.promise);
+    const pending = list.refresh();
+    list.clearItems();
+    disk.resolve({ ...page(["old-account"]), cache: { downloadedAt: 123, error: null } });
+    await pending;
+    expect(list.items).toEqual([]);
+    expect(list.cacheInfo).toBeNull();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  test("background disk refresh exposes newly downloaded pages without a remote request", async () => {
+    const disk = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(page(["head"], "older"));
+    const remote = vi.fn(async () => page(["head"]));
+    const list = createEmailList<Item>(remote, 16, disk);
+    await list.refresh();
+    expect(list.hasMore).toBe(false);
+    await list.refreshCached();
+    expect(remote).toHaveBeenCalledTimes(1);
+    expect(list.hasMore).toBe(true);
+    expect(list.items).toEqual([{ id: "head" }]);
+  });
+
+  test("disk failure does not prevent a remote attempt", async () => {
+    const list = createEmailList<Item>(async () => page(["remote"]), 16, async () => { throw new Error("disk failed"); });
+    await list.refresh();
+    expect(list.items).toEqual([{ id: "remote" }]);
+  });
+});

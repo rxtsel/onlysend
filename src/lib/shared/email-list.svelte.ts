@@ -5,6 +5,7 @@ import type { EmailPage } from "./email-page";
 export function createEmailList<T extends { id: string }>(
   fetchPage: (limit: number, after: string | null) => Promise<EmailPage<T>>,
   pageSize = 16,
+  fetchCached?: (limit: number, after: string | null) => Promise<EmailPage<T> | null>,
 ) {
   let items = $state<T[]>([]);
   let isLoading = $state(true);
@@ -13,6 +14,7 @@ export function createEmailList<T extends { id: string }>(
   let hasMore = $state(false);
   let nextCursor: string | null = null;
   let error = $state<string | null>(null);
+  let cacheInfo = $state<EmailPage<T>["cache"] | null>(null);
   let generation = 0;
   let seenCursors = new Set<string>();
 
@@ -25,7 +27,7 @@ export function createEmailList<T extends { id: string }>(
     });
   }
 
-  async function load(append = false, silent = false) {
+  async function load(append = false, silent = false, diskOnly = false) {
     if (silent && (isRefreshing || isLoadingMore)) return;
     const request = ++generation;
     const after = append ? nextCursor : null;
@@ -36,8 +38,20 @@ export function createEmailList<T extends { id: string }>(
         // Explicit refresh supersedes an in-flight load-more request.
         isLoadingMore = false;
       }
-      const page = await fetchPage(pageSize, after);
-      if (request !== generation) return;
+      // Show the correct account's disk snapshot immediately, then revalidate.
+      if (!append && !silent && !diskOnly && !items.length && fetchCached) {
+        const cached = await fetchCached(pageSize, null).catch(() => null);
+        if (request !== generation) return;
+        if (cached && (!cached.hasMore || (cached.items.length && cached.nextCursor))) {
+          items = unique(cached.items);
+          hasMore = cached.hasMore;
+          nextCursor = cached.nextCursor;
+          cacheInfo = cached.cache ?? null;
+          isLoading = false;
+        }
+      }
+      const page = diskOnly && fetchCached ? await fetchCached(pageSize, after) : await fetchPage(pageSize, after);
+      if (request !== generation || !page) return;
       if (page.hasMore && (!page.items.length || !page.nextCursor ||
           page.nextCursor === after || (append && seenCursors.has(page.nextCursor)))) {
         throw new Error("Email pagination did not advance. Retry or refresh the list.");
@@ -61,7 +75,8 @@ export function createEmailList<T extends { id: string }>(
         nextCursor = page.hasMore ? page.nextCursor : null;
         if (nextCursor) seenCursors.add(nextCursor);
       }
-      error = null;
+      cacheInfo = page.cache ?? (append ? cacheInfo : null);
+      error = cacheInfo?.error ?? null;
     } catch (err) {
       if (request !== generation) return;
       error = errorMessage(err, "Failed to load emails");
@@ -79,12 +94,16 @@ export function createEmailList<T extends { id: string }>(
   return {
     get items() { return items; },
     get error() { return error; },
+    get cacheInfo() { return cacheInfo; },
     get isLoading() { return isLoading; },
     get isRefreshing() { return isRefreshing; },
     get isLoadingMore() { return isLoadingMore; },
     get hasMore() { return hasMore; },
     async refresh() { await load(); },
     async refreshSilent() { await load(false, true); },
+    async refreshCached() {
+      if (fetchCached && !isRefreshing && !isLoadingMore) await load(false, false, true);
+    },
     async loadMore() {
       if (!isLoadingMore && !isRefreshing && hasMore && nextCursor) await load(true);
     },
@@ -96,6 +115,7 @@ export function createEmailList<T extends { id: string }>(
       isLoadingMore = false;
       items = [];
       error = null;
+      cacheInfo = null;
       hasMore = false;
       nextCursor = null;
       seenCursors = new Set();
