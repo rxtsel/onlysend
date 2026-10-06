@@ -1,6 +1,9 @@
 <script lang="ts">
     import { page } from "$app/state";
     import AppSidebar from "@/lib/components/app-sidebar.svelte";
+    import MailStatusFooter from "$lib/components/mail-status-footer.svelte";
+    import { selectArchiveFooter, type ArchiveFooterData, type ArchiveFooterSnapshot } from "$lib/shared/archive-status";
+    import type { Mailbox } from "$lib/shared/local-mail";
     import * as Breadcrumb from "@/lib/components/ui/breadcrumb";
     import { Separator } from "@/lib/components/ui/separator";
     import * as Sidebar from "@/lib/components/ui/sidebar";
@@ -42,6 +45,12 @@
     );
     const listTitle = $derived(isInboxRoot || isInboxDetail ? "Inbox" : "All sent");
     const listHref = $derived(isInboxRoot || isInboxDetail ? inboxHref : sentHref);
+    const footerMailbox = $derived<Mailbox>(isInboxRoot || isInboxDetail ? "inbox" : "sent");
+    let archiveFooter = $state<ArchiveFooterSnapshot | null>(null);
+    const footerData = $derived(selectArchiveFooter(archiveFooter, accountId, footerMailbox));
+    function updateArchiveStatus(owner: string, mailbox: Mailbox, data: ArchiveFooterData) {
+        if (owner === accountId) archiveFooter = { accountId: owner, mailbox, data };
+    }
 </script>
 
 {#if accountSwitch.busy}
@@ -51,9 +60,14 @@
 {/if}
 <!-- Keep the old tree mounted until navigation succeeds or is cancelled. -->
 {#key accountId}
-<Sidebar.Provider style="--sidebar-width: 450px;" open={!isComposer}>
-    <AppSidebar />
-    <Sidebar.Inset>
+<!-- Reserve the status bar height, including the desktop fixed sidebar. -->
+<Sidebar.Provider
+    style="--sidebar-width: 450px;"
+    open={!isComposer}
+    class="min-h-0 h-[calc(100svh-2rem)] [&_[data-slot=sidebar-container]]:bottom-8 [&_[data-slot=sidebar-container]]:h-[calc(100svh-2rem)]"
+>
+    <AppSidebar onArchiveStatusChange={updateArchiveStatus} />
+    <Sidebar.Inset class="min-h-0 overflow-hidden">
         <header
             class="bg-background z-10 sticky top-0 flex shrink-0 items-center gap-2 border-b px-4 py-4.5 max-h-[65px] h-[65px]"
         >
@@ -101,13 +115,14 @@
             {/if}
         </header>
 
-        <div class="flex flex-1 flex-col gap-4 p-4">
+        <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
             {#key page.params.id ?? "root"}
                 {@render children()}
             {/key}
         </div>
     </Sidebar.Inset>
 </Sidebar.Provider>
+<MailStatusFooter data={footerData} mailbox={footerMailbox} />
 {/key}
 
 {#snippet ConfirmDialog()}

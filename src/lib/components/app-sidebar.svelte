@@ -34,11 +34,17 @@ import { authErrorToast, isAuthError } from "@/lib/shared/services/auth-toast.sv
 import { errorMessage } from "@/lib/shared/utils/errors";
     import { createEmailList } from "../shared/email-list.svelte";
     import { mailDomains } from "$lib/shared/mail-domains";
+    import { getLocalArchivePage, loadArchivePage, getMailArchiveStatus, syncMailbox, type MailArchiveStatus } from "$lib/shared/local-mail";
+
+    import type { ArchiveFooterData } from "$lib/shared/archive-status";
 
     let {
         ref = $bindable(null),
+        onArchiveStatusChange,
         ...restProps
-    }: ComponentProps<typeof Sidebar.Root> = $props();
+    }: ComponentProps<typeof Sidebar.Root> & {
+        onArchiveStatusChange?: (accountId: string, mailbox: "inbox" | "sent", data: ArchiveFooterData) => void;
+    } = $props();
 
     /* ---------------------------------------------------------
      * MODE: which list the sidebar shows, driven by the route
@@ -76,13 +82,40 @@ import { errorMessage } from "@/lib/shared/utils/errors";
     function domainOf(mail: InboundEmail | SentEmail): string {
         return mailDomains(mail).join(", ");
     }
-    const sentList = createEmailList<SentEmail>((limit, after) =>
-        listSentEmails(accountId, limit, after, true),
+    const sentList = createEmailList<SentEmail>(
+        (limit, after) => loadArchivePage<SentEmail>(accountId, "sent", limit, after,
+            (size) => listSentEmails(accountId, size, null, true)),
+        PAGE_SIZE,
+        (limit) => getLocalArchivePage<SentEmail>(accountId, "sent", limit),
     );
 
-    const inboxList = createEmailList<InboundEmail>((limit, after) =>
-        listInboundEmails(accountId, limit, after),
+    const inboxList = createEmailList<InboundEmail>(
+        (limit, after) => loadArchivePage<InboundEmail>(accountId, "inbox", limit, after,
+            (size) => listInboundEmails(accountId, size, null)),
+        PAGE_SIZE,
+        (limit) => getLocalArchivePage<InboundEmail>(accountId, "inbox", limit),
     );
+    let archiveStatus = $state<MailArchiveStatus | null>(null);
+    let archiveStatusMode = $state<Mode | null>(null);
+    let archiveStatusError = $state<string | null>(null);
+    async function refreshArchiveStatus() {
+        const currentMode = mode;
+        try {
+            const status = await getMailArchiveStatus(accountId, currentMode);
+            if (!disposed && mode === currentMode) {
+                const changed = archiveStatus !== null && archiveStatus.downloadedMessages !== status.downloadedMessages;
+                archiveStatus = status;
+                archiveStatusMode = currentMode;
+                archiveStatusError = null;
+                if (changed) void activeList.refreshCached().catch(() => {});
+            }
+        } catch (error) {
+            if (!disposed && mode === currentMode) {
+                archiveStatusMode = currentMode;
+                archiveStatusError = errorMessage(error, "Could not read local-copy status");
+            }
+        }
+    }
 
     const activeList = $derived(mode === "inbox" ? inboxList : sentList);
 
@@ -123,6 +156,10 @@ import { errorMessage } from "@/lib/shared/utils/errors";
             if (currentMode === lastLoadContext) return;
             lastLoadContext = currentMode;
             domainFilter = "all";
+            archiveStatus = null;
+            archiveStatusError = null;
+            archiveStatusMode = null;
+            void refreshArchiveStatus();
             const list = currentMode === "inbox" ? inboxList : sentList;
             void list.refresh().catch((err) => {
                 if (disposed) return;
@@ -132,13 +169,31 @@ import { errorMessage } from "@/lib/shared/utils/errors";
         });
     });
 
+    $effect(() => {
+        const currentMode = mode;
+        const data: ArchiveFooterData = {
+            status: archiveStatusMode === currentMode ? archiveStatus : null,
+            statusError: archiveStatusMode === currentMode ? archiveStatusError : null,
+            refreshError: activeList.error,
+            downloadedAt: activeList.cacheInfo?.downloadedAt ?? null,
+        };
+        untrack(() => onArchiveStatusChange?.(accountId, currentMode, data));
+    });
+
     async function handleRefresh() {
         const currentMode = mode;
         const list = activeList;
         try {
             await list.refresh();
             if (disposed || mode !== currentMode) return;
-            toast.success("Emails refreshed");
+            if (list.cacheInfo?.error) {
+                toast.warning("Showing downloaded emails; remote refresh failed");
+            } else {
+                await syncMailbox(accountId, currentMode, true, PAGE_SIZE);
+                if (disposed || mode !== currentMode) return;
+                toast.success("Emails refreshed; local download continues in the background");
+            }
+            void refreshArchiveStatus();
         } catch (err) {
             if (disposed || mode !== currentMode) return;
             if (isAuthError(err)) {
@@ -168,6 +223,13 @@ import { errorMessage } from "@/lib/shared/utils/errors";
         } catch (err) {
             console.error("Error loading inbox markers:", err);
         }
+    });
+
+    onMount(() => {
+        const interval = setInterval(() => {
+            if (!disposed && !document.hidden) void refreshArchiveStatus();
+        }, 5_000);
+        return () => clearInterval(interval);
     });
 
     // Keep Inbox reachable even before receiving is configured for this
