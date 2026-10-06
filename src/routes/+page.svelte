@@ -1,68 +1,91 @@
 <script lang="ts">
+  import { provideAccount } from "$lib/features/auth/account-context";
+  import { mailUrl } from "$lib/features/auth/mail-routes";
+  import { listAccounts } from "$lib/shared/api/auth";
+  let accountId = $state("");
+  provideAccount(() => accountId);
   import { goto } from "$app/navigation";
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
+  import { fade, fly } from "svelte/transition";
 
-  import { hasApiKey, saveApiKey } from "@/lib/commom/store";
+  import { getOnboardingState, markSetupComplete } from "@/lib/shared/api/auth";
+import { getSelectedDomain, type DomainSummary } from "@/lib/shared/api/domains";
+  import { finishAccountSetup } from "$lib/features/setup/finish-account-setup";
   import Logo from "@/lib/components/logo.svelte";
 
   import { toast } from "svelte-sonner";
 
-  import { Button } from "@/lib/components/ui/button";
-  import * as Field from "@/lib/components/ui/field";
-  import { Input } from "@/lib/components/ui/input";
-  import { ArrowRight, Loader } from "@lucide/svelte";
-  import { profileSchema } from "@/lib/schemas/profile.schema";
-  import { apiKeySchema } from "@/lib/schemas/api-key.schema";
-  import { emailOptionSchema } from "@/lib/schemas/email-option.schema";
-  import { saveProfile } from "@/lib/commom/profile";
-  import { createFromEmail } from "@/lib/commom/from-emails";
+  import { Skeleton } from "@/lib/components/ui/skeleton";
+  import { listFromEmails } from "@/lib/shared/from-emails";
+  import StepConnect from "@/lib/features/setup/components/step-connect.svelte";
+  import StepDomains from "@/lib/features/setup/components/step-domains.svelte";
+  import StepFromEmails from "@/lib/features/setup/components/step-from-emails.svelte";
+  import {
+    SLIDE_IN,
+    SLIDE_OUT,
+    SLIDE_BACK_IN,
+    SLIDE_BACK_OUT,
+    createViewAnimator,
+    VIEW_WRAP_CLASS,
+  } from "@/lib/features/setup/view-transition.svelte";
 
   /* ---------------------------------------------------------
-   * MULTISTEP STATE
+   * WIZARD STATE
    * --------------------------------------------------------- */
   let step = $state<1 | 2 | 3>(1);
+  let direction = $state<"forward" | "back">("forward");
 
   let isChecking = $state(true);
   let isSaving = $state(false);
-  let errors = $state<Record<string, string>>({});
 
-  /* ---------------------------------------------------------
-   * STEP 1 — API KEY
-   * --------------------------------------------------------- */
   let apiKeyValue = $state("");
-
-  /* ---------------------------------------------------------
-   * STEP 2 — PROFILE INFO
-   * --------------------------------------------------------- */
-  let firstName = $state("");
-  let lastName = $state("");
-  let username = $state("");
-  let domain = $state("");
-
-  /* ---------------------------------------------------------
-   * STEP 3 — FROM EMAIL OPTIONS
-   * --------------------------------------------------------- */
-  let emailLabel = $state("");
-  let emailAddress = $state("");
-
+  let selectedDomain = $state("");
+  let selectedDomains = $state<DomainSummary[]>([]);
   let emailOptions = $state<{ label: string; address: string }[]>([]);
 
+  const animator = createViewAnimator();
+  let disposed = false;
+  onDestroy(() => { disposed = true; });
+
+  const HEADERS: Record<1 | 2 | 3, { title: string; subtitle: string }> = {
+    1: {
+      title: "Welcome to OnlySend",
+      subtitle: "Connect your Resend account to get started.",
+    },
+    2: {
+      title: "Choose domains",
+      subtitle: "Include domains for this account. Configure DNS now or later.",
+    },
+    3: {
+      title: "Email Options",
+      subtitle: "Add the email identities you will use to send emails.",
+    },
+  };
+
   /* ---------------------------------------------------------
-   * CHECK API KEY ON LOAD
+   * RESUME ONBOARDING ON LOAD
    * --------------------------------------------------------- */
   onMount(async () => {
     isChecking = true;
     try {
-      const exists = await hasApiKey();
+      const accounts = await listAccounts();
+      if (disposed) return;
+      accountId = (accounts.find((a) => a.isActive) ?? accounts[0])?.id ?? "";
+      if (!accountId) return;
+      const state = await getOnboardingState(accountId);
+      if (disposed) return;
 
-      if (exists) {
-        goto("/mail/sent");
+      if (state.complete && state.authenticated) {
+        goto(mailUrl(accountId, "sent"));
         return;
       }
 
-      isChecking = false;
+      // Resume position is derived, not stored: with a credential the
+      // user always re-confirms their domain at step 2.
+      step = state.authenticated ? 2 : 1;
     } catch (err) {
       console.error(err);
+    } finally {
       isChecking = false;
     }
   });
@@ -70,324 +93,147 @@
   /* ---------------------------------------------------------
    * STEP HANDLERS
    * --------------------------------------------------------- */
+  async function switchStep(to: 1 | 2 | 3) {
+    if (to === step || isSaving || disposed) return;
+    direction = to > step ? "forward" : "back";
+    await animator.transition(`step-${to}`, () => {
+      step = to;
+    });
+  }
+
   function nextStep() {
-    errors = {};
-    if (step < 3) step = (step + 1) as 1 | 2 | 3;
+    switchStep(Math.min(step + 1, 3) as 1 | 2 | 3);
+  }
+
+  /**
+   * Reconnect fast-path: when local data (identities + domain) survives a
+   * disconnect, connecting restores the session without repeating setup.
+   */
+  async function handleConnected(id: string) {
+    accountId = id;
+    try {
+      const [emails, savedDomain] = await Promise.all([
+        listFromEmails(id),
+        getSelectedDomain(id),
+      ]);
+
+      if (disposed || accountId !== id) return;
+      if (emails.length > 0 && savedDomain) {
+        selectedDomain = savedDomain;
+        await markSetupComplete(id);
+        if (disposed || accountId !== id) return;
+        toast.success("Welcome back!");
+        goto(mailUrl(id, "sent"));
+        return;
+      }
+    } catch (err) {
+      console.error(err);
+    }
+    if (!disposed && accountId === id) nextStep();
   }
 
   function prevStep() {
-    errors = {};
-    if (step > 1) step = (step - 1) as 1 | 2 | 3;
+    switchStep(Math.max(step - 1, 1) as 1 | 2 | 3);
   }
 
-  /* STEP 1 */
-  function submitStep1(e: SubmitEvent) {
-    e.preventDefault();
-    errors = {};
-
-    const result = apiKeySchema.safeParse(apiKeyValue);
-    if (!result.success) {
-      errors.apiKey = result.error.issues[0].message;
-      return;
-    }
-
-    nextStep();
-  }
-
-  /* STEP 2 */
-  function submitStep2(e: SubmitEvent) {
-    e.preventDefault();
-    errors = {};
-
-    const result = profileSchema.safeParse({
-      firstName,
-      lastName,
-      username,
-      domain,
-    });
-
-    if (!result.success) {
-      for (const issue of result.error.issues) {
-        errors[issue.path[0]?.toString()] = issue.message;
-      }
-      return;
-    }
-
-    nextStep();
-  }
-
-  /* STEP 3 */
-  async function submitStep3(e: SubmitEvent) {
-    e.preventDefault();
-    errors = {};
-
-    if (emailOptions.length === 0) {
-      errors.fromEmail = "Add at least one email option";
-      return;
-    }
-
+  async function finish() {
+    if (isSaving || disposed) return;
+    const owner = accountId;
     try {
       isSaving = true;
-
-      // Save data in storage
-      await Promise.all([
-        saveApiKey(apiKeyValue),
-        saveProfile({
-          firstName,
-          lastName,
-          username,
-          domain,
-        }),
-        ...emailOptions.map((opt, i) =>
-          createFromEmail({
-            label: opt.label,
-            address: opt.address,
-            isDefault: i === 0,
-          }),
-        ),
-      ]);
-
+      await finishAccountSetup(owner, emailOptions, selectedDomain);
+      if (disposed || accountId !== owner) return;
       toast.success("Setup complete! Welcome to OnlySend");
-      goto("/mail/sent");
+      goto(mailUrl(owner, "sent"));
     } catch (err) {
+      if (disposed || accountId !== owner) return;
       console.error(err);
       toast.error("Failed to save. Try again.");
     } finally {
       isSaving = false;
     }
   }
-
-  /* Add email option in step 3 */
-  function addEmailOption() {
-    errors = {};
-
-    const result = emailOptionSchema.safeParse({
-      label: emailLabel,
-      address: emailAddress,
-    });
-
-    if (!result.success) {
-      for (const issue of result.error.issues) {
-        errors[issue.path[0]?.toString()] = issue.message;
-      }
-      return;
-    }
-
-    emailOptions = [
-      ...emailOptions,
-      { label: emailLabel, address: emailAddress },
-    ];
-
-    emailLabel = "";
-    emailAddress = "";
-  }
 </script>
 
 {#if isChecking}
-  <div class="min-h-dvh w-full flex items-center justify-center">
-    <Loader class="animate-spin" />
-  </div>
+  <main
+    class="container mx-auto py-6 min-h-svh flex justify-center items-center flex-col"
+  >
+    <header class="text-center mb-8 w-full">
+      <Skeleton class="size-16 rounded-xl mx-auto mb-6" />
+      <Skeleton class="h-8 w-72 mx-auto mb-4" />
+      <Skeleton class="h-4 w-80 mx-auto" />
+    </header>
+    <div class="w-full max-w-sm space-y-3">
+      <Skeleton class="h-10 w-full rounded-md" />
+      <Skeleton class="h-10 w-full rounded-md" />
+      <Skeleton class="h-9 w-full rounded-md" />
+    </div>
+  </main>
 {:else}
   <main
-    class="container mx-auto min-h-svh flex justify-center items-center flex-col"
+    class="container mx-auto py-6 min-h-svh flex justify-center items-center flex-col"
   >
-    <header class="text-center mb-8">
+    <header class="text-center mb-8 w-full max-w-md">
       <Logo class="mx-auto mb-6" />
-      <h1 class="text-3xl font-bold mb-4">
-        {#if step === 1}Welcome to OnlySend{/if}
-        {#if step === 2}Profile Setup{/if}
-        {#if step === 3}Email Options{/if}
-      </h1>
-      <p class="max-w-prose text-balance">
-        {#if step === 1}
-          Enter your Resend API key to get started.
-        {/if}
-        {#if step === 2}
-          Tell us a bit about your profile.
-        {/if}
-        {#if step === 3}
-          Add the email identities you will use to send emails.
-        {/if}
-      </p>
+      <div class="grid items-start">
+        {#key step}
+          <div
+            class="[grid-area:1/1]"
+            in:fade={{ duration: 180 }}
+            out:fade={{ duration: 120 }}
+          >
+            <h1 class="text-3xl font-bold mb-4">{HEADERS[step].title}</h1>
+            <p class="max-w-prose text-balance">{HEADERS[step].subtitle}</p>
+          </div>
+        {/key}
+      </div>
     </header>
 
     <!-- -----------------------------------------------------
-         STEP 1
+         ANIMATED STEP REGION
     ------------------------------------------------------ -->
-    {#if step === 1}
-      <form class="w-full max-w-sm" onsubmit={submitStep1}>
-        <Field.Group>
-          <Field.Field>
-            <Field.Label for="apiKey">Resend API Key</Field.Label>
-            <Input
-              id="apiKey"
-              bind:value={apiKeyValue}
-              placeholder="re_123abc..."
-              aria-invalid={!!errors.apiKey}
-              autofocus
-            />
-            {#if errors.apiKey}
-              <Field.Error>{errors.apiKey}</Field.Error>
-            {/if}
-          </Field.Field>
-          <Field.Field>
-            <Field.Description>
-              You can find your API key in your{" "}
-              <a
-                href="https://resend.com/api-keys"
-                target="_blank"
-                class="underline underline-offset-4 font-medium"
-              >
-                Resend dashboard
-              </a>.
-            </Field.Description>
-          </Field.Field>
+    <div bind:this={animator.element} class={`w-full ${VIEW_WRAP_CLASS}`}>
+      <!-- STEP 1: CONNECT RESEND (OAuth / API key) -->
+      {#if step === 1}
+        <div
+          class="[grid-area:1/1] min-w-0 w-full flex flex-col items-center"
+          data-view="step-1"
+          in:fly={direction === "forward" ? SLIDE_IN : SLIDE_BACK_IN}
+          out:fly={direction === "forward" ? SLIDE_OUT : SLIDE_BACK_OUT}
+        >
+          <StepConnect bind:apiKeyValue onConnected={handleConnected} />
+        </div>
 
-          <Button type="submit" class="w-full">Continue <ArrowRight /></Button>
-        </Field.Group>
-      </form>
-    {/if}
+      <!-- STEP 2: DOMAINS -->
+      {:else if step === 2}
+        <div
+          class="[grid-area:1/1] min-w-0 w-full flex flex-col items-center"
+          data-view="step-2"
+          in:fly={direction === "forward" ? SLIDE_IN : SLIDE_BACK_IN}
+          out:fly={direction === "forward" ? SLIDE_OUT : SLIDE_BACK_OUT}
+        >
+          <StepDomains bind:domain={selectedDomain} bind:selectedDomains onContinue={nextStep} />
+        </div>
 
-    <!-- -----------------------------------------------------
-         STEP 2
-    ------------------------------------------------------ -->
-    {#if step === 2}
-      <form class="w-full max-w-sm" onsubmit={submitStep2}>
-        <Field.Group>
-          <div class="grid grid-cols-2 sm:grid-cols-2 gap-x-2">
-            <Field.Field>
-              <Field.Label for="firstName">First Name</Field.Label>
-              <Input
-                id="firstName"
-                placeholder="John"
-                bind:value={firstName}
-                aria-invalid={!!errors.firstName}
-                autofocus
-              />
-              {#if errors.firstName}
-                <Field.Error>{errors.firstName}</Field.Error>
-              {/if}
-            </Field.Field>
-
-            <Field.Field>
-              <Field.Label for="lastName">Last Name</Field.Label>
-              <Input
-                id="lastName"
-                placeholder="Doe"
-                bind:value={lastName}
-                aria-invalid={!!errors.lastName}
-                autofocus
-              />
-              {#if errors.lastName}
-                <Field.Error>{errors.lastName}</Field.Error>
-              {/if}
-            </Field.Field>
-          </div>
-
-          <Field.Field>
-            <Field.Label for="username">Username</Field.Label>
-            <Input
-              id="username"
-              placeholder="john_doe"
-              bind:value={username}
-              aria-invalid={!!errors.username}
-              autofocus
-            />
-            {#if errors.username}
-              <Field.Error>{errors.username}</Field.Error>
-            {/if}
-          </Field.Field>
-
-          <Field.Field>
-            <Field.Label for="domain">Domain</Field.Label>
-            <Input
-              id="domain"
-              bind:value={domain}
-              placeholder="yourdomain.com"
-              aria-invalid={!!errors.domain}
-            />
-            {#if errors.domain}
-              <Field.Error>{errors.domain}</Field.Error>
-            {/if}
-          </Field.Field>
-
-          <div class="flex gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              class="flex-1"
-              onclick={prevStep}
-            >
-              <ArrowRight class="-rotate-180" /> Back
-            </Button>
-            <Button type="submit" class="flex-1">Continue <ArrowRight /></Button
-            >
-          </div>
-        </Field.Group>
-      </form>
-    {/if}
-
-    <!-- -----------------------------------------------------
-         STEP 3
-    ------------------------------------------------------ -->
-    {#if step === 3}
-      <form class="w-full max-w-sm" onsubmit={submitStep3}>
-        <Field.Group>
-          <Field.Field>
-            <Field.Label>From Email Options</Field.Label>
-
-            <div class="flex gap-2 mb-3">
-              <Input
-                placeholder="Label"
-                bind:value={emailLabel}
-                aria-invalid={!!errors.label}
-                autofocus
-              />
-              <Input
-                placeholder="email@domain.com"
-                bind:value={emailAddress}
-                aria-invalid={!!errors.address}
-              />
-            </div>
-
-            {#if errors.label}
-              <Field.Error>{errors.label}</Field.Error>
-            {/if}
-            {#if errors.address}
-              <Field.Error>{errors.address}</Field.Error>
-            {/if}
-
-            <Button type="button" class="w-full mb-4" onclick={addEmailOption}>
-              Add email
-            </Button>
-
-            <!-- LIST -->
-            {#each emailOptions as opt}
-              <p class="border px-3 py-1 rounded bg-accent/20">
-                {opt.label} - {opt.address}
-              </p>
-            {/each}
-
-            {#if errors.fromEmail}
-              <Field.Error>{errors.fromEmail}</Field.Error>
-            {/if}
-          </Field.Field>
-
-          <div class="flex gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              class="flex-1"
-              onclick={prevStep}
-            >
-              <ArrowRight class="-rotate-180" /> Back
-            </Button>
-            <Button type="submit" class="flex-1" disabled={isSaving}>
-              {isSaving ? "Saving..." : "Finish"}
-            </Button>
-          </div>
-        </Field.Group>
-      </form>
-    {/if}
+      <!-- STEP 3: FROM EMAIL OPTIONS -->
+      {:else}
+        <div
+          class="[grid-area:1/1] min-w-0 w-full flex flex-col items-center"
+          data-view="step-3"
+          in:fly={direction === "forward" ? SLIDE_IN : SLIDE_BACK_IN}
+          out:fly={direction === "forward" ? SLIDE_OUT : SLIDE_BACK_OUT}
+        >
+          <StepFromEmails
+            bind:options={emailOptions}
+            domain={selectedDomain}
+            domains={selectedDomains}
+            onBack={prevStep}
+            onFinish={finish}
+            {isSaving}
+          />
+        </div>
+      {/if}
+    </div>
   </main>
 {/if}

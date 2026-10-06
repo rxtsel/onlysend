@@ -1,4 +1,5 @@
-use crate::store;
+use crate::oauth;
+use crate::permissions;
 use base64::{engine::general_purpose, Engine as _};
 use resend_rs::types::{CreateAttachment, CreateEmailBaseOptions};
 use resend_rs::Resend;
@@ -36,12 +37,11 @@ pub struct EmailComposerData {
 }
 
 #[tauri::command]
-pub async fn send_email(app: AppHandle<Wry>, data: EmailComposerData) -> Result<(), String> {
-    // API key from storage
-    let api_key = store::get_api_key(app.clone())?
-        .ok_or_else(|| "[ERROR] API key not configured".to_string())?;
+pub async fn send_email(app: AppHandle<Wry>, account_id: String, data: EmailComposerData) -> Result<(), String> {
+    // Bearer credential: API key or OAuth access token
+    let credential = oauth::get_account_credential(&app, &account_id).await?;
 
-    let resend = Resend::new(&api_key);
+    let resend = Resend::new(&credential);
 
     // Email base
     let mut email =
@@ -85,7 +85,7 @@ pub async fn send_email(app: AppHandle<Wry>, data: EmailComposerData) -> Result<
         .emails
         .send(email)
         .await
-        .map_err(|e| format!("[ERROR] Error sending email: {e}"))?;
+        .map_err(|e| permissions::friendly_error(format!("[ERROR] Error sending email: {e}")))?;
 
     Ok(())
 }

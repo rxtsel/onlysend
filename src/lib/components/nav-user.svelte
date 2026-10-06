@@ -1,30 +1,94 @@
 <script lang="ts">
-  import ChevronsUpDownIcon from "@lucide/svelte/icons/chevrons-up-down";
-  import LogOutIcon from "@lucide/svelte/icons/log-out";
-  import SparklesIcon from "@lucide/svelte/icons/sparkles";
+  import { useAccountId } from "$lib/features/auth/account-context";
+  const accountId = useAccountId();
+  import {
+    ChevronsUpDownIcon,
+    CheckIcon,
+    PlusIcon,
+    SparklesIcon,
+    UnplugIcon,
+  } from "@lucide/svelte";
+  import { Blobatar } from "@blobatar/svelte";
 
-  import * as Avatar from "@/lib/components/ui/avatar/index.js";
   import * as DropdownMenu from "@/lib/components/ui/dropdown-menu/index.js";
   import * as Sidebar from "@/lib/components/ui/sidebar/index.js";
   import { useSidebar } from "@/lib/components/ui/sidebar/index.js";
-  import type { Profile } from "../types";
-  import { getProfile } from "../commom/profile";
+  import {
+    disconnectResend,
+    getConnectionStatus,
+    listAccounts,
+    type ConnectionMethod,
+    type AccountMeta,
+  } from "@/lib/shared/api/auth";
+  import { getActiveDomain } from "@/lib/shared/api/domains";
   import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
+  import { page } from "$app/state";
+  import { switchMailAccount } from "@/lib/features/auth/account-switch.svelte";
+  import { toast } from "svelte-sonner";
+  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { ConnectionStore } from "@/lib/features/auth/connection-store.svelte";
+
+  import * as AlertDialog from "@/lib/components/ui/alert-dialog";
 
   const sidebar = useSidebar();
 
-  let user = $state<Profile>({
-    firstName: "Send",
-    lastName: "Only",
-    username: "send.only",
-    domain: "onlysend.example",
-  });
+  const connection = new ConnectionStore(accountId);
+  const activeDomain = $derived(connection.activeDomain);
+  let method = $state<ConnectionMethod>(null);
+  let isDisconnecting = $state(false);
+  let showDisconnectConfirm = $state(false);
+  let accounts = $state<AccountMeta[]>([]);
+  let activeAccountId = $state<string | null>(null);
 
-  onMount(async () => {
-    const userData = await getProfile();
-    if (userData) {
-      user = userData;
+  const METHOD_LABELS: Record<Exclude<ConnectionMethod, null>, string> = {
+    oauth: "Connected via OAuth",
+    api_key: "Connected with API key",
+  };
+
+  const connectionLabel = $derived(
+    method ? METHOD_LABELS[method] : "Not connected",
+  );
+
+  async function loadData() {
+    await connection.load();
+    method = connection.status.method;
+
+    try {
+      accounts = await listAccounts();
+      activeAccountId = accountId;
+    } catch (err) {
+      console.error("Error loading accounts:", err);
     }
+  }
+
+  async function handleSwitchAccount(accountId: string) {
+    if (accountId === activeAccountId) return;
+    try {
+      await switchMailAccount(accountId, page.url.pathname);
+    } catch (err) {
+      console.error("Error switching account:", err);
+      toast.error("Failed to switch account");
+    }
+  }
+
+  async function handleDisconnect() {
+    if (isDisconnecting) return;
+
+    isDisconnecting = true;
+    const result = await connection.disconnect();
+    isDisconnecting = false;
+
+    if (result.ok && !result.cancelled) {
+      toast.success("Disconnected from Resend");
+      showDisconnectConfirm = false;
+    } else if (!result.ok) {
+      toast.error(result.error);
+    }
+  }
+
+  onMount(() => {
+    loadData();
   });
 </script>
 
@@ -38,22 +102,18 @@
             size="lg"
             class="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground md:h-8 md:p-0"
           >
-            <Avatar.Root class="size-8 rounded-lg">
-              <Avatar.Image
-                src="/icon-512.png"
-                alt="{user.firstName} {user.lastName}"
-              />
-              <Avatar.Fallback class="rounded-lg">
-                {user.firstName.charAt(0).toUpperCase() ?? "O"}{user.lastName
-                  .charAt(0)
-                  .toUpperCase() ?? "S"}
-              </Avatar.Fallback>
-            </Avatar.Root>
+            <Blobatar
+              name={accountId}
+              size={32}
+              class="rounded-lg"
+            />
             <div class="grid flex-1 text-start text-sm leading-tight">
-              <span class="truncate font-medium"
-                >{user.firstName} {user.lastName}</span
-              >
-              <span class="truncate text-xs">{user.username}</span>
+              <span class="truncate font-medium">
+                {accounts.find((account) => account.id === accountId)?.label ?? "Account"}
+              </span>
+              <span class="truncate text-xs text-muted-foreground">
+                {connectionLabel}
+              </span>
             </div>
             <ChevronsUpDownIcon class="ms-auto size-4" />
           </Sidebar.MenuButton>
@@ -67,44 +127,82 @@
       >
         <DropdownMenu.Label class="p-0 font-normal">
           <div class="flex items-center gap-2 px-1 py-1.5 text-start text-sm">
-            <Avatar.Root class="size-8 rounded-lg">
-              <Avatar.Image
-                src={user.username}
-                alt="{user.firstName} {user.lastName}"
-              />
-              <Avatar.Fallback class="rounded-lg">
-                {user.firstName.charAt(0) ?? "O"}{user.lastName.charAt(0) ??
-                  "S"}
-              </Avatar.Fallback>
-            </Avatar.Root>
+            <Blobatar
+              name={accountId}
+              size={32}
+              class="rounded-lg"
+            />
             <div class="grid flex-1 text-start text-sm leading-tight">
-              <span class="truncate font-medium"
-                >{user.firstName} {user.lastName}</span
-              >
-              <span class="truncate text-xs">{user.username}</span>
+              <span class="truncate font-medium">
+                {accounts.find((account) => account.id === accountId)?.label ?? "Account"}
+              </span>
+              <span class="truncate text-xs text-muted-foreground">
+                {connectionLabel}
+              </span>
             </div>
           </div>
         </DropdownMenu.Label>
         <DropdownMenu.Separator />
+        {#if accounts.length > 1}
+          <DropdownMenu.Group>
+            <DropdownMenu.Label class="text-[10px] uppercase tracking-wide text-muted-foreground px-2">
+              Accounts
+            </DropdownMenu.Label>
+            {#each accounts as account (account.id)}
+              <DropdownMenu.Item
+                onclick={() => handleSwitchAccount(account.id)}
+                class={account.id === activeAccountId ? "bg-accent" : ""}
+              >
+                <Blobatar name={account.id} size={20} class="rounded" />
+                <span class="truncate">{account.label}</span>
+                {#if account.id === activeAccountId}
+                  <CheckIcon class="ms-auto size-3 text-primary" />
+                {/if}
+              </DropdownMenu.Item>
+            {/each}
+            <DropdownMenu.Separator />
+          </DropdownMenu.Group>
+        {/if}
         <DropdownMenu.Group>
-          <DropdownMenu.Item class="p-0 m-0">
-            <a
-              href="https://donate.stripe.com/00wdR8dOd0YF7Ipce0a7C04"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="flex w-full item-center gap-2 py-2 px-2"
-            >
-              <SparklesIcon />
-              Support us
-            </a>
+          <DropdownMenu.Item onclick={() => goto("/setup")}>
+            <PlusIcon />
+            Add account
           </DropdownMenu.Item>
+          <DropdownMenu.Item onclick={() => openUrl("https://donate.stripe.com/00wdR8dOd0YF7Ipce0a7C04")}>
+            <SparklesIcon />
+            Support us
+          </DropdownMenu.Item>
+          {#if method}
+            <DropdownMenu.Item variant="destructive" onclick={() => (showDisconnectConfirm = true)}>
+              <UnplugIcon />
+              Disconnect
+            </DropdownMenu.Item>
+          {/if}
         </DropdownMenu.Group>
-        <DropdownMenu.Separator />
-        <DropdownMenu.Item>
-          <LogOutIcon />
-          Log out
-        </DropdownMenu.Item>
       </DropdownMenu.Content>
     </DropdownMenu.Root>
+
+    <!-- DISCONNECT CONFIRM -->
+    <AlertDialog.Root bind:open={showDisconnectConfirm}>
+      <AlertDialog.Content>
+        <AlertDialog.Header>
+          <AlertDialog.Title>Disconnect from Resend?</AlertDialog.Title>
+          <AlertDialog.Description>
+            This account and its saved credentials will be removed from OnlySend.
+            Other connected accounts and your domains and emails in Resend will not be deleted.
+          </AlertDialog.Description>
+        </AlertDialog.Header>
+        <AlertDialog.Footer>
+          <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+          <AlertDialog.Action
+            class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            disabled={isDisconnecting}
+            onclick={handleDisconnect}
+          >
+            {isDisconnecting ? "Disconnecting..." : "Disconnect"}
+          </AlertDialog.Action>
+        </AlertDialog.Footer>
+      </AlertDialog.Content>
+    </AlertDialog.Root>
   </Sidebar.MenuItem>
 </Sidebar.Menu>

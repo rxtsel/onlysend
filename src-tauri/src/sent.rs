@@ -1,9 +1,17 @@
-use crate::store;
-use resend_rs::{list_opts::ListOptions, Resend};
+use crate::infrastructure::database::{
+    local_state,
+    mail::{self, Mailbox},
+    sync,
+};
+use crate::infrastructure::pagination::{email_page, list_options, EmailPage};
+use crate::oauth;
+use crate::permissions;
+use resend_rs::Resend;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Wry};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SentEmail {
     pub id: String,
     pub from: String,
@@ -21,32 +29,75 @@ pub struct SentEmail {
 #[tauri::command]
 pub async fn list_sent_emails(
     app: AppHandle<Wry>,
+    account_id: String,
     limit: Option<usize>,
-    offset: Option<usize>,
-) -> Result<Vec<SentEmail>, String> {
-    let api_key = store::get_api_key(app.clone())?
-        .ok_or_else(|| "[ERROR] API key not configured".to_string())?;
-
-    let resend = Resend::new(&api_key);
-
-    let lim = limit.unwrap_or(12);
-    let off = offset.unwrap_or(0);
-
-    // Request offset + limit, to manually "paginate"
-    let effective_limit = (lim + off).min(255);
-    let list_opts = ListOptions::default().with_limit(effective_limit as u8);
-
-    let response = resend
-        .emails
-        .list(list_opts)
+    after: Option<String>,
+) -> Result<EmailPage<SentEmail>, String> {
+    let _ = list_options(limit, after.as_deref())?;
+    let database = local_state::for_account(&app, &account_id).await?;
+    let result = async {
+        let credential = oauth::get_account_credential(&app, &account_id).await?;
+        let resend = Resend::new(&credential);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            fetch_sent_page(&resend, limit, after.as_deref()),
+        )
         .await
-        .map_err(|e| format!("[ERROR] Failed to fetch sent emails: {}", e))?;
+        .map_err(|_| "Sent request timed out".to_string())?
+    }
+    .await;
+    match result {
+        Ok(page) => {
+            crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
+            mail::store_page(
+                &database,
+                account_id.clone(),
+                Mailbox::Sent,
+                limit.unwrap_or(12),
+                after.clone(),
+                &page,
+            )
+            .await?;
+            if after.is_none() {
+                if sync::start(&app, account_id, Mailbox::Sent, limit.unwrap_or(12), false)
+                    .await
+                    .is_err()
+                {
+                    eprintln!("[WARN] Could not start sent archive download");
+                }
+            }
+            Ok(page)
+        }
+        Err(error) => mail::cached_page(
+            &database,
+            account_id,
+            Mailbox::Sent,
+            limit.unwrap_or(12),
+            after,
+            Some(error.clone()),
+        )
+        .await?
+        .ok_or(error),
+    }
+}
+
+pub(crate) async fn fetch_sent_page(
+    resend: &Resend,
+    limit: Option<usize>,
+    after: Option<&str>,
+) -> Result<EmailPage<SentEmail>, String> {
+    let options = list_options(limit, after)?;
+    // Each request fetches one remote page, retaining the captured account.
+    let response = match after {
+        Some(cursor) => resend.emails.list(options.list_after(cursor)).await,
+        None => resend.emails.list(options).await,
+    }
+    .map_err(|e| permissions::map_resend_error("Failed to fetch sent emails", e))?;
+    let has_more = response.has_more;
 
     let sent_emails: Vec<SentEmail> = response
         .data
         .into_iter()
-        .skip(off) // Skip previeous pages
-        .take(lim) // Only take 'limit' items
         .map(|email| SentEmail {
             id: email.id.to_string(),
             from: email.from,
@@ -66,25 +117,67 @@ pub async fn list_sent_emails(
         })
         .collect();
 
-    Ok(sent_emails)
+    email_page(sent_emails, has_more, after, |email| &email.id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::infrastructure::pagination_test_server::mock_history;
+
+    #[tokio::test]
+    async fn sent_sdk_pages_traverse_history_beyond_previous_limits() {
+        let (resend, server, expected) = mock_history("/emails");
+        let mut after = None;
+        let mut ids = Vec::new();
+        for _ in 0..4 {
+            let page = fetch_sent_page(&resend, Some(100), after.as_deref())
+                .await
+                .unwrap();
+            ids.extend(page.items.iter().map(|email| email.id.clone()));
+            assert_eq!(page.has_more, ids.len() < expected.len());
+            after = page.next_cursor;
+        }
+        server.join().unwrap();
+        assert_eq!(ids, expected);
+        assert!(after.is_none());
+    }
 }
 
 #[tauri::command]
-pub async fn get_sent_email(app: AppHandle<Wry>, email_id: String) -> Result<SentEmail, String> {
-    // Get API key from storage
-    let api_key = store::get_api_key(app.clone())?
-        .ok_or_else(|| "[ERROR] API key not configured".to_string())?;
+pub async fn get_sent_email(
+    app: AppHandle<Wry>,
+    account_id: String,
+    email_id: String,
+) -> Result<SentEmail, String> {
+    let database = local_state::for_account(&app, &account_id).await?;
+    if let Some(json) = mail::cached_detail(
+        &database,
+        account_id.clone(),
+        "sent".into(),
+        email_id.clone(),
+    )
+    .await?
+    {
+        return serde_json::from_str(&json).map_err(|_| "Could not read downloaded email".into());
+    }
+    // Bearer credential: API key or OAuth access token
+    let credential = oauth::get_account_credential(&app, &account_id).await?;
 
-    let resend = Resend::new(&api_key);
+    let resend = Resend::new(&credential);
 
     // Get specific email by ID
     let email = resend
         .emails
         .get(&email_id)
         .await
-        .map_err(|e| format!("[ERROR] Failed to fetch email: {}", e))?;
+        .map_err(|e| permissions::map_resend_error("Failed to fetch email", e))?;
 
-    Ok(SentEmail {
+    let search_text = email
+        .text
+        .clone()
+        .unwrap_or_else(|| mail::plain_html(email.html.as_deref().unwrap_or_default()));
+    let detail = SentEmail {
         id: email.id.to_string(),
         from: email.from,
         to: email.to,
@@ -100,5 +193,16 @@ pub async fn get_sent_email(app: AppHandle<Wry>, email_id: String) -> Result<Sen
                 Some(rt.join(", "))
             }
         }),
-    })
+    };
+    crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
+    mail::store_detail(
+        &database,
+        account_id,
+        Mailbox::Sent,
+        email_id,
+        &detail,
+        search_text,
+    )
+    .await?;
+    Ok(detail)
 }
