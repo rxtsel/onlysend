@@ -10,6 +10,8 @@ beforeEach(() => vi.mocked(invoke).mockReset().mockResolvedValue(undefined));
 
 const accountId = "connection-b";
 const cases: Array<[string, () => Promise<unknown>]> = [
+  ["get_domain_preferences", () => domains.getDomainPreferences(accountId)],
+  ["save_domain_preferences", () => domains.saveDomainPreferences(accountId, { includedDomainIds: [] })],
   ["list_domains", () => domains.listDomains(accountId)],
   ["get_domain", () => domains.getDomain(accountId, "domain")],
   ["create_domain", () => domains.createDomain(accountId, { name: "example.com" })],

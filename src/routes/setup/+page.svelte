@@ -1,24 +1,16 @@
 <script lang="ts">
   import { provideAccount } from "$lib/features/auth/account-context";
   import { mailUrl } from "$lib/features/auth/mail-routes";
-  import { listAccounts } from "$lib/shared/api/auth";
   let accountId = $state("");
   provideAccount(() => accountId);
   import { goto } from "$app/navigation";
+  import { onDestroy } from "svelte";
   import { fly } from "svelte/transition";
   import { toast } from "svelte-sonner";
-  import { Loader } from "@lucide/svelte";
 
   import { Button } from "@/lib/components/ui/button";
-  import { createFromEmail, listFromEmails } from "@/lib/shared/from-emails";
-  import {
-    getOnboardingState,
-    markSetupComplete,
-  } from "@/lib/shared/api/auth";
-  import {
-    saveSelectedDomain,
-    getSelectedDomain,
-  } from "@/lib/shared/api/domains";
+  import type { DomainSummary } from "$lib/shared/api/domains";
+  import { finishAccountSetup } from "$lib/features/setup/finish-account-setup";
   import StepConnect from "@/lib/features/setup/components/step-connect.svelte";
   import StepDomains from "@/lib/features/setup/components/step-domains.svelte";
   import StepFromEmails from "@/lib/features/setup/components/step-from-emails.svelte";
@@ -28,7 +20,10 @@
 
   let step = $state<Step>(1);
   let isSaving = $state(false);
+  let disposed = false;
+  onDestroy(() => { disposed = true; });
   let selectedDomain = $state("");
+  let selectedDomains = $state<DomainSummary[]>([]);
   let emailOptions = $state<{ label: string; address: string }[]>([]);
 
   const HEADERS: Record<Step, { title: string; subtitle: string }> = {
@@ -37,8 +32,8 @@
       subtitle: "Connect your Resend account to get started.",
     },
     2: {
-      title: "Choose a domain",
-      subtitle: "Pick the domain you will send emails from.",
+      title: "Choose domains",
+      subtitle: "Include domains for this account. Configure DNS now or later.",
     },
     3: {
       title: "Email Options",
@@ -55,26 +50,16 @@
   }
 
   async function finish() {
-    if (emailOptions.length === 0) return;
-
+    if (isSaving || disposed) return;
+    const owner = accountId;
     try {
       isSaving = true;
-
-      await Promise.all([
-        saveSelectedDomain(accountId, selectedDomain),
-        ...emailOptions.map((opt, i) =>
-          createFromEmail(accountId, {
-            label: opt.label,
-            address: opt.address,
-            isDefault: i === 0,
-          }),
-        ),
-      ]);
-
-      await markSetupComplete(accountId);
+      await finishAccountSetup(owner, emailOptions, selectedDomain);
+      if (disposed || accountId !== owner) return;
       toast.success("Account added!");
-      goto(mailUrl(accountId, "sent"));
+      goto(mailUrl(owner, "sent"));
     } catch (err) {
+      if (disposed || accountId !== owner) return;
       console.error(err);
       toast.error("Failed to save. Try again.");
     } finally {
@@ -103,11 +88,12 @@
   {#if step === 1}
     <StepConnect onConnected={(id) => { accountId = id; nextStep(); }} />
   {:else if step === 2}
-    <StepDomains bind:domain={selectedDomain} onContinue={nextStep} />
+    <StepDomains bind:domain={selectedDomain} bind:selectedDomains onContinue={nextStep} />
   {:else}
     <StepFromEmails
       bind:options={emailOptions}
       domain={selectedDomain}
+      domains={selectedDomains}
       onBack={prevStep}
       onFinish={finish}
       {isSaving}
@@ -115,7 +101,7 @@
   {/if}
 
   <p class="mt-6">
-    <Button variant="link" size="sm" onclick={() => goto("/")}>
+    <Button variant="link" size="sm" disabled={isSaving} onclick={() => goto("/")}>
       Back to app
     </Button>
   </p>

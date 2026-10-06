@@ -48,7 +48,7 @@ pub struct OnboardingState {
     pub complete: bool,
     /// True when a credential (API key or OAuth) already exists.
     pub authenticated: bool,
-    /// Gates the Inbox nav item: true once receiving is set up.
+    /// Legacy delivery flag; does not gate access to account history.
     #[serde(default)]
     pub inbox_enabled: bool,
 }
@@ -74,7 +74,7 @@ pub fn get_onboarding_state(app: AppHandle<Wry>, account_id: String) -> Result<O
     })
 }
 
-/// Gates the Inbox nav item; updated by the receiving setup flow.
+/// Legacy delivery observation, independent of access to inbox history.
 #[tauri::command]
 pub fn set_inbox_enabled(app: AppHandle<Wry>, account_id: String, enabled: bool) -> Result<(), String> {
     write_scoped(&app, &account_id, INBOX_ENABLED_KEY, json!(enabled))
@@ -128,6 +128,28 @@ pub fn get_active_domain(app: AppHandle<Wry>, account_id: String) -> Result<Opti
 #[tauri::command]
 pub fn get_selected_domain(app: AppHandle<Wry>, account_id: String) -> Result<Option<String>, String> {
     load_selected_domain(&app, &account_id)
+}
+
+/* ---------------------------------------------------------
+ * Domain inclusion (local setup preference, never a remote mail filter)
+ * --------------------------------------------------------- */
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomainPreferences {
+    pub included_domain_ids: Vec<String>,
+}
+
+#[tauri::command]
+pub fn get_domain_preferences(app: AppHandle<Wry>, account_id: String) -> Result<Option<DomainPreferences>, String> {
+    let key = scoped_key(&app, &account_id, "domain_preferences")?;
+    read_typed(&app, STORE_FILE, &key, "domain preferences")
+}
+
+#[tauri::command]
+pub fn save_domain_preferences(app: AppHandle<Wry>, account_id: String, preferences: DomainPreferences) -> Result<(), String> {
+    // Persist the entire selection, including an intentionally empty one.
+    // Unknown/deleted IDs remain available for review, never mapped by name.
+    write_scoped(&app, &account_id, "domain_preferences", json!(preferences))
 }
 
 /* ---------------------------------------------------------

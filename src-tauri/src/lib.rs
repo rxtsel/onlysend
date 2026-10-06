@@ -87,6 +87,8 @@ pub fn run() {
             oauth::disconnect_resend,
             permissions::probe_full_access,
             email::send_email,
+            infrastructure::settings_store::get_domain_preferences,
+            infrastructure::settings_store::save_domain_preferences,
             domains::list_domains,
             domains::create_domain,
             domains::delete_domain,

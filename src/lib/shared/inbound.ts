@@ -6,8 +6,10 @@ export interface InboundEmail {
   to: string[];
   subject: string;
   createdAt: string;
-  /** Recipient domain, derived from the addresses. */
+  /** First envelope recipient domain, kept for compatibility. */
   domain: string;
+  /** All envelope recipient domains; never derived from the sender. */
+  domains: string[];
 }
 
 export interface InboundAttachment {
@@ -17,7 +19,7 @@ export interface InboundAttachment {
   size: number | null;
 }
 
-export interface InboundEmailDetail extends InboundEmail {
+export interface InboundEmailDetail extends Omit<InboundEmail, "domain" | "domains"> {
   /** Sanitized HTML body, rendered inside a sandboxed iframe. */
   html: string | null;
   text: string | null;

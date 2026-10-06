@@ -32,8 +32,8 @@
 
   let name = $state("");
   let region = $state("us-east-1");
-  // Inbox is ON by default: receiving gets enabled at creation time.
-  let inbox = $state(true);
+  // Receiving is an explicit remote action, never a side effect of inclusion.
+  let inbox = $state(false);
   let error = $state("");
 
   function handleSubmit(e: SubmitEvent) {
@@ -45,6 +45,7 @@
       return;
     }
 
+    if (inbox && !window.confirm("Changing MX records can redirect incoming email away from your current provider. Create this domain with receiving enabled?")) return;
     onCreate({ name: clean, region, enableReceiving: inbox }).catch(
       () => {}, // parent toasts API failures
     );
@@ -96,7 +97,8 @@
       <div class="min-w-0 flex-1">
         <p class="text-sm font-medium">Inbox (receiving)</p>
         <p class="text-xs text-muted-foreground">
-          Adds an MX record so this domain can receive email in OnlySend.
+          Adds a receiving MX record. Changing MX at your DNS provider can
+          redirect incoming email away from your current provider.
         </p>
       </div>
       <Switch bind:checked={inbox} />

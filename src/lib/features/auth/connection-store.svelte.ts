@@ -1,7 +1,6 @@
 import {
     connectResend,
     getConnectionStatus,
-    getOnboardingState,
     type ConnectionMethod,
 } from "@/lib/shared/api/auth";
 import { getActiveDomain } from "@/lib/shared/api/domains";
@@ -18,19 +17,16 @@ export class ConnectionStore {
     constructor(readonly accountId: string) {}
     status = $state<{ method: ConnectionMethod }>({ method: null });
     activeDomain = $state<string | null>(null);
-    inboxEnabled = $state(false);
     isConnecting = $state(false);
     isDisconnecting = $state(false);
 
     async load(): Promise<void> {
-        const [domain, status, onboarding] = await Promise.all([
+        const [domain, status] = await Promise.all([
             getActiveDomain(this.accountId),
             getConnectionStatus(this.accountId),
-            getOnboardingState(this.accountId),
         ]);
         this.activeDomain = domain;
         this.status = status;
-        this.inboxEnabled = onboarding.inboxEnabled;
     }
 
     async connect(): Promise<ActionResult> {

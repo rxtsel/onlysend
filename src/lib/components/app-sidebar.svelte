@@ -10,7 +10,6 @@
   import { useAccountId } from "$lib/features/auth/account-context";
   import { mailUrl } from "$lib/features/auth/mail-routes";
   const accountId = useAccountId();
-  const inboundStatus = getInboundStatus(accountId);
     import NavUser from "./nav-user.svelte";
     import { useSidebar } from "@/lib/components/ui/sidebar/context.svelte.js";
     import * as Sidebar from "@/lib/components/ui/sidebar/index.js";
@@ -30,19 +29,11 @@
         listInboundEmails,
         markInboundRead,
     } from "../shared/inbound";
-    import { getOnboardingState } from "@/lib/shared/api/auth";
     import EmailListItem from "@/lib/features/inbox/components/email-list-item.svelte";
 import { authErrorToast, isAuthError } from "@/lib/shared/services/auth-toast.svelte";
 import { errorMessage } from "@/lib/shared/utils/errors";
     import { createEmailList } from "../shared/email-list.svelte";
-    import { getInboundStatus } from "../shared/inbound-status.svelte";
-
-    // Live update when receiving becomes verified anywhere in the app.
-    $effect(() => {
-      if (inboundStatus.ready && !inboxEnabled) {
-        inboxEnabled = true;
-      }
-    });
+    import { mailDomains } from "$lib/shared/mail-domains";
 
     let {
         ref = $bindable(null),
@@ -74,12 +65,6 @@ import { errorMessage } from "@/lib/shared/utils/errors";
     const POLL_INTERVAL_MS = 60_000;
 
     /* ---------------------------------------------------------
-     * INBOX VISIBILITY (persisted flag, updated by observation
-     * points in the wizard / inbox setup flow)
-     * --------------------------------------------------------- */
-    let inboxEnabled = $state(false);
-
-    /* ---------------------------------------------------------
      * DOMAIN FILTER (unified views, client-side filtering)
      * --------------------------------------------------------- */
     let domainFilter = $state<"all" | string>("all");
@@ -89,8 +74,7 @@ import { errorMessage } from "@/lib/shared/utils/errors";
     }
 
     function domainOf(mail: InboundEmail | SentEmail): string {
-        if ("domain" in mail) return mail.domain;
-        return mail.from.split("@")[1]?.toLowerCase() ?? "";
+        return mailDomains(mail).join(", ");
     }
     const sentList = createEmailList<SentEmail>((limit, offset) =>
         listSentEmails(accountId, limit, offset, true),
@@ -108,8 +92,7 @@ import { errorMessage } from "@/lib/shared/utils/errors";
     const activeDomains = $derived.by(() => {
         const set = new Set<string>();
         for (const mail of activeList.items as (InboundEmail | SentEmail)[]) {
-            const d = domainOf(mail);
-            if (d) set.add(d);
+            for (const domain of mailDomains(mail)) set.add(domain);
         }
         return [...set].sort();
     });
@@ -118,13 +101,12 @@ import { errorMessage } from "@/lib/shared/utils/errors";
         domainFilter === "all"
             ? (activeList.items as (InboundEmail | SentEmail)[])
             : (activeList.items as (InboundEmail | SentEmail)[]).filter(
-                  (mail) => domainOf(mail) === domainFilter,
+                  (mail) => mailDomains(mail).includes(domainFilter),
               ),
     );
 
-    // Load each list once when its mode becomes active. The inbox list
-    // only fetches once receiving is ready (the root page owns that
-    // state); before that it stays empty and error-free.
+    // History belongs to the account. DNS readiness only controls new
+    // delivery, never access to previously received messages.
     let lastLoadContext = "";
     let disposed = false;
 
@@ -134,21 +116,14 @@ import { errorMessage } from "@/lib/shared/utils/errors";
         inboxList.clearItems();
     });
 
-    // Only mode/readiness drive loading. Never subscribe this effect to list
-    // items or loading flags: an empty inbox is a valid completed response.
+    // Only mode drives loading, not items or flags (empty history is valid).
     $effect(() => {
         const currentMode = mode;
-        const ready = currentMode !== "inbox" || inboundStatus.ready;
         untrack(() => {
-            const context = `${currentMode}:${ready}`;
-            if (context === lastLoadContext) return;
-            lastLoadContext = context;
+            if (currentMode === lastLoadContext) return;
+            lastLoadContext = currentMode;
             domainFilter = "all";
             const list = currentMode === "inbox" ? inboxList : sentList;
-            if (!ready) {
-                list.markLoaded();
-                return;
-            }
             void list.refresh().catch((err) => {
                 if (disposed) return;
                 if (isAuthError(err)) authErrorToast(err);
@@ -158,15 +133,14 @@ import { errorMessage } from "@/lib/shared/utils/errors";
     });
 
     async function handleRefresh() {
-        if (mode === "inbox" && !inboundStatus.ready) {
-            toast.info("Enable receiving first to get email into OnlySend.");
-            return;
-        }
-
+        const currentMode = mode;
+        const list = activeList;
         try {
-            await activeList.refresh();
+            await list.refresh();
+            if (disposed || mode !== currentMode) return;
             toast.success("Emails refreshed");
         } catch (err) {
+            if (disposed || mode !== currentMode) return;
             if (isAuthError(err)) {
                 authErrorToast(err);
             } else {
@@ -176,7 +150,9 @@ import { errorMessage } from "@/lib/shared/utils/errors";
     }
 
     function handleLoadMore() {
-        activeList.loadMore();
+        void activeList.loadMore().catch((err) => {
+            if (!disposed) toast.error(errorMessage(err, "Failed to load emails"));
+        });
     }
 
     /* ---------------------------------------------------------
@@ -186,25 +162,12 @@ import { errorMessage } from "@/lib/shared/utils/errors";
 
     onMount(async () => {
         try {
-            const [ids, state] = await Promise.all([
-                getReadInboundIds(accountId),
-                getOnboardingState(accountId),
-            ]);
+            const ids = await getReadInboundIds(accountId);
             if (disposed) return;
             readIds = new Set(ids);
-            inboxEnabled = state.inboxEnabled;
         } catch (err) {
             console.error("Error loading inbox markers:", err);
         }
-    });
-
-    // Settings can flip this flag (Set up inbox flow); pick it up live.
-    onMount(() => {
-        const handleInboxEnabled = ((e: CustomEvent<boolean>) => {
-            inboxEnabled = e.detail;
-        }) as EventListener;
-        window.addEventListener("inbox-enabled-changed", handleInboxEnabled);
-        return () => window.removeEventListener("inbox-enabled-changed", handleInboxEnabled);
     });
 
     // Keep Inbox reachable even before receiving is configured for this
@@ -227,7 +190,6 @@ import { errorMessage } from "@/lib/shared/utils/errors";
             if (
                 mode !== "inbox" ||
                 document.hidden ||
-                !inboundStatus.ready ||
                 disposed
             )
                 return;
@@ -349,7 +311,8 @@ import { errorMessage } from "@/lib/shared/utils/errors";
             </div>
 
             {#if activeDomains.length > 1}
-                <!-- DOMAIN FILTER CHIPS -->
+                <!-- Temporary filter over loaded pages, not setup inclusion. -->
+                <p class="text-xs text-muted-foreground">Filter loaded messages; load more to include older history.</p>
                 <div class="flex flex-wrap gap-1.5">
                     <button
                         onclick={() => (domainFilter = "all")}
@@ -400,6 +363,9 @@ import { errorMessage } from "@/lib/shared/utils/errors";
                             {/if}
                         </div>
                     {:else}
+                        {#if visibleItems.length === 0}
+                            <p class="p-4 text-sm text-muted-foreground">No matching messages in the loaded pages.</p>
+                        {/if}
                         {#each visibleItems as mail (mail.id)}
                             <EmailListItem
                                 mail={mail}

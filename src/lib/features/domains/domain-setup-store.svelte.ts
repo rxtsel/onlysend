@@ -1,211 +1,196 @@
 import {
-    createDomain,
-    deleteDomain,
-    getDomain,
-    listDomains,
-    setDomainReceiving,
-    verifyDomain,
-    type DomainDetail,
-    type DomainSummary,
-} from "@/lib/shared/api/domains";
-import { setInboxEnabled } from "@/lib/shared/api/auth";
-import type { DomainSummary as _DomainSummary } from "@/lib/shared/api/domains";
+  createDomain, deleteDomain, getDomain, listDomains, setDomainReceiving,
+  verifyDomain, type DomainDetail, type DomainSummary,
+} from "$lib/shared/api/domains";
+
+import { queueDomainRequest } from "./domain-requests";
+import { errorMessage } from "$lib/shared/utils/errors";
 
 const POLL_INTERVAL_MS = 5000;
 const POLL_MAX_ATTEMPTS = 60;
 
-/** A domain is selectable once sending works for it. */
-export function canSelect(d: DomainSummary): boolean {
-    return d.status === "verified" || d.capabilities?.sending === "enabled";
+export function canSelect(domain: DomainSummary): boolean {
+  return domain.status === "verified" || domain.capabilities?.sending === "enabled";
 }
-
-/** Every listed record reached a green terminal status. */
-export function allGreen(d: DomainDetail): boolean {
-    return (
-        d.records.length > 0 &&
-        d.records.every((r) => r.status === "verified")
-    );
+export function allGreen(domain: DomainDetail): boolean {
+  return domain.records.length > 0 && domain.records.every((record) => record.status === "verified");
 }
-
-/**
- * Continue routes through DNS whenever something is pending: unverified
- * records or receiving not enabled yet. Fully-green domains skip.
- */
-export function needsDns(d: DomainDetail): boolean {
-    return d.status !== "verified" || !allGreen(d) || d.capabilities.receiving !== "enabled";
+/** Delivery may still be pending even when the aggregate sending status is verified. */
+export function dnsVerificationPending(domain: DomainDetail): boolean {
+  return domain.status !== "verified" || domain.records.some((record) =>
+    record.status !== "verified" && !(
+      (record.group === "Receiving" || record.group === "Receiving MX") &&
+      domain.capabilities.receiving !== "enabled"
+    ));
 }
-
+export function needsDns(domain: DomainDetail): boolean {
+  return domain.status !== "verified" || !allGreen(domain) || domain.capabilities.receiving !== "enabled";
+}
+export function sendingReady(domain: DomainSummary): boolean {
+  if (domain.capabilities?.sending !== "enabled") return false;
+  if ("records" in domain) {
+    const records = (domain as DomainDetail).records.filter((record) =>
+      record.group !== "Receiving" && record.group !== "Receiving MX");
+    return records.length > 0 && records.every((record) => record.status === "verified");
+  }
+  return domain.status === "verified";
+}
 export type { DomainSummary };
 
+/** Each expanded panel owns an instance: no shared current-domain singleton. */
 export class DomainSetupStore {
-    constructor(readonly accountId: string) {}
-    domains = $state<DomainSummary[]>([]);
-    isLoading = $state(true);
-    /** Name + Resend id of the currently selected domain. */
-    selectedName = $state("");
-    selectedId = $state("");
+  constructor(readonly accountId: string) {}
+  domains = $state<DomainSummary[]>([]);
+  isLoading = $state(true);
+  selectedName = $state("");
+  selectedId = $state("");
+  setupDetail = $state<DomainDetail | null>(null);
+  verified = $state(false);
+  isCreating = $state(false);
+  isVerifying = $state(false);
+  isDeleting = $state(false);
+  isTogglingReceiving = $state(false);
+  isPolling = $state(false);
+  pollingTimedOut = $state(false);
+  pollingError = $state<string | null>(null);
+  #revision = 0;
+  #listRequest = 0;
+  #disposed = false;
+  #pollTimer: ReturnType<typeof setTimeout> | undefined;
+  #pollAttempts = 0;
 
-    setupDetail = $state<DomainDetail | null>(null);
-    verified = $state(false);
+  get activeList() { return this.domains; }
+  #current(revision: number, id?: string): boolean {
+    return !this.#disposed && revision === this.#revision && (!id || this.setupDetail?.id === id);
+  }
 
-    isCreating = $state(false);
-    isVerifying = $state(false);
-    isDeleting = $state(false);
-    isTogglingReceiving = $state(false);
-
-    #pendingFlow: {
-        state: string;
-        codeVerifier: string;
-    } | null = null;
-
-    #pollTimer: ReturnType<typeof setInterval> | undefined = undefined;
-    #pollAttempts = 0;
-
-    get activeList() {
-        return this.domains;
+  async load(): Promise<void> {
+    const request = ++this.#listRequest;
+    this.isLoading = true;
+    try {
+      const domains = await listDomains(this.accountId);
+      if (!this.#disposed && request === this.#listRequest) this.domains = domains;
+    } finally {
+      if (!this.#disposed && request === this.#listRequest) this.isLoading = false;
     }
+  }
+  select(name: string, id: string): void { this.selectedName = name; this.selectedId = id; }
+  resetSetup(): void {
+    this.stopWork();
+    this.setupDetail = null;
+    this.verified = false;
+  }
 
-    async load(): Promise<void> {
-        this.isLoading = true;
-        try {
-            this.domains = await listDomains(this.accountId);
-        } finally {
-            this.isLoading = false;
-        }
+  async create(options: { name: string; region: string; enableReceiving: boolean }): Promise<void> {
+    if (this.isCreating || this.#disposed) return;
+    this.stopWork();
+    const revision = this.#revision;
+    this.isCreating = true;
+    try {
+      const created = await createDomain(this.accountId, options);
+      if (!this.#current(revision)) return;
+      this.applyDetail(created);
+      this.select(created.name, created.id);
+    } finally { this.isCreating = false; }
+  }
+
+  /** Reading a panel never triggers remote verification or enables receiving. */
+  async loadFresh(id: string): Promise<{ detail: DomainDetail; needsDns: boolean }> {
+    this.stopWork();
+    const revision = this.#revision;
+    const detail = await queueDomainRequest(() => getDomain(this.accountId, id));
+    if (this.#current(revision) && detail.id === id) {
+      this.applyDetail(detail);
+      if (dnsVerificationPending(detail)) this.#startPolling(revision, id);
     }
-
-    select(name: string, id: string) {
-        this.selectedName = name;
-        this.selectedId = id;
-    }
-
-    /** Clears the setup detail so the create form shows again. */
-    resetSetup() {
-        this.setupDetail = null;
-        this.verified = false;
-    }
-
-    /**
-     * Loads fresh detail for an existing domain id and reports whether the
-     * DNS view should be shown (something pending).
-     */
-
-    async create(options: {
-        name: string;
-        region: string;
-        enableReceiving: boolean;
-    }): Promise<void> {
-        this.isCreating = true;
-        try {
-            const created = await createDomain(this.accountId, options);
-            this.applyDetail(created);
-            this.selectedName = created.name;
-        } finally {
-            this.isCreating = false;
-        }
-    }
-
-    /** Loads fresh detail for an existing domain and reports pending state. */
-    async loadFresh(id: string): Promise<{ detail: DomainDetail; needsDns: boolean }> {
-        const detail = await getDomain(this.accountId, id);
+    return { detail, needsDns: needsDns(detail) };
+  }
+  async remove(id: string): Promise<boolean> {
+    this.isDeleting = true;
+    try { return await deleteDomain(this.accountId, id); }
+    finally { this.isDeleting = false; }
+  }
+  async verify(): Promise<void> {
+    if (!this.setupDetail || this.isVerifying || this.isTogglingReceiving || this.#disposed) return;
+    this.stopWork();
+    const revision = this.#revision;
+    const id = this.setupDetail.id;
+    this.isVerifying = true;
+    try {
+      const detail = await queueDomainRequest(() => this.#current(revision, id)
+        ? verifyDomain(this.accountId, id) : Promise.resolve(undefined));
+      if (!detail || !this.#current(revision, id) || detail.id !== id) return;
+      this.applyDetail(detail);
+      if (dnsVerificationPending(detail)) this.#startPolling(revision, id);
+    } finally { this.isVerifying = false; }
+  }
+  async toggleReceiving(enable: boolean): Promise<void> {
+    if (!this.setupDetail || this.isTogglingReceiving || this.isVerifying || this.#disposed) return;
+    this.stopWork();
+    const revision = this.#revision;
+    const id = this.setupDetail.id;
+    this.isTogglingReceiving = true;
+    try {
+      const detail = await queueDomainRequest(() => this.#current(revision, id)
+        ? setDomainReceiving(this.accountId, id, enable) : Promise.resolve(undefined));
+      if (detail && this.#current(revision, id) && detail.id === id) {
         this.applyDetail(detail);
-        const dns = needsDns(detail);
-        if (dns) this.maybeAutoVerify();
-        return { detail, needsDns: dns };
-    }
-
-    async remove(id: string): Promise<boolean> {
-        this.isDeleting = true;
-        try {
-            return await deleteDomain(this.accountId, id);
-        } finally {
-            this.isDeleting = false;
+        if (dnsVerificationPending(detail)) this.#startPolling(revision, id);
+      }
+    } finally { this.isTogglingReceiving = false; }
+  }
+  stopWork(): void {
+    this.#revision += 1;
+    this.#stopPolling();
+    this.pollingTimedOut = false;
+    this.pollingError = null;
+  }
+  dispose(): void { this.#disposed = true; this.stopWork(); this.#listRequest += 1; }
+  markLoaded(): void { this.isLoading = false; }
+  applyDetail(detail: DomainDetail | null | undefined): void {
+    if (!detail || this.#disposed) return;
+    this.setupDetail = detail;
+    this.verified = allGreen(detail);
+    this.pollingError = null;
+    this.pollingTimedOut = false;
+    if (!dnsVerificationPending(detail)) this.#stopPolling();
+  }
+  #startPolling(revision: number, id: string): void {
+    this.#stopPolling();
+    this.#pollAttempts = 0;
+    this.isPolling = true;
+    const poll = async () => {
+      if (!this.#current(revision, id)) return;
+      this.#pollTimer = undefined;
+      this.#pollAttempts += 1;
+      try {
+        const fresh = await queueDomainRequest(() => this.#current(revision, id)
+          ? getDomain(this.accountId, id) : Promise.resolve(undefined));
+        if (!fresh || !this.#current(revision, id)) return;
+        if (fresh.id !== id) {
+          this.pollingError = "Could not refresh this domain: unexpected domain response";
+          this.#stopPolling();
+          return;
         }
-    }
-
-    async verify(): Promise<void> {
-        if (!this.setupDetail || this.isVerifying) return;
-
-        try {
-            this.isVerifying = true;
-            this.applyDetail(await verifyDomain(this.accountId, this.setupDetail.id));
-            this.#startPolling();
-        } finally {
-            this.isVerifying = false;
-        }
-    }
-
-    async toggleReceiving(enable: boolean): Promise<void> {
-        if (!this.setupDetail || this.isTogglingReceiving) return;
-
-        try {
-            this.isTogglingReceiving = true;
-            this.applyDetail(await setDomainReceiving(this.accountId, this.setupDetail.id, enable));
-        } finally {
-            this.isTogglingReceiving = false;
-        }
-    }
-
-    stopWork() {
+        this.applyDetail(fresh);
+      } catch (error) {
+        if (!this.#current(revision, id)) return;
+        this.pollingError = errorMessage(error, "Could not refresh DNS status");
+      }
+      if (!this.#current(revision, id) || !this.isPolling) return;
+      if (this.#pollAttempts >= POLL_MAX_ATTEMPTS) {
         this.#stopPolling();
-    }
-
-    /** Marks the list as initialized without fetching (error fallback). */
-    markLoaded() {
-        this.isLoading = false;
-    }
-
-    /**
-     * Replicates the dashboard refresh: re-trigger verification once when
-     * entering with pending records. Skipped for brand-new domains
-     * (nothing to verify until DNS records exist) and already-green ones.
-     */
-    maybeAutoVerify() {
-        if (
-            !this.setupDetail ||
-            this.verified ||
-            this.setupDetail.status === "not_started" ||
-            allGreen(this.setupDetail)
-        ) {
-            return;
-        }
-        this.verify();
-    }
-
-    applyDetail(detail: DomainDetail | undefined | null) {
-        if (!detail) return;
-        this.setupDetail = detail;
-        this.verified = allGreen(detail);
-
-        if (allGreen(detail)) {
-            this.#stopPolling();
-        }
-    }
-
-    #startPolling() {
-        this.#pollAttempts = 0;
-        this.stopWork();
-
-        this.#pollTimer = setInterval(async () => {
-            this.#pollAttempts += 1;
-            if (!this.setupDetail || this.#pollAttempts > POLL_MAX_ATTEMPTS) {
-                this.stopWork();
-                return;
-            }
-
-            try {
-                const fresh = await getDomain(this.accountId, this.setupDetail.id);
-                if (fresh) this.applyDetail(fresh);
-            } catch (err) {
-                console.error(err);
-            }
-        }, POLL_INTERVAL_MS);
-    }
-
-    #stopPolling() {
-        if (this.#pollTimer) {
-            clearInterval(this.#pollTimer);
-            this.#pollTimer = undefined;
-        }
-    }
+        this.pollingTimedOut = true;
+        return;
+      }
+      // Schedule after completion: a slow request cannot overlap the next one.
+      this.#pollTimer = setTimeout(poll, POLL_INTERVAL_MS);
+    };
+    this.#pollTimer = setTimeout(poll, POLL_INTERVAL_MS);
+  }
+  #stopPolling(): void {
+    if (this.#pollTimer !== undefined) clearTimeout(this.#pollTimer);
+    this.#pollTimer = undefined;
+    this.isPolling = false;
+  }
 }

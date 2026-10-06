@@ -68,6 +68,19 @@ export async function setDomainReceiving(
   });
 }
 
+export interface DomainPreferences {
+  includedDomainIds: string[];
+}
+
+/** Setup inclusion only: it never changes DNS, permissions, or mailbox history. */
+export async function getDomainPreferences(accountId: string): Promise<DomainPreferences | null> {
+  return await invoke("get_domain_preferences", { accountId });
+}
+
+export async function saveDomainPreferences(accountId: string, preferences: DomainPreferences): Promise<void> {
+  await invoke("save_domain_preferences", { accountId, preferences });
+}
+
 /* ---------------------------------------------------------
  * SELECTED DOMAIN
  * --------------------------------------------------------- */

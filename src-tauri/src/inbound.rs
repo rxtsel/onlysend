@@ -20,6 +20,8 @@ pub struct InboundEmailDto {
     pub created_at: String,
     /// Domain this email was addressed to (derived from the recipients).
     pub domain: String,
+    /// All envelope recipient domains, including unknown/deleted domains.
+    pub domains: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -98,17 +100,18 @@ async fn client(app: &AppHandle<Wry>, account_id: &str) -> Result<Resend, String
 
 /// Derives the recipient domain from the email's own addresses. Resend has
 /// no server-side domain filter, so the unified inbox carries this badge.
-fn derive_domain(email: &resend_rs::types::InboundEmail) -> String {
-    let candidate = email
-        .received_for
-        .first()
-        .or_else(|| email.to.first())
-        .map(String::as_str);
-
-    candidate
-        .and_then(|addr| addr.rsplit('@').next())
-        .unwrap_or("unknown")
-        .to_lowercase()
+fn recipient_domains(received_for: &[String], to: &[String]) -> Vec<String> {
+    let recipients = if received_for.is_empty() { to } else { received_for };
+    let mut domains = Vec::new();
+    for recipient in recipients {
+        if let Some((_, host)) = recipient.rsplit_once('@') {
+            let host = host.trim().trim_end_matches('>').to_lowercase();
+            if !host.is_empty() && !host.chars().any(char::is_whitespace) && !domains.contains(&host) {
+                domains.push(host);
+            }
+        }
+    }
+    domains
 }
 
 #[tauri::command]
@@ -135,13 +138,17 @@ pub async fn list_inbound_emails(
         .iter()
         .skip(off)
         .take(lim)
-        .map(|email| InboundEmailDto {
-            id: email.id.to_string(),
-            from: email.from.clone(),
-            to: email.to.clone(),
-            subject: email.subject.clone(),
-            created_at: email.created_at.clone(),
-            domain: derive_domain(email),
+        .map(|email| {
+            let domains = recipient_domains(&email.received_for, &email.to);
+            InboundEmailDto {
+                id: email.id.to_string(),
+                from: email.from.clone(),
+                to: email.to.clone(),
+                subject: email.subject.clone(),
+                created_at: email.created_at.clone(),
+                domain: domains.first().cloned().unwrap_or_else(|| "unknown".into()),
+                domains,
+            }
         })
         .collect();
 
@@ -175,7 +182,18 @@ pub async fn get_inbound_email(
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize_email_html;
+    use super::{sanitize_email_html, recipient_domains};
+
+    #[test]
+    fn receiving_domains_use_every_envelope_recipient_not_sender_or_header() {
+        let envelope = vec!["one@a.example".into(), "Two <two@B.example>".into(), "again@a.example".into()];
+        let header = vec!["other@c.example".into()];
+        assert_eq!(recipient_domains(&envelope, &header), vec!["a.example", "b.example"]);
+        assert_eq!(recipient_domains(&[], &header), vec!["c.example"]);
+        assert!(recipient_domains(&["invalid".into()], &header).is_empty());
+        assert!(recipient_domains(&[], &[]).is_empty());
+    }
+
 
     #[test]
     fn strips_script_tags_and_content() {

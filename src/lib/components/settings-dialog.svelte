@@ -3,13 +3,16 @@
   import * as Dialog from "@/lib/components/ui/dialog";
   import * as Sidebar from "@/lib/components/ui/sidebar";
   import { Button } from "@/lib/components/ui/button";
-  import { Mail, Settings, Plug } from "@lucide/svelte";
+  import { Mail, Settings, Plug, Globe } from "@lucide/svelte";
+  import SettingsDomains from "$lib/features/domains/components/settings-domains.svelte";
+  import * as Select from "$lib/components/ui/select";
   import SettingsSenderOptions from "@/lib/features/sending/components/settings-sender-options.svelte";
   import SettingsConnection from "@/lib/features/auth/components/settings-connection.svelte";
 
   const nav = [
     { name: "Sender options", icon: Mail },
     { name: "Connection", icon: Plug },
+    { name: "Domains & receiving", icon: Globe },
   ];
 
   let open = $state(false);
@@ -18,7 +21,8 @@
   // Other components can request the dialog programmatically:
   //   window.dispatchEvent(new CustomEvent("open-settings", { detail: { section: "Connection" } }))
   function handleOpenSettings(e: Event) {
-    const section = (e as CustomEvent<{ section?: string }>).detail?.section;
+    const requested = (e as CustomEvent<{ section?: string }>).detail?.section;
+    const section = requested === "Domains" ? "Domains & receiving" : requested;
     if (section && nav.some((item) => item.name === section)) {
       activeItem = section;
     }
@@ -83,7 +87,8 @@
         <header
           class="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
         >
-          <div class="flex items-center gap-2 px-4">
+          <div class="flex min-w-0 flex-1 items-center gap-2 px-4">
+            <div class="hidden md:block">
             <Breadcrumb.Root>
               <Breadcrumb.List>
                 <Breadcrumb.Item class="hidden md:block">
@@ -95,13 +100,26 @@
                 </Breadcrumb.Item>
               </Breadcrumb.List>
             </Breadcrumb.Root>
+            </div>
+            <div class="min-w-0 w-full md:hidden">
+              <Select.Root type="single" bind:value={activeItem}>
+                <Select.Trigger aria-label="Settings section">{activeItem}</Select.Trigger>
+                <Select.Content>
+                  <Select.Group>
+                    {#each nav as item (item.name)}<Select.Item value={item.name}>{item.name}</Select.Item>{/each}
+                  </Select.Group>
+                </Select.Content>
+              </Select.Root>
+            </div>
           </div>
         </header>
-        <div class="flex flex-1 flex-col gap-4 overflow-y-auto p-4 pt-0 mr-7">
+        <div class="flex flex-1 flex-col gap-4 overflow-y-auto p-4 pt-0">
           {#if activeItem === "Sender options"}
             <SettingsSenderOptions />
           {:else if activeItem === "Connection"}
             <SettingsConnection onRequestClose={() => (open = false)} />
+          {:else if activeItem === "Domains & receiving"}
+            <SettingsDomains />
           {/if}
         </div>
       </main>

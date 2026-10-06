@@ -5,17 +5,18 @@
   let accountId = $state("");
   provideAccount(() => accountId);
   import { goto } from "$app/navigation";
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { fade, fly } from "svelte/transition";
 
   import { getOnboardingState, markSetupComplete } from "@/lib/shared/api/auth";
-import { getSelectedDomain, saveSelectedDomain } from "@/lib/shared/api/domains";
+import { getSelectedDomain, type DomainSummary } from "@/lib/shared/api/domains";
+  import { finishAccountSetup } from "$lib/features/setup/finish-account-setup";
   import Logo from "@/lib/components/logo.svelte";
 
   import { toast } from "svelte-sonner";
 
   import { Skeleton } from "@/lib/components/ui/skeleton";
-  import { createFromEmail, listFromEmails } from "@/lib/shared/from-emails";
+  import { listFromEmails } from "@/lib/shared/from-emails";
   import StepConnect from "@/lib/features/setup/components/step-connect.svelte";
   import StepDomains from "@/lib/features/setup/components/step-domains.svelte";
   import StepFromEmails from "@/lib/features/setup/components/step-from-emails.svelte";
@@ -39,9 +40,12 @@ import { getSelectedDomain, saveSelectedDomain } from "@/lib/shared/api/domains"
 
   let apiKeyValue = $state("");
   let selectedDomain = $state("");
+  let selectedDomains = $state<DomainSummary[]>([]);
   let emailOptions = $state<{ label: string; address: string }[]>([]);
 
   const animator = createViewAnimator();
+  let disposed = false;
+  onDestroy(() => { disposed = true; });
 
   const HEADERS: Record<1 | 2 | 3, { title: string; subtitle: string }> = {
     1: {
@@ -49,8 +53,8 @@ import { getSelectedDomain, saveSelectedDomain } from "@/lib/shared/api/domains"
       subtitle: "Connect your Resend account to get started.",
     },
     2: {
-      title: "Choose a domain",
-      subtitle: "Pick the domain you will send emails from.",
+      title: "Choose domains",
+      subtitle: "Include domains for this account. Configure DNS now or later.",
     },
     3: {
       title: "Email Options",
@@ -65,9 +69,11 @@ import { getSelectedDomain, saveSelectedDomain } from "@/lib/shared/api/domains"
     isChecking = true;
     try {
       const accounts = await listAccounts();
+      if (disposed) return;
       accountId = (accounts.find((a) => a.isActive) ?? accounts[0])?.id ?? "";
       if (!accountId) return;
       const state = await getOnboardingState(accountId);
+      if (disposed) return;
 
       if (state.complete && state.authenticated) {
         goto(mailUrl(accountId, "sent"));
@@ -88,7 +94,7 @@ import { getSelectedDomain, saveSelectedDomain } from "@/lib/shared/api/domains"
    * STEP HANDLERS
    * --------------------------------------------------------- */
   async function switchStep(to: 1 | 2 | 3) {
-    if (to === step) return;
+    if (to === step || isSaving || disposed) return;
     direction = to > step ? "forward" : "back";
     await animator.transition(`step-${to}`, () => {
       step = to;
@@ -107,21 +113,23 @@ import { getSelectedDomain, saveSelectedDomain } from "@/lib/shared/api/domains"
     accountId = id;
     try {
       const [emails, savedDomain] = await Promise.all([
-        listFromEmails(accountId),
-        getSelectedDomain(accountId),
+        listFromEmails(id),
+        getSelectedDomain(id),
       ]);
 
+      if (disposed || accountId !== id) return;
       if (emails.length > 0 && savedDomain) {
         selectedDomain = savedDomain;
-        await markSetupComplete(accountId);
+        await markSetupComplete(id);
+        if (disposed || accountId !== id) return;
         toast.success("Welcome back!");
-        goto(mailUrl(accountId, "sent"));
+        goto(mailUrl(id, "sent"));
         return;
       }
     } catch (err) {
       console.error(err);
     }
-    nextStep();
+    if (!disposed && accountId === id) nextStep();
   }
 
   function prevStep() {
@@ -129,26 +137,16 @@ import { getSelectedDomain, saveSelectedDomain } from "@/lib/shared/api/domains"
   }
 
   async function finish() {
-    if (emailOptions.length === 0) return;
-
+    if (isSaving || disposed) return;
+    const owner = accountId;
     try {
       isSaving = true;
-
-      await Promise.all([
-        saveSelectedDomain(accountId, selectedDomain),
-        markSetupComplete(accountId),
-        ...emailOptions.map((opt, i) =>
-          createFromEmail(accountId, {
-            label: opt.label,
-            address: opt.address,
-            isDefault: i === 0,
-          }),
-        ),
-      ]);
-
+      await finishAccountSetup(owner, emailOptions, selectedDomain);
+      if (disposed || accountId !== owner) return;
       toast.success("Setup complete! Welcome to OnlySend");
-      goto(mailUrl(accountId, "sent"));
+      goto(mailUrl(owner, "sent"));
     } catch (err) {
+      if (disposed || accountId !== owner) return;
       console.error(err);
       toast.error("Failed to save. Try again.");
     } finally {
@@ -215,7 +213,7 @@ import { getSelectedDomain, saveSelectedDomain } from "@/lib/shared/api/domains"
           in:fly={direction === "forward" ? SLIDE_IN : SLIDE_BACK_IN}
           out:fly={direction === "forward" ? SLIDE_OUT : SLIDE_BACK_OUT}
         >
-          <StepDomains bind:domain={selectedDomain} onContinue={nextStep} />
+          <StepDomains bind:domain={selectedDomain} bind:selectedDomains onContinue={nextStep} />
         </div>
 
       <!-- STEP 3: FROM EMAIL OPTIONS -->
@@ -229,6 +227,7 @@ import { getSelectedDomain, saveSelectedDomain } from "@/lib/shared/api/domains"
           <StepFromEmails
             bind:options={emailOptions}
             domain={selectedDomain}
+            domains={selectedDomains}
             onBack={prevStep}
             onFinish={finish}
             {isSaving}

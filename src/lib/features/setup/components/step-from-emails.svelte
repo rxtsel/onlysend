@@ -1,5 +1,8 @@
 <script lang="ts">
   import { toast } from "svelte-sonner";
+  import type { DomainSummary } from "$lib/shared/api/domains";
+  import { sendingReady } from "$lib/features/domains/domain-setup-store.svelte";
+  import * as Select from "$lib/components/ui/select";
 
   import { emailOptionSchema } from "@/lib/schemas/email-option.schema";
   import { stripAt } from "@/lib/shared/email";
@@ -15,11 +18,29 @@
 
   let {
     domain = "",
+    domains = [],
     options = $bindable([]),
     onBack,
     onFinish,
     isSaving = false,
+  }: {
+    domain?: string;
+    domains?: DomainSummary[];
+    options?: { label: string; address: string }[];
+    onBack: () => void;
+    onFinish: () => void;
+    isSaving?: boolean;
   } = $props();
+
+  const readyDomains = $derived(domains.filter(sendingReady));
+  let senderDomain = $state("");
+  $effect(() => {
+    if (!readyDomains.some((item) => item.name === senderDomain))
+      senderDomain = readyDomains.find((item) => item.name === domain)?.name ?? readyDomains[0]?.name ?? "";
+  });
+  function supported(address: string): boolean {
+    return readyDomains.some((item) => item.name.toLowerCase() === address.split("@").at(-1)?.toLowerCase());
+  }
 
   let emailLabel = $state("");
   let emailAddress = $state("");
@@ -33,13 +54,16 @@
     const { local, typedDomain } = stripAt(emailAddress.trim());
     if (local) emailAddress = local;
 
-    if (typedDomain && domain && typedDomain !== domain.toLowerCase()) {
-      toast.info(
-        `Using your selected domain ${domain} instead of ${typedDomain}.`,
-      );
+    if (!senderDomain) return;
+    if (typedDomain && typedDomain !== senderDomain.toLowerCase()) {
+      toast.info(`Using your selected domain ${senderDomain} instead of ${typedDomain}.`);
     }
 
-    const fullAddress = `${local}@${domain}`;
+    const fullAddress = `${local}@${senderDomain}`;
+    if (options.some((option) => option.address.toLowerCase() === fullAddress.toLowerCase())) {
+      errors.address = "This sender is already listed";
+      return;
+    }
     const result = emailOptionSchema.safeParse({
       label: emailLabel,
       address: fullAddress,
@@ -66,8 +90,8 @@
     e.preventDefault();
     errors = {};
 
-    if (options.length === 0) {
-      errors.fromEmail = "Add at least one email option";
+    if (options.some((option) => !supported(option.address))) {
+      errors.fromEmail = "Remove senders from domains that are no longer included or ready";
       return;
     }
 
@@ -79,6 +103,24 @@
   <Field.Group>
     <Field.Field>
       <Field.Label>From Email Options</Field.Label>
+      <Field.Description>
+        First sender is the account default, not a mailbox filter. Identities are local;
+        they do not create remote inboxes. You can finish without a sender and add one later.
+      </Field.Description>
+      {#if readyDomains.length > 0}
+        <Select.Root type="single" bind:value={senderDomain}>
+          <Select.Trigger aria-label="Sending domain">{senderDomain}</Select.Trigger>
+          <Select.Content>
+            <Select.Group>
+              {#each readyDomains as item (item.id)}
+                <Select.Item value={item.name}>{item.name}</Select.Item>
+              {/each}
+            </Select.Group>
+          </Select.Content>
+        </Select.Root>
+      {:else}
+        <Field.Description>No included domains are ready for sending. Configure DNS later in Settings.</Field.Description>
+      {/if}
 
       <div class="flex flex-col gap-2 mb-3">
         <Input
@@ -94,7 +136,7 @@
             aria-invalid={!!errors.address}
           />
           <InputGroup.Addon align="inline-end">
-            <InputGroup.Text>@{domain}</InputGroup.Text>
+            <InputGroup.Text>@{senderDomain || "domain pending"}</InputGroup.Text>
           </InputGroup.Addon>
         </InputGroup.Root>
       </div>
@@ -110,10 +152,10 @@
       <EmailPreview
         label={emailLabel}
         localPart={previewLocal}
-        {domain}
+        domain={senderDomain}
       />
 
-      <Button type="button" class="w-full mb-4" onclick={addEmailOption}>
+      <Button type="button" class="w-full mb-4" disabled={!senderDomain || isSaving} onclick={addEmailOption}>
         Add email
       </Button>
 
@@ -131,10 +173,17 @@
               </Item.Media>
               <Item.Content>
                 <Item.Title>{opt.label}</Item.Title>
-                <Item.Description>{opt.address}</Item.Description>
+                <Item.Description>{opt.address}{i === 0 ? " · Default" : ""}</Item.Description>
+                {#if !supported(opt.address)}
+                  <Item.Description>Domain no longer included or ready; remove this sender or go back.</Item.Description>
+                {/if}
               </Item.Content>
               <Item.Actions>
-                <Button variant="destructive" size="icon-sm" title="Remove" onclick={() => removeOption(i)}>
+                {#if i > 0}
+                  <Button type="button" variant="ghost" size="sm" disabled={isSaving}
+                    onclick={() => { options = [opt, ...options.filter((_, index) => index !== i)]; }}>Set default</Button>
+                {/if}
+                <Button type="button" disabled={isSaving} variant="destructive" size="icon-sm" title="Remove" onclick={() => removeOption(i)}>
                   <Trash />
                 </Button>
               </Item.Actions>
@@ -152,11 +201,11 @@
     </Field.Field>
 
     <div class="flex gap-2">
-      <Button type="button" variant="outline" class="flex-1" onclick={onBack}>
+      <Button type="button" variant="outline" class="flex-1" disabled={isSaving} onclick={onBack}>
         <ArrowRight class="-rotate-180" /> Back
       </Button>
       <Button type="submit" class="flex-1" disabled={isSaving}>
-        {isSaving ? "Saving..." : "Finish"}
+        {isSaving ? "Saving..." : options.length ? "Finish" : "Finish without sender"}
       </Button>
     </div>
   </Field.Group>
