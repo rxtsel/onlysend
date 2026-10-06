@@ -78,11 +78,13 @@ jobs:
           - id: darwin-aarch64
             runner: macos-latest
             target: aarch64-apple-darwin
-            bundles: dmg
+            # The updater archive requires the app target, not only the DMG.
+            bundles: app,dmg
           - id: darwin-x86_64
             runner: macos-latest
             target: x86_64-apple-darwin
-            bundles: dmg
+            # The updater archive requires the app target, not only the DMG.
+            bundles: app,dmg
     runs-on: ${{ matrix.runner }}
     env:
       CARGO_PROFILE_RELEASE_OPT_LEVEL: '3'

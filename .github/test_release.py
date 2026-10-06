@@ -108,6 +108,35 @@ class StagingTests(unittest.TestCase):
                 with self.assertRaises(ValueError): release.stage(source, output, "linux-x86_64")
                 self.assertFalse(output.exists())
 
+    def test_macos_workflow_requests_both_app_and_dmg_targets(self):
+        workflow = (Path(__file__).parent / "workflows/release.yml").read_text()
+        for platform in ("darwin-aarch64", "darwin-x86_64"):
+            entry = workflow.split("- id: " + platform + "\n", 1)[1].split("\n          - id:", 1)[0].split("\n    runs-on:", 1)[0]
+            bundles = next(line.split(":", 1)[1].strip() for line in entry.splitlines() if line.strip().startswith("bundles:"))
+            self.assertEqual(set(bundles.split(",")), {"app", "dmg"})
+
+    def test_macos_archive_and_dmg_are_staged_from_their_separate_bundle_folders(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); source = root / "bundle"
+            (source / "macos/OnlySend.app/Contents/MacOS").mkdir(parents=True)
+            (source / "macos/OnlySend.app/Contents/MacOS/only-send").write_bytes(b"not uploaded separately")
+            (source / "macos/OnlySend.app.tar.gz").write_bytes(b"archive")
+            (source / "macos/OnlySend.app.tar.gz.sig").write_text("encoded-signature")
+            (source / "dmg").mkdir()
+            (source / "dmg/OnlySend.dmg").write_bytes(b"installer")
+            output = root / "upload"
+            release.stage(source, output, "darwin-aarch64")
+            self.assertEqual({file.name for file in output.iterdir()}, {"OnlySend.app.tar.gz", "OnlySend.app.tar.gz.sig", "OnlySend.dmg"})
+
+    def test_dmg_only_build_reports_missing_archive_with_a_useful_hint(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); source = root / "bundle/dmg"; source.mkdir(parents=True)
+            (source / "OnlySend.dmg").write_bytes(b"installer")
+            with self.assertRaisesRegex(ValueError, "--bundles app,dmg") as error:
+                release.stage(root / "bundle", root / "upload", "darwin-aarch64")
+            self.assertIn("dmg/OnlySend.dmg", str(error.exception))
+            self.assertFalse((root / "upload").exists())
+
     def test_stage_does_not_include_other_files_or_updater_secrets(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); self.fixtures(root)

@@ -95,7 +95,9 @@ def stage(source, output, platform):
     for suffix in required:
         matches = [file for file in source.rglob("*") if file.is_file() and not file.is_symlink() and file.name.endswith(suffix)]
         if len(matches) != 1 or matches[0].stat().st_size == 0:
-            raise ValueError(f"Expected exactly one nonempty {suffix} bundle for {platform}")
+            found = sorted(str(file.relative_to(source)) for file in source.rglob("*") if file.is_file() and not file.is_symlink())
+            hint = " Build macOS with --bundles app,dmg to generate the updater archive." if platform.startswith("darwin-") and suffix == ".app.tar.gz" else ""
+            raise ValueError(f"Expected exactly one nonempty {suffix} bundle for {platform}; matched {len(matches)}. Files found: {found}.{hint}")
         files.append(matches[0])
         if suffix == extension:
             signature = Path(str(matches[0]) + ".sig")
