@@ -8,9 +8,8 @@
   import { Button } from "@/lib/components/ui/button/index.js";
   import { goto } from "$app/navigation";
   import type { SentEmail } from "@/lib/types";
-  import { getSentEmail, isTemplateHtml } from "@/lib/shared/sent";
+  import { getSentEmail } from "@/lib/shared/sent";
   import { formatEmailDate } from "@/lib/shared/utils/dates";
-  import Editor from "@/lib/components/editor/editor.svelte";
   import { ArrowLeft, Loader } from "@lucide/svelte";
 
   let email = $state<SentEmail | null>(null);
@@ -119,11 +118,14 @@
     <!-- Email Content -->
     <div class="flex-1 overflow-y-auto">
       {#if email.html}
-        {#if isTemplateHtml(email.html)}
-          {@html email.html}
-        {:else}
-          <Editor content={email.html} editable={false} />
-        {/if}
+        <!-- Downloaded email HTML is untrusted content, not app markup. -->
+        <iframe
+          title="Email content"
+          sandbox=""
+          referrerpolicy="no-referrer"
+          class="w-full h-full min-h-[400px] border-0 bg-white"
+          srcdoc={email.html}
+        ></iframe>
       {:else}
         <div class="text-muted-foreground text-sm p-6">
           No content available
