@@ -23,12 +23,12 @@ jobs:
     env:
       RELEASE_VERSION: ${{ inputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - name: Require the stable branch
         run: test "$GITHUB_REF" = refs/heads/main
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Test release helpers
@@ -52,9 +52,10 @@ jobs:
           git add package.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json CHANGELOG.md
           git diff --cached --binary > "$RUNNER_TEMP/release.patch"
           echo "tree=$(git write-tree)" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: release-source
+          if-no-files-found: error
           path: |
             ${{ runner.temp }}/release.patch
             ${{ runner.temp }}/notes.md
@@ -92,8 +93,8 @@ jobs:
       CARGO_PROFILE_RELEASE_INCREMENTAL: 'false'
       CARGO_PROFILE_RELEASE_PANIC: unwind
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
         with:
           name: release-source
           path: ${{ runner.temp }}/release-source
@@ -114,7 +115,7 @@ jobs:
             echo 'Configure TAURI_UPDATER_PUBLIC_KEY and TAURI_SIGNING_PRIVATE_KEY before releasing.' >&2
             exit 1
           fi
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Create public release configuration
@@ -157,8 +158,13 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "${{ runner.temp }}/release-config.json"
-          uploadWorkflowArtifacts: true
-          workflowArtifactNamePattern: ${{ matrix.id }}-[name]-[ext]
+      - name: Validate and stage platform installers and signatures
+        shell: bash
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+          RELEASE_PLATFORM: ${{ matrix.id }}
+        run: |
+          python .github/release.py stage "src-tauri/target/$RELEASE_TARGET/release/bundle" "$RUNNER_TEMP/platform-bundles" "$RELEASE_PLATFORM"
       - name: Verify AppImage includes the GIO TLS module
         if: runner.os == 'Linux'
         shell: bash
@@ -170,6 +176,14 @@ jobs:
           cd "$RUNNER_TEMP"
           "$image" --appimage-extract > /dev/null
           test -n "$(find squashfs-root -name 'libgiognutls.so' -type f -print -quit)"
+      - name: Upload validated platform bundles
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.id }}-bundles
+          path: ${{ runner.temp }}/platform-bundles/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
 
   publish:
     needs: [prepare, build]
@@ -181,13 +195,13 @@ jobs:
       RELEASE_VERSION: ${{ inputs.version }}
       RELEASE_TREE: ${{ needs.prepare.outputs.tree }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: ${{ runner.temp }}/artifacts
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Validate all platforms and generate one complete updater manifest
