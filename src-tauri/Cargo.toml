@@ -1,6 +1,6 @@
 [package]
 name = "only-send"
-version = "0.1.1"
+version = "0.1.2"
 description = "A clean and minimal email composer powered by Resend."
 authors = ["Cristhian Melo @rxtsel"]
 edition = "2021"
