@@ -30,6 +30,9 @@
 
         # Tauri / GTK
         glib
+        # WebKit/libsoup needs GIO's TLS backend, independently of Rust HTTP.
+        glib-networking
+        cacert
         gtk3
         webkitgtk_4_1
         librsvg
@@ -49,6 +52,10 @@
       shellHook = ''
         export RUST_BACKTRACE=1
         export XDG_DATA_DIRS="$GSETTINGS_SCHEMAS_PATH"
+        # Preserve desktop modules (e.g. dconf/GVfs) while registering TLS.
+        export GIO_EXTRA_MODULES="${pkgs.glib-networking}/lib/gio/modules''${GIO_EXTRA_MODULES:+:$GIO_EXTRA_MODULES}"
+        # Respect an existing custom/system CA bundle.
+        export SSL_CERT_FILE="''${SSL_CERT_FILE:-${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt}"
       '';
     };
   };
