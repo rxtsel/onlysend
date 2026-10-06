@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.3 - 2026-10-06
+
+### Maintenance
+- Update tauri cli for appimage mesa compatibility (4d182e7)
+
 ## v0.1.2 - 2026-10-06
 
 ### Features
