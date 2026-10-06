@@ -8,6 +8,7 @@ mod sent;
 
 pub mod infrastructure;
 
+use tauri::Manager;
 use tauri_plugin_store::StoreExt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -30,6 +31,22 @@ pub fn run() {
             // Initialize the store
             let _store = app.store("settings.json")?;
             println!("🚀 Store initialized");
+
+            // Register immediately, initialize off the async executor. Existing
+            // JSON commands remain authoritative until explicit migrations land.
+            let database = infrastructure::database::Database::new(
+                app.path()
+                    .app_data_dir()?
+                    .join(infrastructure::database::DATABASE_FILE),
+            );
+            app.manage(database.clone());
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = database.initialize().await {
+                    // Do not destroy JSON state or stop the app for a cache failure.
+                    // Future database adapters retry and return the same error.
+                    eprintln!("[WARN] Local database initialization failed: {error}");
+                }
+            });
 
             // D: Proactive credential warm-up — refresh before the UI fires
             // its parallel loads. Per-account single-flight makes this

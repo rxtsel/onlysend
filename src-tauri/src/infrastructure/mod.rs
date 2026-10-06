@@ -1,10 +1,12 @@
-//! JSON store primitives shared by the infrastructure stores.
+//! Persistence adapters and shared JSON store primitives.
 //!
-//! Two files back the app state:
+//! Existing state remains in JSON during incremental SQLite adoption:
 //! - `settings.json` — user preferences and local data (via settings_store)
 //! - `auth.json` — credentials, DO NOT SHARE (via credentials_store)
+//! - `onlysend.sqlite3` — local-state schema; no production JSON import yet
 
 pub mod credentials_store;
+pub(crate) mod database;
 pub mod http;
 pub mod pagination;
 #[cfg(test)]
