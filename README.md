@@ -1,79 +1,59 @@
 # OnlySend
 
-A minimal desktop application for sending emails from your own domain using **Resend**.
-Made with **Rust**, **Tauri**, and **Svelte**.
+Send email from your own domain with **Resend**, without leaving your desktop.
+Connect multiple accounts, compose rich-text messages, and optionally receive mail.
+
+[Download OnlySend](https://github.com/rxtsel/onlysend/releases)
 
 <img width="1250" height="803" alt="Screenshot 2025-12-14 at 13 31 28" src="https://github.com/user-attachments/assets/cbc53014-88a8-4f2a-87aa-1387b348b9fe" />
 
 <img width="1250" height="803" alt="Screenshot 2025-12-14 at 13 34 22" src="https://github.com/user-attachments/assets/027ead37-91b7-4c8e-9794-729c9cc39244" />
 
+## Get started
 
-## Download
-Visit [releases](https://github.com/rxtsel/only-send/releases) for download.
+1. Install OnlySend and connect your Resend account with OAuth or an API key.
+2. Follow the setup wizard to choose your domains and sender addresses.
+3. Compose and send. Enable receiving only if you want an inbox.
 
-## Why I built this
+You need a Resend account and access to your domain's DNS settings. Sending
+requires a verified domain. Enabling receiving can redirect existing mail through
+new MX records; review the DNS instructions before changing them.
 
-I wanted a simple, privacy-friendly tool that lets me send emails from my own domain without needing to maintain a full email hosting setup. Most providers require complicated MX setups, storage, inbox management, spam filtering, and more — even when all you need is **sending**.
+## What you can do
 
-OnlySend focuses on one thing:
+- Switch between accounts with separate mail and settings.
+- Manage multiple domains, sender addresses, and DNS configuration.
+- Compose formatted messages with attachments, CC, BCC, and Reply-To.
+- Browse sent mail and an optional inbox.
+- Read downloaded message bodies offline, including after restarting the app.
+  The footer shows local-copy progress and errors.
 
-- [x] **Compose and send emails cleanly under your own domain**
+## Downloads and updates
 
-No inbox. No bloat. Just sending.
+Release builds target Linux (`.deb` and `.AppImage`), Windows (`.exe`), and macOS
+(`.dmg`, Intel and Apple Silicon). Download the matching file from
+[GitHub Releases](https://github.com/rxtsel/onlysend/releases).
 
-## How it works
+Updater-enabled builds check once when opened. You can also use
+**Settings → About → Check for updates**. Installation is your choice; the app
+asks about unsaved drafts before closing. Debian installations use the package
+manager rather than the in-app installer.
 
-OnlySend uses the **Resend API** to send emails through your verified domain.
-You enter your API key, set up your sender identities, and you’re ready to go.
+macOS builds are not notarized and may require approval in **Privacy & Security**.
+Windows may show a SmartScreen warning. Older versions without the updater need
+one manual installation to receive in-app updates.
 
-- Add multiple “From” email identities
-- Compose messages with rich content
-- Attach files
-- Send using your own domain
-- Local configuration stored securely through Tauri’s store
+## Your data
 
-Everything runs locally — OnlySend does not use any external backend.
+OnlySend uses Resend for sending and receiving; no separate OnlySend mail server
+is required. Downloaded messages are kept locally even if they disappear from
+Resend's lists. Disconnecting an account does not erase its local archive.
 
-## Receiving Email (Optional)
+Local storage is **not encrypted**. Offline copies include message bodies and
+attachment metadata, not attachment files or remote images.
 
-OnlySend is designed **only for sending**.
-For receiving, you can combine it with Cloudflare’s free email routing:
+## Contributing
 
-- Cloudflare can forward incoming email from your domain… to any inbox you prefer (Gmail, Outlook, etc.)
+For development, testing, and release instructions, see [CONTRIBUTIONS.md](CONTRIBUTIONS.md).
 
-With Cloudflare forwarding + OnlySend, you cover both sides:
-
-- **Sending** → via OnlySend (Resend API)
-- **Receiving** → via Cloudflare Email Routing
-
-No need for a full email hosting provider.
-
-## Features
-
-- - [x] Send polished emails from a clean UI
-- - [x] Add CC, BCC, Reply-To, and message headers
-- - [x] Attachments support
-- - [x] Uses local secure storage for settings
-- - [x] Cross-platform via Tauri
-- - [x] View a list of sent emails
-
-## Tech Stack
-
-- **Rust** — backend logic + Resend integration
-- **Tauri** — desktop app runtime
-- **Svelte 5** — front-end UI
-- **resend-rs** - Crate for interacting with the Resend API
-
-## Building Locally
-
-To build the application locally:
-
-```
-bun tauri build
-```
-
-If you encounter issues with the above command (such as errors related to binary stripping), try the following:
-
-```
-NO_STRIP=true bun tauri build
-```
+Licensed under [GPL-2.0-only](LICENSE).
