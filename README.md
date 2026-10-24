@@ -5,9 +5,9 @@ Connect multiple accounts, compose rich-text messages, and optionally receive ma
 
 [Download OnlySend](https://github.com/rxtsel/onlysend/releases)
 
-<img width="1250" height="803" alt="Screenshot 2025-12-14 at 13 31 28" src="https://github.com/user-attachments/assets/cbc53014-88a8-4f2a-87aa-1387b348b9fe" />
+![OnlySend demo](assets/preview.gif)
 
-<img width="1250" height="803" alt="Screenshot 2025-12-14 at 13 34 22" src="https://github.com/user-attachments/assets/027ead37-91b7-4c8e-9794-729c9cc39244" />
+[View video](assets/preview.mp4)
 
 ## Get started
 
