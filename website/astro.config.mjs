@@ -13,5 +13,6 @@ export default defineConfig({
     defaultLocale: 'es',
     routing: { prefixDefaultLocale: false },
   },
-  vite: { plugins: [tailwindcss()] },
+  // Shared assets must not inherit the desktop app's generated Svelte config.
+  vite: { tsconfig: './tsconfig.json', plugins: [tailwindcss()] },
 });
