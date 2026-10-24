@@ -1,0 +1,22 @@
+{
+  "name": "onlysend-website",
+  "type": "module",
+  "version": "0.0.1",
+  "packageManager": "pnpm@11.21.0",
+  "engines": {
+    "node": ">=22.23.4"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "test": "pnpm build && node scripts/check-build.mjs"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "astro": "^7.4.2",
+    "cookie": "^2.0.1",
+    "tailwindcss": "^4.3.3"
+  }
+}

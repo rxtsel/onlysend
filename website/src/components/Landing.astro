@@ -1,0 +1,187 @@
+---
+import { getRelativeLocaleUrl } from 'astro:i18n';
+import '../styles/global.css';
+import { content, repository, type Locale } from '../content';
+import Icon from './Icon.astro';
+import preview from '../../../assets/preview.gif?url';
+
+interface Props { locale: Locale; }
+const { locale } = Astro.props;
+const t = content[locale];
+const base = import.meta.env.BASE_URL;
+const home = getRelativeLocaleUrl(locale);
+const canonical = new URL(home, Astro.site);
+const releases = `${repository}/releases`;
+---
+<!doctype html>
+<html lang={locale} class="scroll-smooth motion-reduce:scroll-auto">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={t.description} />
+    <meta name="theme-color" content="#fafafa" />
+    <title>{t.title}</title>
+    <link rel="icon" type="image/png" href={`${base}icon.png`} />
+    <link rel="canonical" href={canonical} />
+    {(['en', 'es'] as const).map((language) => <link rel="alternate" hreflang={language} href={new URL(getRelativeLocaleUrl(language), Astro.site)} />)}
+    <link rel="alternate" hreflang="x-default" href={new URL(getRelativeLocaleUrl('es'), Astro.site)} />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={t.title} />
+    <meta property="og:description" content={t.description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={new URL(`${base}preview.webp`, Astro.site)} />
+    <meta property="og:image:alt" content={t.previewAlt} />
+    <meta property="og:locale" content={locale === 'en' ? 'en_US' : 'es_ES'} />
+    <meta name="twitter:card" content="summary_large_image" />
+  </head>
+  <body>
+    <a href="#main" class="skip-link">{t.skip}</a>
+    <header class="sticky top-0 z-20 border-b border-black/6 bg-site/90 backdrop-blur-md">
+      <div class="shell flex min-h-16 flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3">
+        <a class="flex items-center gap-2.5 text-lg font-semibold tracking-tight" href={home} aria-label="OnlySend">
+          <img src={`${base}icon.png`} width="28" height="28" alt="" class="rounded-lg" />OnlySend
+        </a>
+        <nav aria-label={t.navigation} class="flex items-center gap-4 text-sm sm:gap-6">
+          <a class="quiet-link hidden sm:inline" href="#features">{t.featuresLink}</a>
+          <a class="quiet-link hidden sm:inline" href="#setup">{t.setupLink}</a>
+          <div aria-label={t.languages} class="flex items-center gap-1 rounded-lg border border-black/8 bg-white p-1 text-xs">
+            {(['en', 'es'] as const).map((language) => <a href={getRelativeLocaleUrl(language)} lang={language} aria-label={language === 'en' ? 'English' : 'Español'} aria-current={locale === language ? 'page' : undefined} class:list={['rounded-md px-2 py-1.5', locale === language ? 'bg-ink text-white' : 'text-muted hover:text-ink']}>{language.toUpperCase()}</a>)}
+          </div>
+          <a href={releases} class="quiet-link hidden md:inline">GitHub ↗</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="relative isolate overflow-hidden pt-18 sm:pt-24">
+        <div class="dots" aria-hidden="true"></div>
+        <div class="shell text-center">
+          <p class="inline-flex items-center gap-2 rounded-full border border-black/8 bg-white px-3 py-1.5 text-xs text-muted"><span class="size-1.5 rounded-full bg-ink" aria-hidden="true"></span>{t.badge}</p>
+          <h1 class="mx-auto mt-7 max-w-4xl text-[2.5rem] leading-[1.05] font-medium tracking-[-0.045em] sm:text-[clamp(3.2rem,7vw,5.75rem)] sm:leading-[0.98]">{t.heading}</h1>
+          <p class="mx-auto mt-6 max-w-xl text-base leading-7 text-muted sm:text-lg">{t.intro}</p>
+          <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
+            <a class="button button-primary" href={releases}><Icon name="download" />{t.download}</a>
+            <a class="button button-secondary" href={repository}>{t.source}<Icon name="arrow" /></a>
+          </div>
+          <p class="mx-auto mt-4 max-w-xl text-xs leading-5 text-muted">{t.costNote}</p>
+          <p class="mt-2 text-xs text-muted">{t.platforms}</p>
+
+          <figure class="mx-auto mt-14 max-w-5xl text-left sm:mt-18">
+            <div class="overflow-hidden rounded-xl border border-black/10 bg-white p-1.5 shadow-[0_12px_60px_-24px_rgb(0_0_0/0.2)] sm:rounded-2xl sm:p-2">
+              <div class="flex items-center justify-between gap-3 px-3 pt-2 pb-3 text-xs text-muted">
+                <span class="flex items-center gap-1.5" aria-hidden="true"><span class="size-2 rounded-full bg-black/15"></span><span class="size-2 rounded-full bg-black/15"></span><span class="size-2 rounded-full bg-black/15"></span></span>
+                <span>{t.demo}</span>
+                <button id="demo-toggle" type="button" hidden aria-pressed="false" aria-controls="demo-image" data-play={t.play} data-pause={t.pause} class="cursor-pointer rounded-md px-2 py-1 text-ink hover:bg-black/5">{t.play}</button>
+              </div>
+              <button id="demo-preview" type="button" disabled aria-label={t.play} aria-pressed="false" aria-controls="demo-image" class="block w-full cursor-pointer rounded-lg disabled:cursor-default">
+                <img id="demo-image" src={`${base}preview.webp`} data-animation={preview} data-poster={`${base}preview.webp`} alt={t.previewAlt} width="1736" height="1080" class="block h-auto w-full rounded-lg border border-black/5" />
+              </button>
+            </div>
+            <figcaption class="mt-4 text-center text-xs text-muted">{t.previewNote}</figcaption>
+            <noscript><p class="mt-3 text-center text-sm"><a class="underline underline-offset-4" href={preview}>{t.play}</a></p></noscript>
+          </figure>
+        </div>
+      </section>
+
+      <section id="features" class="shell section-space">
+        <div class="max-w-2xl">
+          <p class="eyebrow">{t.featuresKicker}</p>
+          <h2 class="section-title mt-4">{t.featuresHeading}</h2>
+          <p class="mt-4 max-w-xl leading-7 text-muted">{t.featuresIntro}</p>
+          <p class="mt-4 max-w-xl text-sm leading-6 text-muted">{t.techNote}</p>
+        </div>
+        <div class="mt-10 grid gap-3 sm:grid-cols-2">
+          {t.features.map((feature) => <article class="rounded-xl border border-black/7 bg-white p-6 sm:p-8">
+            <div class="mb-6 flex size-10 items-center justify-center rounded-xl border border-black/7 bg-site"><Icon name={feature.icon} /></div>
+            <h3 class="text-base font-medium tracking-tight">{feature.title}</h3>
+            <p class="mt-2 max-w-md text-sm leading-6 text-muted">{feature.text}</p>
+          </article>)}
+        </div>
+      </section>
+
+      <section class="shell pb-18 sm:pb-24" aria-labelledby="comparison-heading">
+        <p class="eyebrow">{t.comparisonKicker}</p>
+        <h2 id="comparison-heading" class="section-title mt-4 max-w-3xl">{t.comparisonHeading}</h2>
+        <p class="mt-5 max-w-3xl leading-7 text-muted">{t.comparisonIntro}</p>
+        <div class="mt-8 grid gap-3 sm:grid-cols-2">
+          {t.comparisonOptions.map((option) => <article class="rounded-xl border border-black/7 bg-white p-6">
+            <h3 class="text-base font-medium">{option.title}</h3>
+            <p class="mt-3 text-sm leading-7 text-muted">{option.text}</p>
+          </article>)}
+        </div>
+        <p class="mt-5 max-w-3xl text-sm leading-6 text-muted">{t.comparisonNote}</p>
+        <p class="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-xs text-muted">
+          <span>{t.sourcesLabel}</span>
+          <a class="underline underline-offset-4" href="https://resend.com/pricing">Resend</a>
+          <a class="underline underline-offset-4" href="https://workspace.google.com/pricing.html">Google Workspace</a>
+          <a class="underline underline-offset-4" href="https://www.microsoft.com/en-us/microsoft-365/business/microsoft-365-plans-and-pricing">Microsoft 365</a>
+        </p>
+      </section>
+
+      <section id="setup" class="border-y border-black/7 bg-white">
+        <div class="shell section-space grid gap-10 lg:grid-cols-2 lg:gap-20">
+          <div>
+            <p class="eyebrow">{t.setupKicker}</p>
+            <h2 class="section-title mt-4 max-w-md">{t.setupHeading}</h2>
+            <p class="mt-7 max-w-md rounded-xl border border-black/7 bg-site p-4 text-xs leading-6 text-muted">{t.dns}</p>
+          </div>
+          <ol class="flex flex-col gap-8">
+            {t.steps.map((step, index) => <li class="flex gap-4">
+              <span class="flex size-8 shrink-0 items-center justify-center rounded-full bg-ink font-mono text-xs text-white">{index + 1}</span>
+              <div class="pt-1"><h3 class="text-sm font-medium">{step.title}</h3><p class="mt-2 text-sm leading-6 text-muted">{step.text}</p></div>
+            </li>)}
+          </ol>
+        </div>
+      </section>
+
+      <section class="shell section-space grid gap-8 lg:grid-cols-[1fr_1.25fr] lg:gap-20">
+        <h2 class="section-title max-w-sm">{t.faqHeading}</h2>
+        <div>
+          {t.faqs.map((faq) => <details class="group border-b border-black/10 first:border-t">
+            <summary class="flex cursor-pointer list-none items-center justify-between gap-5 py-5 text-sm font-medium">{faq.question}<span class="text-lg font-normal text-muted group-open:hidden" aria-hidden="true">+</span><span class="hidden text-lg font-normal text-muted group-open:inline" aria-hidden="true">−</span></summary>
+            <p class="pb-6 pr-6 text-sm leading-7 text-muted">{faq.answer}</p>
+          </details>)}
+        </div>
+      </section>
+
+      <section class="shell pb-20 text-center sm:pb-24">
+        <div class="rounded-2xl border border-black/7 bg-white px-5 py-14 sm:py-18">
+          <img src={`${base}icon.png`} width="44" height="44" alt="" class="mx-auto rounded-xl" loading="lazy" />
+          <h2 class="section-title mt-6">{t.finalHeading}</h2>
+          <p class="mt-4 text-sm text-muted">{t.finalText}</p>
+          <a href={releases} class="button button-primary mt-7"><Icon name="download" />{t.download}</a>
+          <p class="mt-4 text-xs text-muted">{t.releaseNote}</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="border-t border-black/7">
+      <div class="shell flex flex-col justify-between gap-6 py-9 sm:flex-row sm:items-center">
+        <div><a href={home} class="text-sm font-semibold tracking-tight">OnlySend</a><p class="mt-2 text-xs text-muted">{t.footer}</p><p class="mt-2 text-xs text-muted">Made by <a href="https://rxtsel.dev/?utm_source=onlysend&amp;utm_medium=website&amp;utm_campaign=project_credit" class="quiet-link underline underline-offset-2">rxtsel</a>. From Colombia.</p></div>
+        <nav aria-label={locale === 'en' ? 'Project links' : 'Enlaces del proyecto'} class="flex flex-wrap gap-5 text-xs text-muted">
+          <a class="quiet-link" href={repository}>{t.source}</a><a class="quiet-link" href={releases}>{t.releases}</a><a class="quiet-link" href={`${repository}/issues`}>{t.issues}</a>
+        </nav>
+      </div>
+    </footer>
+    <script>
+      const button = document.querySelector<HTMLButtonElement>('#demo-toggle');
+      const image = document.querySelector<HTMLImageElement>('#demo-image');
+      const preview = document.querySelector<HTMLButtonElement>('#demo-preview');
+      if (button && image && preview) {
+        button.hidden = false;
+        preview.disabled = false;
+        const toggle = () => {
+          const playing = button.getAttribute('aria-pressed') !== 'true';
+          image.src = playing ? image.dataset.animation! : image.dataset.poster!;
+          button.textContent = playing ? button.dataset.pause! : button.dataset.play!;
+          for (const control of [button, preview]) {
+            control.setAttribute('aria-pressed', String(playing));
+            control.setAttribute('aria-label', button.textContent!);
+          }
+        };
+        button.addEventListener('click', toggle);
+        preview.addEventListener('click', toggle);
+      }
+    </script>
+  </body>
+</html>

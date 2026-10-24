@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  --color-site: #fafafa;
+  --color-ink: #202020;
+  --color-muted: #656565;
+}
+
+@layer base {
+  html { scroll-padding-top: 6rem; }
+  body { @apply bg-site font-sans text-ink antialiased; }
+  h1, h2, h3 { text-wrap: balance; }
+  p { text-wrap: pretty; }
+  a, button, summary { -webkit-tap-highlight-color: transparent; }
+  :focus-visible { outline: 2px solid currentColor; outline-offset: 5px; }
+  summary::-webkit-details-marker { display: none; }
+}
+
+@layer components {
+  .shell { @apply mx-auto w-full max-w-6xl px-5 sm:px-8; }
+  .section-space { @apply py-18 sm:py-24; }
+  .section-title { @apply font-medium text-4xl leading-[1.08] tracking-[-0.035em] sm:text-5xl; }
+  .eyebrow { @apply font-mono text-[10px] leading-5 tracking-[0.12em] text-muted; }
+  .quiet-link { @apply text-muted hover:text-ink; }
+  .button { @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-5 py-3 text-sm font-medium; }
+  .button-primary { @apply bg-ink text-white shadow-sm hover:bg-black; }
+  .button-secondary { @apply border border-black/10 bg-white hover:bg-black/3; }
+  .skip-link { @apply fixed -top-24 left-4 z-50 rounded-lg bg-ink px-4 py-3 text-sm text-white focus:top-4; }
+  .dots {
+    position: absolute;
+    inset: 0 0 auto;
+    z-index: -1;
+    height: 32rem;
+    pointer-events: none;
+    background-image: radial-gradient(circle at 1px 1px, #20202026 1px, transparent 0);
+    background-size: 22px 22px;
+    mask-image: radial-gradient(ellipse 65% 70% at 50% 0%, black 20%, transparent 80%);
+  }
+}

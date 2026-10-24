@@ -50,6 +50,11 @@ Resend's lists. Disconnecting an account does not erase its local archive.
 Local storage is **not encrypted**. Offline copies include message bodies and
 attachment metadata, not attachment files or remote images.
 
+## Website
+
+The static Astro + Tailwind website lives in [`website/`](website/README.md), with
+English and Spanish pages and a GitHub Pages deployment workflow.
+
 ## Contributing
 
 For development, testing, and release instructions, see [CONTRIBUTIONS.md](CONTRIBUTIONS.md).
