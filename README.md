@@ -7,8 +7,6 @@ Connect multiple accounts, compose rich-text messages, and optionally receive ma
 
 ![OnlySend demo](assets/preview.gif)
 
-[View video](assets/preview.mp4)
-
 ## Get started
 
 1. Install OnlySend and connect your Resend account with OAuth or an API key.
