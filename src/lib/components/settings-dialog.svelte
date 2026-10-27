@@ -2,7 +2,6 @@
   import * as Breadcrumb from "@/lib/components/ui/breadcrumb";
   import * as Dialog from "@/lib/components/ui/dialog";
   import * as Sidebar from "@/lib/components/ui/sidebar";
-  import { Button } from "@/lib/components/ui/button";
   import { Mail, Settings, Plug, Globe, Info, Bell } from "@lucide/svelte";
   import * as Select from "$lib/components/ui/select";
   const panels = {
@@ -45,9 +44,9 @@
 <Dialog.Root bind:open>
   <Dialog.Trigger>
     {#snippet child({ props })}
-      <Button size="icon" variant="ghost" aria-label="Settings" {...props}>
-        <Settings />
-      </Button>
+      <Sidebar.MenuButton {...props} class="h-10 gap-4" aria-label="Settings" tooltipContent="Settings">
+        <Settings /><span class="group-data-[collapsible=icon]:hidden">Settings</span>
+      </Sidebar.MenuButton>
     {/snippet}
   </Dialog.Trigger>
   <Dialog.Content

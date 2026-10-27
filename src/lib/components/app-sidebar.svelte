@@ -5,7 +5,6 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { toast } from "svelte-sonner";
   import * as Sidebar from "$lib/components/ui/sidebar";
-  import { Button } from "$lib/components/ui/button";
   import { useSidebar } from "$lib/components/ui/sidebar";
   import { useAccountId } from "$lib/features/auth/account-context";
   import { mailUrl } from "$lib/features/auth/mail-routes";
@@ -37,35 +36,32 @@
   }
 </script>
 
-<Sidebar.Root collapsible="offcanvas">
-  <div class="flex h-full min-h-0 w-full">
-  <aside class="flex w-14 shrink-0 flex-col items-center border-e bg-sidebar py-4" aria-label="Account and settings">
-    <a href={mailUrl(accountId, "inbox")} aria-label="OnlySend" class="flex size-8 items-center justify-center rounded-lg text-foreground focus-visible:outline focus-visible:outline-ring" onclick={closeMobile}>
-      <Send class="size-5" aria-hidden="true" />
-    </a>
-    <div class="mt-auto flex w-8 flex-col items-center gap-3">
-      <Button size="icon" variant="ghost" onclick={feedback} aria-label="Feedback / report a bug" title="Feedback / report a bug"><Bug /></Button>
-      <SettingsDialog />
-      <NavUser />
-    </div>
-  </aside>
-  <nav class="flex min-w-0 flex-1 flex-col" aria-label="Mailboxes">
-    <Sidebar.Header class="h-16 shrink-0 justify-center px-4 py-0">
-      <Button href={mailUrl(accountId, "composer")} class="h-10 w-full justify-center gap-2 rounded-full" onclick={closeMobile} aria-current={composing ? "page" : undefined}>
-        <SquarePen data-icon="inline-start" /> New message
-      </Button>
-    </Sidebar.Header>
-    <Sidebar.Content class="pt-4">
-      <Sidebar.Group class="px-3">
+<Sidebar.Root collapsible="icon">
+  <Sidebar.Header class="h-16 shrink-0 justify-center px-4 py-0 group-data-[collapsible=icon]:px-2">
+    <Sidebar.Menu>
+      <Sidebar.MenuItem>
+        <Sidebar.MenuButton variant="primary" tooltipContent="New message" class="h-10 justify-center rounded-full">
+          {#snippet child({ props })}
+            <a {...props} href={mailUrl(accountId, "composer")} aria-label="New message" onclick={closeMobile} aria-current={composing ? "page" : undefined}>
+              <SquarePen /><span class="group-data-[collapsible=icon]:hidden">New message</span>
+            </a>
+          {/snippet}
+        </Sidebar.MenuButton>
+      </Sidebar.MenuItem>
+    </Sidebar.Menu>
+  </Sidebar.Header>
+  <Sidebar.Content class="pt-4">
+    <nav aria-label="Mailboxes">
+      <Sidebar.Group class="px-3 group-data-[collapsible=icon]:px-2">
         <Sidebar.GroupLabel>Mailboxes</Sidebar.GroupLabel>
         <Sidebar.GroupContent>
           <Sidebar.Menu>
             {#each folders as folder (folder.value)}
               <Sidebar.MenuItem>
-                <Sidebar.MenuButton isActive={mailbox === folder.value && domain === null && !composing} class="h-10 px-3">
+                <Sidebar.MenuButton isActive={mailbox === folder.value && domain === null && !composing} tooltipContent={folder.label} class="h-10 px-3">
                   {#snippet child({ props })}
-                    <a {...props} href={mailUrl(accountId, folder.value)} aria-current={mailbox === folder.value && domain === null && !composing ? "page" : undefined} onclick={() => { domain = null; closeMobile(); }}>
-                      <folder.icon /><span>{folder.label}</span>
+                    <a {...props} href={mailUrl(accountId, folder.value)} aria-label={folder.label} aria-current={mailbox === folder.value && domain === null && !composing ? "page" : undefined} onclick={() => { domain = null; closeMobile(); }}>
+                      <folder.icon /><span class="group-data-[collapsible=icon]:hidden">{folder.label}</span>
                     </a>
                   {/snippet}
                 </Sidebar.MenuButton>
@@ -75,14 +71,14 @@
         </Sidebar.GroupContent>
       </Sidebar.Group>
       {#if domains.length > 0}
-        <Sidebar.Group class="px-3">
+        <Sidebar.Group class="px-3 group-data-[collapsible=icon]:px-2">
           <Sidebar.GroupLabel>Domains</Sidebar.GroupLabel>
           <Sidebar.GroupContent>
             <Sidebar.Menu>
               {#each domains as name (name)}
                 <Sidebar.MenuItem>
-                  <Sidebar.MenuButton isActive={domain === name} class="h-10 px-3" onclick={() => { domain = name; closeMobile(); void goto(mailUrl(accountId, mailbox)); }}>
-                    <Globe /><span title={name}>{name}</span>
+                  <Sidebar.MenuButton isActive={domain === name} tooltipContent={name} aria-label={name} class="h-10 px-3" onclick={() => { domain = name; closeMobile(); void goto(mailUrl(accountId, mailbox)); }}>
+                    <Globe /><span class="group-data-[collapsible=icon]:hidden" title={name}>{name}</span>
                   </Sidebar.MenuButton>
                 </Sidebar.MenuItem>
               {/each}
@@ -90,7 +86,17 @@
           </Sidebar.GroupContent>
         </Sidebar.Group>
       {/if}
-    </Sidebar.Content>
-  </nav>
-  </div>
+    </nav>
+  </Sidebar.Content>
+  <Sidebar.Footer class="gap-1 p-3 group-data-[collapsible=icon]:p-2" role="group" aria-label="Account and settings">
+    <Sidebar.Menu>
+      <Sidebar.MenuItem>
+        <Sidebar.MenuButton class="h-10 gap-4" onclick={feedback} aria-label="Feedback / report a bug" tooltipContent="Feedback / report a bug">
+          <Bug /><span class="group-data-[collapsible=icon]:hidden">Feedback &amp; bugs</span>
+        </Sidebar.MenuButton>
+      </Sidebar.MenuItem>
+      <Sidebar.MenuItem><SettingsDialog /></Sidebar.MenuItem>
+    </Sidebar.Menu>
+    <NavUser />
+  </Sidebar.Footer>
 </Sidebar.Root>

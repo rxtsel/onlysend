@@ -95,10 +95,10 @@
             {...props}
             aria-label="Switch account"
             tooltipContent="Switch account"
-            tooltipContentProps={{ hidden: false }}
-            class="size-8 justify-center p-0 [&>svg]:size-8 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+            class="h-10 p-0 group-data-[collapsible=icon]:p-0! data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
           >
             <AccountAvatar name={accountId} size={32} />
+            <span class="group-data-[collapsible=icon]:hidden">Switch account</span>
           </Sidebar.MenuButton>
         {/snippet}
       </DropdownMenu.Trigger>
