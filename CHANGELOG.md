@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.1.4 - 2026-10-27
+
+### Features
+- Add static website (9363378)
+- Add in-app bug report and about shortcuts (f429e7a)
+- Poll inbox in rust and send native notifications (658009f)
+- Add native list query with previews and read state (c1858c0)
+- Add native-backed list and reading pane (ec1dbeb)
+- Collapse navigation to an icon rail (319a527)
+- Show toggle shortcut in trigger tooltip (b100fcc)
+- Open dialog from sidebar footer action (bd594d6)
+- Add theme and avatar preferences (0b10138)
+
+
+### Fixes
+- Add explicit tsconfig path (9ade076)
+- Handle resend postgres timestamps and calendar days (a48adb1)
+- Ignore toggle shortcut handled by editors (fcbf49e)
+- Keep primary button text on hover and active (902160c)
+- Prevent horizontal overflow in navigation (7f6e9ce)
+- Match toaster theme to appearance (504ca1a)
+
+
+### Maintenance
+- Remove assets (62b2cfc)
+- Add issue report templates (8c9b5de)
+- Compact account switcher and footer actions (070da53)
+- Add tauri notification plugin (8628041)
+- Document background inbox checks (26dc7ee)
+- Document native search and reading pane (2873456)
+- Use field and item primitives in panels (8b8f8d2)
+- Document theme and avatar settings (18a9876)
+
 ## v0.1.3 - 2026-10-06
 
 ### Maintenance
