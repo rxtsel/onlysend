@@ -64,6 +64,12 @@
   <span class="sr-only" role="status" aria-live="polite">{mailboxLabel}: {view.label}</span>
   <div class="ml-auto flex shrink-0 items-center gap-3">
     <AppUpdateControl />
-    <span class="tabular-nums" title="Current application version" aria-label={`Current version ${appUpdate.state.currentVersion}`}>v{appUpdate.state.currentVersion}</span>
+    <button
+      type="button"
+      class="tabular-nums hover:underline focus-visible:outline focus-visible:outline-ring"
+      title="About OnlySend"
+      aria-label={`About OnlySend, version ${appUpdate.state.currentVersion}`}
+      onclick={() => window.dispatchEvent(new CustomEvent("open-settings", { detail: { section: "About" } }))}
+    >v{appUpdate.state.currentVersion}</button>
   </div>
 </footer>

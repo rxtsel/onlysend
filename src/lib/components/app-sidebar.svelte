@@ -3,6 +3,7 @@
     import SendIcon from "@lucide/svelte/icons/send";
     import PlusIcon from "@lucide/svelte/icons/plus";
     import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
+    import BugIcon from "@lucide/svelte/icons/bug";
     import SettingsDialog from "./settings-dialog.svelte";
 </script>
 
@@ -20,6 +21,7 @@
     import { onMount, onDestroy, untrack } from "svelte";
     import { fly } from "svelte/transition";
     import { toast } from "svelte-sonner";
+    import { openUrl } from "@tauri-apps/plugin-opener";
     import { Loader } from "@lucide/svelte";
     import type { InboundEmail } from "../shared/inbound";
     import type { SentEmail } from "../types";
@@ -179,6 +181,14 @@ import { errorMessage } from "@/lib/shared/utils/errors";
         };
         untrack(() => onArchiveStatusChange?.(accountId, currentMode, data));
     });
+
+    async function openFeedback() {
+        try {
+            await openUrl("https://github.com/rxtsel/onlysend/issues/new/choose");
+        } catch (err) {
+            toast.error(errorMessage(err, "Could not open GitHub"));
+        }
+    }
 
     async function handleRefresh() {
         const currentMode = mode;
@@ -347,6 +357,21 @@ import { errorMessage } from "@/lib/shared/utils/errors";
             </Sidebar.Group>
         </Sidebar.Content>
         <Sidebar.Footer>
+            <Sidebar.Menu>
+                <Sidebar.MenuItem>
+                    <Sidebar.MenuButton
+                        onclick={openFeedback}
+                        aria-label="Feedback / report a bug (opens GitHub)"
+                        tooltipContentProps={{ hidden: false }}
+                    >
+                        {#snippet tooltipContent()}
+                            Feedback / report a bug
+                        {/snippet}
+                        <BugIcon />
+                        <span>Feedback / report a bug</span>
+                    </Sidebar.MenuButton>
+                </Sidebar.MenuItem>
+            </Sidebar.Menu>
             <SettingsDialog />
             <NavUser />
         </Sidebar.Footer>
