@@ -361,6 +361,7 @@ import { errorMessage } from "@/lib/shared/utils/errors";
                 <Sidebar.MenuItem>
                     <Sidebar.MenuButton
                         onclick={openFeedback}
+                        class="size-8 justify-center p-0"
                         aria-label="Feedback / report a bug (opens GitHub)"
                         tooltipContentProps={{ hidden: false }}
                     >
@@ -368,7 +369,6 @@ import { errorMessage } from "@/lib/shared/utils/errors";
                             Feedback / report a bug
                         {/snippet}
                         <BugIcon />
-                        <span>Feedback / report a bug</span>
                     </Sidebar.MenuButton>
                 </Sidebar.MenuItem>
             </Sidebar.Menu>

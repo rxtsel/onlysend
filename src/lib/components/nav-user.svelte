@@ -2,7 +2,6 @@
   import { useAccountId } from "$lib/features/auth/account-context";
   const accountId = useAccountId();
   import {
-    ChevronsUpDownIcon,
     CheckIcon,
     PlusIcon,
     SparklesIcon,
@@ -99,23 +98,12 @@
         {#snippet child({ props })}
           <Sidebar.MenuButton
             {...props}
-            size="lg"
-            class="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground md:h-8 md:p-0"
+            aria-label="Switch account"
+            tooltipContent="Switch account"
+            tooltipContentProps={{ hidden: false }}
+            class="size-8 justify-center p-0 [&>svg]:size-8 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
           >
-            <Blobatar
-              name={accountId}
-              size={32}
-              class="rounded-lg"
-            />
-            <div class="grid flex-1 text-start text-sm leading-tight">
-              <span class="truncate font-medium">
-                {accounts.find((account) => account.id === accountId)?.label ?? "Account"}
-              </span>
-              <span class="truncate text-xs text-muted-foreground">
-                {connectionLabel}
-              </span>
-            </div>
-            <ChevronsUpDownIcon class="ms-auto size-4" />
+            <Blobatar name={accountId} size={32} class="rounded-lg" />
           </Sidebar.MenuButton>
         {/snippet}
       </DropdownMenu.Trigger>

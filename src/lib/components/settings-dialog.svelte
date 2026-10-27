@@ -42,7 +42,7 @@
 <Dialog.Root bind:open>
   <Dialog.Trigger>
     {#snippet child({ props })}
-      <Button size="icon-sm" variant="ghost" {...props}>
+      <Button size="icon" variant="ghost" aria-label="Settings" {...props}>
         <Settings />
       </Button>
     {/snippet}
