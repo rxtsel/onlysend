@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { LoaderCircle, Paperclip } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
+  import MailAvatar from "./mail-avatar.svelte";
   import { useAccountId } from "$lib/features/auth/account-context";
   import { getInboundEmail, type InboundAttachment } from "$lib/shared/inbound";
   import { getSentEmail } from "$lib/shared/sent";
@@ -50,7 +51,7 @@
     <header class="max-h-[45%] shrink-0 overflow-y-auto border-b px-6 py-7 lg:px-8">
       <h1 class="break-words text-2xl font-semibold tracking-tight">{email.subject || "(No subject)"}</h1>
       <div class="mt-6 flex items-start gap-3">
-        <span class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-sm font-medium text-muted-foreground" aria-hidden="true">{name.slice(0, 1).toUpperCase()}</span>
+        <MailAvatar address={email.from} {name} size={40} />
         <div class="min-w-0 flex-1">
           <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <span class="break-words text-sm font-semibold">{name}</span>
@@ -83,7 +84,7 @@
     <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
       {#if email.html}
         <!-- Mail is untrusted, never grant scripts or same-origin access. -->
-        <iframe title="Email content" sandbox="" referrerpolicy="no-referrer" loading="lazy" class="h-full min-h-80 w-full border-0 bg-white" srcdoc={email.html}></iframe>
+        <iframe title="Email content" sandbox="" referrerpolicy="no-referrer" loading="lazy" style:color-scheme="light" class="h-full min-h-80 w-full border-0 bg-white" srcdoc={email.html}></iframe>
       {:else if email.text}
         <pre class="whitespace-pre-wrap break-words p-6 font-sans text-sm leading-7 lg:p-8">{email.text}</pre>
       {:else}

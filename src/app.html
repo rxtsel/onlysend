@@ -5,6 +5,19 @@
     <link rel="icon" href="%sveltekit.assets%/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>OnlySend - Resend Relay</title>
+    <script>
+      // Apply the saved theme before CSS and Svelte render the first frame.
+      (() => {
+        let theme = "system";
+        try {
+          const saved = JSON.parse(localStorage.getItem("onlysend.appearance") || "null");
+          if (saved?.theme === "light" || saved?.theme === "dark") theme = saved.theme;
+        } catch {}
+        const dark = theme === "dark" || (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.classList.toggle("dark", dark);
+        document.documentElement.style.colorScheme = dark ? "dark" : "light";
+      })();
+    </script>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">

@@ -2,12 +2,13 @@
   import * as Breadcrumb from "@/lib/components/ui/breadcrumb";
   import * as Dialog from "@/lib/components/ui/dialog";
   import * as Sidebar from "@/lib/components/ui/sidebar";
-  import { Mail, Plug, Globe, Info, Bell } from "@lucide/svelte";
+  import { Mail, Plug, Globe, Info, Bell, Palette } from "@lucide/svelte";
   import * as Select from "$lib/components/ui/select";
   const panels = {
     "Sender options": () => import("$lib/features/sending/components/settings-sender-options.svelte"),
     "Domains & receiving": () => import("$lib/features/domains/components/settings-domains.svelte"),
     Notifications: () => import("$lib/components/settings-notifications.svelte"),
+    Appearance: () => import("$lib/components/settings-appearance.svelte"),
     About: () => import("$lib/components/settings-about.svelte"),
   };
 
@@ -16,6 +17,7 @@
     { name: "Connection", icon: Plug },
     { name: "Domains & receiving", icon: Globe },
     { name: "Notifications", icon: Bell },
+    { name: "Appearance", icon: Palette },
     { name: "About", icon: Info },
   ];
 

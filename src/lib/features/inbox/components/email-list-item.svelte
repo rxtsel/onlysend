@@ -2,6 +2,7 @@
   import { formatEmailDate, formatFullEmailDate } from "$lib/shared/utils/dates";
   import type { Mailbox, MailListItem } from "$lib/shared/local-mail";
   import { cn } from "$lib/utils";
+  import MailAvatar from "$lib/components/mail-avatar.svelte";
 
   let { mail, mode, isActive = false, isUnread = false, onclick }: {
     mail: MailListItem;
@@ -19,7 +20,7 @@
   aria-current={isActive ? "true" : undefined}
   class={cn("flex w-full gap-3 border-b border-b-border/60 px-4 py-4 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring", isActive ? "bg-accent" : "hover:bg-muted/60")}
 >
-  <span class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-xs font-medium text-muted-foreground" aria-hidden="true">{name.slice(0, 1).toUpperCase() || "?"}</span>
+  <div class="mt-0.5 shrink-0"><MailAvatar address={mode === "inbox" ? mail.from : (mail.to[0] ?? "")} {name} /></div>
   <div class="min-w-0 flex-1">
     <div class="flex items-center gap-2">
       <span class={cn("min-w-0 flex-1 truncate text-sm", isUnread ? "font-semibold text-foreground" : "font-medium")}>{name || "Unknown sender"}</span>
