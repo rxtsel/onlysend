@@ -3,7 +3,9 @@
   const accountId = useAccountId();
   import { toast } from "svelte-sonner";
 
-  import { Button } from "@/lib/components/ui/button";
+  import { Button, buttonVariants } from "@/lib/components/ui/button";
+  import * as Field from "$lib/components/ui/field";
+  import * as Item from "$lib/components/ui/item";
   import * as AlertDialog from "@/lib/components/ui/alert-dialog";
   import { logoutMailAccount } from "@/lib/features/auth/account-switch.svelte";
   import { ConnectionStore } from "@/lib/features/auth/connection-store.svelte";
@@ -52,44 +54,33 @@
   onMount(() => { void loadData(); });
 </script>
 
-<div class="w-full max-w-md">
-  <h3 class="text-sm font-medium mb-2">Resend account</h3>
-  {#if connection.method === "oauth"}
-    <div class="flex items-center justify-between border rounded-md px-4 py-3">
-      <div>
-        <p class="text-sm">Connected with Resend</p>
-        <p class="text-xs text-muted-foreground">
-          Authorized via OAuth. Tokens refresh automatically.
-        </p>
-      </div>
-      <Button
-        type="button"
-        variant="destructive"
-        size="sm"
-        disabled={isDisconnecting}
-        onclick={() => (showDisconnectConfirm = true)}
-      >
-        {isDisconnecting ? "Disconnecting..." : "Disconnect"}
-      </Button>
-    </div>
-  {:else if connection.method === "api_key"}
-    <div class="border rounded-md px-4 py-3">
-      <p class="text-sm">Connected with an API key</p>
-      <p class="text-xs text-muted-foreground mb-3">
-        You can add a separate OAuth connection. This does not replace the current account.
-      </p>
-      <Button type="button" size="sm" onclick={() => goto("/setup")}>
-        Add OAuth connection
-      </Button>
-    </div>
-  {:else}
-    <div class="border rounded-md px-4 py-3">
-      <p class="text-sm text-muted-foreground mb-3">Not connected.</p>
-      <Button type="button" size="sm" onclick={() => goto("/setup")}>
-        Add connection
-      </Button>
-    </div>
-  {/if}
+<section class="w-full" aria-label="Resend connection">
+  <Field.Group>
+    <h3 class="mb-2 text-base font-medium">Resend account</h3>
+    <Item.Root variant="outline" size="sm">
+      <Item.Content class="min-w-48">
+        <Item.Title>
+          {connection.method === "oauth" ? "Connected with Resend" : connection.method === "api_key" ? "Connected with an API key" : "Not connected"}
+        </Item.Title>
+        {#if connection.method === "oauth"}
+          <Item.Description class="line-clamp-none">Authorized via OAuth. Tokens refresh automatically.</Item.Description>
+        {:else if connection.method === "api_key"}
+          <Item.Description class="line-clamp-none">You can add a separate OAuth connection. This does not replace the current account.</Item.Description>
+        {/if}
+      </Item.Content>
+      <Item.Actions>
+        {#if connection.method === "oauth"}
+          <Button type="button" variant="destructive" disabled={isDisconnecting} onclick={() => (showDisconnectConfirm = true)}>
+            {isDisconnecting ? "Disconnecting..." : "Disconnect"}
+          </Button>
+        {:else if connection.method === "api_key"}
+          <Button type="button" onclick={() => goto("/setup")}>Add OAuth connection</Button>
+        {:else}
+          <Button type="button" onclick={() => goto("/setup")}>Add connection</Button>
+        {/if}
+      </Item.Actions>
+    </Item.Root>
+  </Field.Group>
 
   {@render disconnectConfirm()}
 
@@ -106,7 +97,7 @@
         <AlertDialog.Footer>
           <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
           <AlertDialog.Action
-            class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            class={buttonVariants({ variant: "destructive" })}
             disabled={isDisconnecting}
             onclick={handleDisconnect}
           >
@@ -116,5 +107,5 @@
       </AlertDialog.Content>
     </AlertDialog.Root>
   {/snippet}
-</div>
+</section>
 

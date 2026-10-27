@@ -38,14 +38,12 @@
   }
 </script>
 
-<section class="flex flex-col gap-4" aria-label="Inbox notifications">
-  <div class="flex flex-col gap-1">
-    <h2 class="text-lg font-semibold">Inbox notifications</h2>
-    <p class="text-sm text-muted-foreground">
-      Get notified when new emails arrive.
-    </p>
-  </div>
+<section class="w-full" aria-label="Inbox notifications">
   <Field.Group>
+    <div class="mb-2">
+      <h3 class="text-base font-medium">Inbox notifications</h3>
+      <Field.Description class="mt-1">Get notified when new emails arrive.</Field.Description>
+    </div>
   <Field.Field data-disabled={!loaded || saving}>
     <Field.Label for="inbox-poll-interval">Check for new mail</Field.Label>
     <Select.Root type="single" {value} onValueChange={save} disabled={!loaded || saving}>
@@ -64,7 +62,7 @@
       Keep OnlySend open to receive notifications, even when minimized.
     </Field.Description>
   </Field.Field>
+  {#if saving}<Field.Description role="status">Saving…</Field.Description>{/if}
+  {#if error}<Field.Error>{error}</Field.Error>{/if}
   </Field.Group>
-  {#if saving}<p class="text-sm text-muted-foreground" role="status">Saving…</p>{/if}
-  {#if error}<p class="text-sm text-destructive" role="alert">{error}</p>{/if}
 </section>

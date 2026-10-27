@@ -7,6 +7,8 @@
   import { errorMessage } from "$lib/shared/utils/errors";
   import { Button } from "$lib/components/ui/button";
   import { Checkbox } from "$lib/components/ui/checkbox";
+  import * as Item from "$lib/components/ui/item";
+  import { cn } from "$lib/utils";
   import * as Field from "$lib/components/ui/field";
   import * as Collapsible from "$lib/components/ui/collapsible";
   import { Skeleton } from "$lib/components/ui/skeleton";
@@ -60,9 +62,9 @@
   }
 </script>
 
-<div class="flex w-full max-w-md flex-col gap-4">
-  <Field.Set>
-    <Field.Legend>{mode === "setup" ? "Choose your domains" : "Domains & receiving"}</Field.Legend>
+<div class={cn("flex w-full flex-col gap-4", mode === "setup" && "max-w-md")}>
+  <Field.Set class={mode === "settings" ? "gap-3" : undefined}>
+    <Field.Legend class={mode === "settings" ? "mb-2" : undefined}>{mode === "setup" ? "Choose your domains" : "Domains & receiving"}</Field.Legend>
     <Field.Description>
       {mode === "setup"
         ? "Choose the domains to configure for this account. You can finish DNS setup later."
@@ -89,7 +91,7 @@
       {/if}
       <Field.Group>
         {#each store.domains as item (item.id)}
-          <div class="rounded-md border">
+          <Item.Root variant="outline" size="sm" class="block p-0">
             <Field.Field orientation="horizontal" class="p-3">
               <Checkbox
                 id={`include-${accountId}-${item.id}`}
@@ -97,8 +99,8 @@
                 disabled={store.isSaving}
                 onCheckedChange={(checked) => store.toggle(item.id, checked)}
               />
-              <Field.Content>
-                <Field.Label for={`include-${accountId}-${item.id}`}>{item.name}</Field.Label>
+              <Field.Content class="min-w-0">
+                <Field.Label class="break-all" for={`include-${accountId}-${item.id}`}>{item.name}</Field.Label>
                 <Field.Description>
                   Sending: {sendingReady(item) ? "ready" : "pending or disabled"} ·
                   Receiving: {item.capabilities?.receiving ?? "unknown"} · DNS: {item.status.replaceAll("_", " ")}
@@ -121,7 +123,7 @@
                 {/if}
               </Collapsible.Content>
             </Collapsible.Root>
-          </div>
+          </Item.Root>
         {/each}
       </Field.Group>
       {#if store.missingIds.length > 0}
@@ -145,7 +147,7 @@
       {/if}
     {/if}
   </Field.Set>
-  {#if actionError}<p class="text-sm text-destructive" role="alert">{actionError}</p>{/if}
+  {#if actionError}<Field.Error>{actionError}</Field.Error>{/if}
   {#if showCreate}
     <CreateDomainForm isCreating={creator.isCreating} onBack={() => { showCreate = false; }} onCreate={create} />
   {:else if !store.isLoading && !store.error}
