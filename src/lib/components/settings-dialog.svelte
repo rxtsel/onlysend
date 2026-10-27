@@ -2,7 +2,7 @@
   import * as Breadcrumb from "@/lib/components/ui/breadcrumb";
   import * as Dialog from "@/lib/components/ui/dialog";
   import * as Sidebar from "@/lib/components/ui/sidebar";
-  import { Mail, Settings, Plug, Globe, Info, Bell } from "@lucide/svelte";
+  import { Mail, Plug, Globe, Info, Bell } from "@lucide/svelte";
   import * as Select from "$lib/components/ui/select";
   const panels = {
     "Sender options": () => import("$lib/features/sending/components/settings-sender-options.svelte"),
@@ -21,10 +21,12 @@
 
   let open = $state(false);
   let activeItem = $state(nav[0].name);
+  let opener: HTMLElement | null = null;
 
   // Other components can request the dialog programmatically:
   //   window.dispatchEvent(new CustomEvent("open-settings", { detail: { section: "Connection" } }))
   function handleOpenSettings(e: Event) {
+    if (!open && document.activeElement instanceof HTMLElement) opener = document.activeElement;
     const requested = (e as CustomEvent<{ section?: string }>).detail?.section;
     const section = requested === "Domains" ? "Domains & receiving" : requested;
     if (section && nav.some((item) => item.name === section)) {
@@ -42,28 +44,24 @@
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Trigger>
-    {#snippet child({ props })}
-      <Sidebar.MenuButton {...props} class="h-10 gap-4" aria-label="Settings" tooltipContent="Settings">
-        <Settings /><span class="group-data-[collapsible=icon]:hidden">Settings</span>
-      </Sidebar.MenuButton>
-    {/snippet}
-  </Dialog.Trigger>
   <Dialog.Content
-    class="overflow-hidden p-0 md:max-h-[500px] md:max-w-[700px] lg:max-w-[800px]"
+    class="w-[calc(100vw-2rem)] max-w-[860px] overflow-hidden p-0 sm:max-w-[860px]"
     trapFocus={false}
+    onCloseAutoFocus={(event) => {
+      if (opener?.isConnected) { event.preventDefault(); opener.focus(); }
+    }}
   >
     <Dialog.Title class="sr-only">Settings</Dialog.Title>
     <Dialog.Description class="sr-only"
       >Customize your settings here.</Dialog.Description
     >
-    <Sidebar.Provider class="items-start">
+    <Sidebar.Provider class="min-h-0 items-stretch">
       <Sidebar.Root
         collapsible="none"
-        class="hidden md:flex"
-        style="--sidebar-width: 11rem"
+        class="hidden shrink-0 md:flex"
+        style="--sidebar-width: 14rem"
       >
-        <Sidebar.Content>
+        <Sidebar.Content class="overflow-x-hidden">
           <Sidebar.Group>
             <Sidebar.GroupContent>
               <Sidebar.Menu>
@@ -87,7 +85,7 @@
           </Sidebar.Group>
         </Sidebar.Content>
       </Sidebar.Root>
-      <main class="flex h-[480px] flex-1 flex-col overflow-hidden">
+      <main class="flex h-[min(480px,calc(100svh-2rem))] min-w-0 flex-1 flex-col overflow-hidden">
         <header
           class="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
         >
@@ -117,7 +115,7 @@
             </div>
           </div>
         </header>
-        <div class="flex flex-1 flex-col gap-4 overflow-y-auto p-4 pt-0">
+        <div class="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto p-4 pt-0">
           {#if open}
             {#if activeItem === "Connection"}
               {#await import("$lib/features/auth/components/settings-connection.svelte")}
