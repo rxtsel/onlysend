@@ -9,7 +9,7 @@ use ammonia::Builder;
 use resend_rs::types::GetInboundEmailOptions;
 use resend_rs::{types::InboundAttachment, Resend};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Wry};
+use tauri::{AppHandle, Emitter, Wry};
 
 use crate::oauth;
 use crate::permissions;
@@ -191,8 +191,7 @@ pub(crate) async fn fetch_inbound_page(
     email_page(items, has_more, after, |email: &InboundEmailDto| &email.id)
 }
 
-#[tauri::command]
-pub async fn get_inbound_email(
+pub(crate) async fn get_inbound_email(
     app: AppHandle<Wry>,
     account_id: String,
     email_id: String,
@@ -243,6 +242,34 @@ pub async fn get_inbound_email(
         search_text,
     )
     .await?;
+    Ok(detail)
+}
+
+#[tauri::command]
+pub async fn open_inbound_email(
+    app: AppHandle<Wry>,
+    account_id: String,
+    email_id: String,
+) -> Result<InboundEmailDetailDto, String> {
+    let detail = get_inbound_email(app.clone(), account_id.clone(), email_id.clone()).await?;
+    if crate::infrastructure::settings_store::mark_inbound_read(
+        app.clone(),
+        account_id.clone(),
+        email_id.clone(),
+    )
+    .await
+    .is_err()
+    {
+        eprintln!("[WARN] Could not mark inbox message as read");
+    } else if app
+        .emit(
+            "inbox-read",
+            serde_json::json!({ "accountId": account_id, "emailId": email_id }),
+        )
+        .is_err()
+    {
+        eprintln!("[WARN] Could not publish inbox read state");
+    }
     Ok(detail)
 }
 

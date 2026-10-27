@@ -26,8 +26,7 @@ pub struct SentEmail {
     pub reply_to: Option<String>,
 }
 
-#[tauri::command]
-pub async fn list_sent_emails(
+pub(crate) async fn list_sent_emails(
     app: AppHandle<Wry>,
     account_id: String,
     limit: Option<usize>,

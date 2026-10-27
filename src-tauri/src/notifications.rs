@@ -156,8 +156,7 @@ fn should_refresh(last: Option<Instant>, requested: Instant, minutes: u32, force
     })
 }
 
-#[tauri::command]
-pub async fn refresh_inbox(
+pub(crate) async fn refresh_inbox(
     app: AppHandle<Wry>,
     account_id: String,
     force: bool,

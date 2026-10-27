@@ -216,19 +216,7 @@ pub(crate) fn save_from_emails(
 /* ---------------------------------------------------------
  * Inbound read markers (per-account)
  * --------------------------------------------------------- */
-#[tauri::command]
-pub async fn get_read_inbound_ids(
-    app: AppHandle<Wry>,
-    account_id: String,
-) -> Result<Vec<String>, String> {
-    let database = local_state::for_account(&app, &account_id).await?;
-    database
-        .run(move |connection| local_state::read_ids(connection, &account_id))
-        .await
-}
-
-#[tauri::command]
-pub async fn mark_inbound_read(
+pub(crate) async fn mark_inbound_read(
     app: AppHandle<Wry>,
     account_id: String,
     email_id: String,

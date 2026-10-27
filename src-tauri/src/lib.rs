@@ -2,6 +2,7 @@ mod config;
 mod domains;
 mod email;
 mod inbound;
+mod mailbox;
 mod notifications;
 mod oauth;
 mod permissions;
@@ -128,21 +129,16 @@ pub fn run() {
             domains::get_domain,
             domains::verify_domain,
             domains::set_domain_receiving,
-            infrastructure::database::mail::get_cached_mail_page,
-            infrastructure::database::mail::query_local_mail,
             infrastructure::database::sync::refresh_mailbox,
             infrastructure::database::sync::get_mail_archive_status,
-            notifications::refresh_inbox,
             notifications::get_inbox_poll_minutes,
             notifications::set_inbox_poll_minutes,
-            inbound::get_inbound_email,
-            infrastructure::settings_store::get_read_inbound_ids,
-            infrastructure::settings_store::mark_inbound_read,
+            inbound::open_inbound_email,
+            mailbox::load_mail_list,
             config::list_from_emails,
             config::create_from_email,
             config::update_from_email,
             config::delete_from_email,
-            sent::list_sent_emails,
             sent::get_sent_email
         ])
         .run(tauri::generate_context!())

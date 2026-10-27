@@ -705,3 +705,121 @@ async fn installed_sdk_history_is_archived_and_traversable_after_restart() {
         assert_eq!(actual, expected);
     }
 }
+
+#[tokio::test]
+async fn list_previews_and_read_state_are_batched_and_account_scoped() {
+    let temporary = TemporaryDatabase::new();
+    let database = temporary.database();
+    for owner in ["a", "b"] {
+        mail::store_page(
+            &database,
+            owner.into(),
+            Mailbox::Inbox,
+            2,
+            None,
+            &page(vec![message("same", "Subject", "2026-01-01T00:00:00Z")]),
+        )
+        .await
+        .unwrap();
+    }
+    mail::store_detail(
+        &database,
+        "a".into(),
+        Mailbox::Inbox,
+        "same".into(),
+        &json!({"text":"hello"}),
+        "hello   from\n the archive".into(),
+    )
+    .await
+    .unwrap();
+    database
+        .run(|connection| {
+            connection.execute("INSERT INTO read_markers VALUES ('a','inbox','same')", [])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let a = mail::query(&database, "a".into(), query(Mailbox::Inbox))
+        .await
+        .unwrap();
+    assert_eq!(a.items[0]["preview"], "hello from the archive");
+    assert_eq!(a.items[0]["isRead"], true);
+    let b = mail::query(&database, "b".into(), query(Mailbox::Inbox))
+        .await
+        .unwrap();
+    assert_eq!(b.items[0]["preview"], "");
+    assert_eq!(b.items[0]["isRead"], false);
+}
+
+#[tokio::test]
+async fn unchanged_metadata_does_not_rewrite_relations_or_fts() {
+    let temporary = TemporaryDatabase::new();
+    let database = temporary.database();
+    let data = page(vec![message("one", "Subject", "2026-01-01T00:00:00Z")]);
+    mail::store_page(&database, "a".into(), Mailbox::Inbox, 2, None, &data)
+        .await
+        .unwrap();
+    let before = database
+        .run(|connection| Ok(connection.total_changes()))
+        .await
+        .unwrap();
+    mail::store_page(&database, "a".into(), Mailbox::Inbox, 2, None, &data)
+        .await
+        .unwrap();
+    let after = database
+        .run(|connection| Ok(connection.total_changes()))
+        .await
+        .unwrap();
+    // Only the remote-page timestamp is refreshed, not the email/FTS graph.
+    assert_eq!(after - before, 1);
+}
+
+#[tokio::test]
+async fn navigation_latest_snapshot_and_ordered_list_use_covering_indexes() {
+    let temporary = TemporaryDatabase::new();
+    let database = temporary.database();
+    database.run(|connection| {
+        let queries = [
+            ("EXPLAIN QUERY PLAN SELECT DISTINCT domain FROM email_domains WHERE account_id='a' ORDER BY domain", "email_domains_navigation"),
+            ("EXPLAIN QUERY PLAN SELECT MAX(downloaded_at) FROM remote_pages WHERE account_id='a' AND mailbox='inbox'", "remote_pages_downloaded"),
+            ("EXPLAIN QUERY PLAN SELECT e.metadata_json,substr(e.search_body,1,240),m.email_id IS NOT NULL FROM emails e LEFT JOIN read_markers m ON m.account_id=e.account_id AND m.mailbox=e.mailbox AND m.email_id=e.email_id WHERE e.account_id='a' AND e.mailbox='inbox' ORDER BY e.created_at_ms DESC,e.email_id DESC LIMIT 51", "emails_date"),
+        ];
+        for (sql, index) in queries {
+            let plan = connection.prepare(sql)?.query_map([], |row| row.get::<_, String>(3))?
+                .collect::<rusqlite::Result<Vec<_>>>()?.join("\n");
+            assert!(plan.contains(index), "{plan}");
+            assert!(!plan.contains("USE TEMP B-TREE"), "{plan}");
+        }
+        Ok(())
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn malformed_list_projection_returns_an_error_without_poisoning_the_database() {
+    let temporary = TemporaryDatabase::new();
+    let database = temporary.database();
+    mail::store_page(
+        &database,
+        "a".into(),
+        Mailbox::Inbox,
+        2,
+        None,
+        &page(vec![message("one", "Subject", "2026-01-01T00:00:00Z")]),
+    )
+    .await
+    .unwrap();
+    database
+        .run(|connection| {
+            connection.execute(
+                "UPDATE emails SET metadata_json='[]' WHERE account_id='a'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert!(mail::query(&database, "a".into(), query(Mailbox::Inbox))
+        .await
+        .is_err());
+    assert!(database.initialize().await.is_ok());
+}

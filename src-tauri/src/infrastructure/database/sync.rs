@@ -4,7 +4,29 @@ use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rusqlite::params;
-use tauri::{AppHandle, Wry};
+use tauri::{AppHandle, Emitter, Wry};
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ArchiveUpdated {
+    account_id: String,
+    mailbox: Mailbox,
+}
+
+fn publish_progress(app: &AppHandle<Wry>, account: &str, mailbox: Mailbox) {
+    if app
+        .emit(
+            "mail-archive-updated",
+            ArchiveUpdated {
+                account_id: account.to_string(),
+                mailbox,
+            },
+        )
+        .is_err()
+    {
+        eprintln!("[WARN] Could not publish archive progress");
+    }
+}
 
 use super::{
     local_state,
@@ -70,18 +92,21 @@ pub(crate) async fn start(
         connection.execute("INSERT INTO mailbox_sync VALUES (?1,?2,unixepoch(),NULL,NULL,NULL) ON CONFLICT(account_id,mailbox) DO UPDATE SET started_at=excluded.started_at,metadata_completed_at=NULL,completed_at=NULL,last_error=NULL", params![id,mailbox.as_str()])?;
         Ok(())
     }).await?;
+    publish_progress(app, &account, mailbox);
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         let _flight = flight;
         let result = scan(&handle, &database, &account, mailbox, limit).await;
         let error = result.err();
         let completed = error.is_none();
+        let owner = account.clone();
         if database.run(move |connection| {
             connection.execute("UPDATE mailbox_sync SET completed_at=CASE WHEN ?3 THEN unixepoch() ELSE NULL END,last_error=?4 WHERE account_id=?1 AND mailbox=?2", params![account,mailbox.as_str(),completed,error])?;
             Ok(())
         }).await.is_err() {
             eprintln!("[WARN] Could not persist mailbox synchronization status");
         }
+        publish_progress(&handle, &owner, mailbox);
     });
     Ok(true)
 }
@@ -96,6 +121,7 @@ async fn scan(
     let mut after = None;
     let mut cursors = HashSet::new();
     let mut bodies = Vec::new();
+    let mut last_progress = Instant::now();
     loop {
         // Removed accounts stop before any further network requests.
         crate::infrastructure::credentials_store::account_credential(app, account)?;
@@ -164,6 +190,10 @@ async fn scan(
             }
         };
         bodies.extend(ids);
+        if last_progress.elapsed() >= Duration::from_secs(2) {
+            publish_progress(app, account, mailbox);
+            last_progress = Instant::now();
+        }
         if !more {
             break;
         }
@@ -180,6 +210,7 @@ async fn scan(
         connection.execute("UPDATE mailbox_sync SET metadata_completed_at=unixepoch() WHERE account_id=?1 AND mailbox=?2", params![id,mailbox.as_str()])?;
         Ok(())
     }).await?;
+    publish_progress(app, account, mailbox);
     for id in bodies {
         crate::infrastructure::credentials_store::account_credential(app, account)?;
         if mail::cached_detail(
@@ -208,6 +239,10 @@ async fn scan(
         tokio::time::timeout(Duration::from_secs(30), download)
             .await
             .map_err(|_| "Email body download timed out")??;
+        if last_progress.elapsed() >= Duration::from_secs(2) {
+            publish_progress(app, account, mailbox);
+            last_progress = Instant::now();
+        }
     }
     Ok(())
 }
@@ -265,7 +300,9 @@ pub async fn refresh_mailbox(
     match mailbox {
         Mailbox::Inbox => crate::notifications::refresh_inbox(app, account_id, true).await,
         Mailbox::Sent => {
-            let page = crate::sent::list_sent_emails(app.clone(), account_id.clone(), Some(100), None).await?;
+            let page =
+                crate::sent::list_sent_emails(app.clone(), account_id.clone(), Some(100), None)
+                    .await?;
             if let Some(error) = page.cache.and_then(|cache| cache.error) {
                 return Err(error);
             }

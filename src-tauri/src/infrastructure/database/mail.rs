@@ -3,9 +3,8 @@
 use rusqlite::{params, params_from_iter, types::Value as SqlValue, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Wry};
 
-use super::{local_state, Database};
+use super::Database;
 use crate::infrastructure::pagination::{EmailPage, PageCache};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -160,10 +159,11 @@ async fn write_page<T: Serialize>(
             let subject = item["subject"].as_str().ok_or(rusqlite::Error::InvalidQuery)?;
             let recipients: Vec<_> = ["to", "cc", "bcc"].into_iter().flat_map(|key| strings(item, key)).collect();
             let metadata = serde_json::to_string(item).map_err(json_error)?;
-            tx.execute("INSERT INTO emails(account_id,mailbox,email_id,created_at_ms,subject,sender,subject_sort,sender_sort,recipient_text,search_body,metadata_json,downloaded_at)
+            let changed = tx.execute("INSERT INTO emails(account_id,mailbox,email_id,created_at_ms,subject,sender,subject_sort,sender_sort,recipient_text,search_body,metadata_json,downloaded_at)
                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,COALESCE((SELECT search_text FROM email_bodies WHERE account_id=?1 AND mailbox=?2 AND email_id=?3),''),?10,unixepoch())
-                ON CONFLICT(account_id,mailbox,email_id) DO UPDATE SET created_at_ms=excluded.created_at_ms,subject=excluded.subject,sender=excluded.sender,subject_sort=excluded.subject_sort,sender_sort=excluded.sender_sort,recipient_text=excluded.recipient_text,metadata_json=excluded.metadata_json,downloaded_at=excluded.downloaded_at",
+                ON CONFLICT(account_id,mailbox,email_id) DO UPDATE SET created_at_ms=excluded.created_at_ms,subject=excluded.subject,sender=excluded.sender,subject_sort=excluded.subject_sort,sender_sort=excluded.sender_sort,recipient_text=excluded.recipient_text,metadata_json=excluded.metadata_json,downloaded_at=excluded.downloaded_at WHERE emails.metadata_json<>excluded.metadata_json",
                 params![account_id, mailbox.as_str(), id, date, subject, sender, subject.to_lowercase(), sender.to_lowercase(), recipients.join(" "), metadata])?;
+            if changed == 0 { continue; }
             tx.execute("DELETE FROM email_domains WHERE account_id=?1 AND mailbox=?2 AND email_id=?3", params![account_id, mailbox.as_str(), id])?;
             let domains = if mailbox == Mailbox::Inbox { strings(item, "domains") } else {
                 address(sender).rsplit_once('@').map(|(_, host)| vec![host.to_string()]).unwrap_or_default()
@@ -212,27 +212,6 @@ pub(crate) async fn cached_page<T: for<'de> Deserialize<'de>>(
     }
 }
 
-#[tauri::command]
-pub async fn get_cached_mail_page(
-    app: AppHandle<Wry>,
-    account_id: String,
-    mailbox: Mailbox,
-    limit: Option<usize>,
-    after: Option<String>,
-) -> Result<Option<EmailPage<Value>>, String> {
-    let _ = crate::infrastructure::pagination::list_options(limit, after.as_deref())?;
-    let database = local_state::for_account(&app, &account_id).await?;
-    cached_page(
-        &database,
-        account_id,
-        mailbox,
-        limit.unwrap_or(12),
-        after,
-        None,
-    )
-    .await
-}
-
 pub(crate) async fn store_detail<T: Serialize>(
     database: &Database,
     account_id: String,
@@ -264,7 +243,7 @@ pub enum Sort {
     SenderDesc,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalCursor {
     value: String,
@@ -272,7 +251,7 @@ pub struct LocalCursor {
     query_key: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LocalQuery {
     pub mailbox: Mailbox,
@@ -368,7 +347,7 @@ pub(crate) async fn query(
         Sort::SenderAsc => ("sender_sort", false, false),
         Sort::SenderDesc => ("sender_sort", true, false),
     };
-    let mut sql = format!("SELECT e.metadata_json,CAST(e.{column} AS TEXT),e.email_id FROM emails e WHERE e.account_id=? AND e.mailbox=?");
+    let mut sql = format!("SELECT e.metadata_json,CAST(e.{column} AS TEXT),e.email_id,substr(e.search_body,1,240),m.email_id IS NOT NULL FROM emails e LEFT JOIN read_markers m ON m.account_id=e.account_id AND m.mailbox=e.mailbox AND m.email_id=e.email_id WHERE e.account_id=? AND e.mailbox=?");
     let mut values: Vec<SqlValue> = vec![
         account.clone().into(),
         query.mailbox.as_str().to_string().into(),
@@ -418,13 +397,15 @@ pub(crate) async fn query(
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, bool>(4)?,
                     ))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             let has_more = rows.len() > limit;
             rows.truncate(limit);
             let cursor = if has_more {
-                rows.last().map(|(_, value, id)| LocalCursor {
+                rows.last().map(|(_, value, id, _, _)| LocalCursor {
                     value: value.clone(),
                     email_id: id.clone(),
                     query_key: key,
@@ -434,7 +415,16 @@ pub(crate) async fn query(
             };
             let items = rows
                 .into_iter()
-                .map(|(json, _, _)| serde_json::from_str(&json).map_err(json_error))
+                .map(|(json, _, _, preview, is_read)| {
+                    let mut item: Value = serde_json::from_str(&json).map_err(json_error)?;
+                    let fields = item.as_object_mut().ok_or(rusqlite::Error::InvalidQuery)?;
+                    fields.insert(
+                        "preview".into(),
+                        Value::String(preview.split_whitespace().collect::<Vec<_>>().join(" ")),
+                    );
+                    fields.insert("isRead".into(), Value::Bool(is_read));
+                    Ok(item)
+                })
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             let sync = sync_status(connection, &account, query.mailbox)?;
             let is_partial = sync
@@ -455,16 +445,6 @@ pub(crate) async fn query(
             })
         })
         .await
-}
-
-#[tauri::command]
-pub async fn query_local_mail(
-    app: AppHandle<Wry>,
-    account_id: String,
-    query: LocalQuery,
-) -> Result<LocalPage, String> {
-    let database = local_state::for_account(&app, &account_id).await?;
-    self::query(&database, account_id, query).await
 }
 
 #[cfg(test)]
