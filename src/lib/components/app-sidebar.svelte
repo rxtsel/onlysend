@@ -50,7 +50,7 @@
       </Sidebar.MenuItem>
     </Sidebar.Menu>
   </Sidebar.Header>
-  <Sidebar.Content class="pt-4">
+  <Sidebar.Content class="overflow-x-hidden pt-4">
     <nav aria-label="Mailboxes">
       <Sidebar.Group class="px-3 group-data-[collapsible=icon]:px-2">
         <Sidebar.GroupLabel>Mailboxes</Sidebar.GroupLabel>
