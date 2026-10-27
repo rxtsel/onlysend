@@ -1,47 +1,31 @@
-/** Formats Resend's ISO timestamps ("2023-04-03T22:13:42.674981+00:00")
- *  into compact relative labels ("14:32", "Yesterday", "3 days ago"). */
-export function formatEmailDate(dateString: string): string {
-  try {
-    // Try parsing directly first
-    let date: Date = new Date(dateString);
+const time = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+const shortDate = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+const longDate = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
+const fullDate = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-    // If invalid, try cleaning the string
-    if (isNaN(date.getTime())) {
-      // Remove microseconds if present (keep only milliseconds)
-      const cleaned = dateString.replace(/(\.\d{3})\d+/, "$1");
-      date = new Date(cleaned);
-    }
+function parseDate(value: string): Date {
+  // Resend also returns PostgreSQL timestamps with microseconds/hour-only offsets.
+  const normalized = value.trim()
+    .replace(" ", "T")
+    .replace(/\s+([+-]\d{2}(?::?\d{2})?)$/, "$1")
+    .replace(/(\.\d{3})\d+/, "$1")
+    .replace(/([+-]\d{2})$/, "$1:00");
+  return new Date(normalized);
+}
 
-    if (isNaN(date.getTime())) {
-      console.warn("Invalid date format:", dateString);
-      return dateString;
-    }
+export function formatEmailDate(value: string): string {
+  const date = parseDate(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const now = new Date();
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const day = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  const days = (today - day) / 86_400_000;
+  if (days === 0) return time.format(date);
+  if (days === 1) return "Yesterday";
+  return (date.getFullYear() === now.getFullYear() ? shortDate : longDate).format(date);
+}
 
-    const now = new Date();
-    const diffInMs = now.getTime() - date.getTime();
-    const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
-
-    if (diffInDays === 0) {
-      return date.toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-    } else if (diffInDays === 1) {
-      return "Yesterday";
-    } else if (diffInDays < 7) {
-      return `${diffInDays} days ago`;
-    } else if (diffInDays < 30) {
-      const weeks = Math.floor(diffInDays / 7);
-      return `${weeks} week${weeks > 1 ? "s" : ""} ago`;
-    } else {
-      return date.toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
-      });
-    }
-  } catch (error) {
-    console.error("Error formatting date:", dateString, error);
-    return dateString;
-  }
+export function formatFullEmailDate(value: string): string {
+  const date = parseDate(value);
+  return Number.isNaN(date.getTime()) ? value : fullDate.format(date);
 }
