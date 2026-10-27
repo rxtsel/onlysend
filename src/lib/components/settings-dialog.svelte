@@ -4,12 +4,13 @@
   import * as Sidebar from "@/lib/components/ui/sidebar";
   import { Button } from "@/lib/components/ui/button";
   import { Mail, Settings, Plug, Globe, Info, Bell } from "@lucide/svelte";
-  import SettingsAbout from "$lib/components/settings-about.svelte";
-  import SettingsNotifications from "$lib/components/settings-notifications.svelte";
-  import SettingsDomains from "$lib/features/domains/components/settings-domains.svelte";
   import * as Select from "$lib/components/ui/select";
-  import SettingsSenderOptions from "@/lib/features/sending/components/settings-sender-options.svelte";
-  import SettingsConnection from "@/lib/features/auth/components/settings-connection.svelte";
+  const panels = {
+    "Sender options": () => import("$lib/features/sending/components/settings-sender-options.svelte"),
+    "Domains & receiving": () => import("$lib/features/domains/components/settings-domains.svelte"),
+    Notifications: () => import("$lib/components/settings-notifications.svelte"),
+    About: () => import("$lib/components/settings-about.svelte"),
+  };
 
   const nav = [
     { name: "Sender options", icon: Mail },
@@ -118,16 +119,24 @@
           </div>
         </header>
         <div class="flex flex-1 flex-col gap-4 overflow-y-auto p-4 pt-0">
-          {#if activeItem === "Sender options"}
-            <SettingsSenderOptions />
-          {:else if activeItem === "Connection"}
-            <SettingsConnection onRequestClose={() => (open = false)} />
-          {:else if activeItem === "Domains & receiving"}
-            <SettingsDomains />
-          {:else if activeItem === "Notifications"}
-            <SettingsNotifications />
-          {:else if activeItem === "About"}
-            <SettingsAbout />
+          {#if open}
+            {#if activeItem === "Connection"}
+              {#await import("$lib/features/auth/components/settings-connection.svelte")}
+                <p class="text-sm text-muted-foreground" role="status">Loading…</p>
+              {:then { default: Connection }}
+                <Connection onRequestClose={() => (open = false)} />
+              {:catch}
+                <p class="text-sm text-destructive" role="alert">Couldn't load settings. Close and reopen to try again.</p>
+              {/await}
+            {:else}
+              {#await panels[activeItem as keyof typeof panels]()}
+                <p class="text-sm text-muted-foreground" role="status">Loading…</p>
+              {:then { default: Panel }}
+                <Panel />
+              {:catch}
+                <p class="text-sm text-destructive" role="alert">Couldn't load settings. Close and reopen to try again.</p>
+              {/await}
+            {/if}
           {/if}
         </div>
       </main>

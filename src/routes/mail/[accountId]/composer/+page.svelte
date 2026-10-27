@@ -4,7 +4,6 @@
   import { registerDraftGuard, allowAccountNavigation } from "$lib/features/auth/draft-navigation";
   const accountId = useAccountId();
   import * as Popover from "$lib/components/ui/popover";
-  import { invalidateEmailCache } from "@/lib/shared/sent";
   import { Input } from "@/lib/components/ui/input";
   import * as Select from "$lib/components/ui/select";
   import * as Field from "@/lib/components/ui/field";
@@ -96,7 +95,6 @@
     try {
       await invoke("send_email", { accountId, data: parsed.data });
 
-      invalidateEmailCache(accountId);
       if (disposed) return;
       sent = true;
       // Reset form and states

@@ -7,19 +7,16 @@
     SparklesIcon,
     UnplugIcon,
   } from "@lucide/svelte";
-  import { Blobatar } from "@blobatar/svelte";
+  import AccountAvatar from "./account-avatar.svelte";
 
   import * as DropdownMenu from "@/lib/components/ui/dropdown-menu/index.js";
   import * as Sidebar from "@/lib/components/ui/sidebar/index.js";
   import { useSidebar } from "@/lib/components/ui/sidebar/index.js";
   import {
-    disconnectResend,
-    getConnectionStatus,
     listAccounts,
     type ConnectionMethod,
     type AccountMeta,
   } from "@/lib/shared/api/auth";
-  import { getActiveDomain } from "@/lib/shared/api/domains";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
@@ -33,7 +30,6 @@
   const sidebar = useSidebar();
 
   const connection = new ConnectionStore(accountId);
-  const activeDomain = $derived(connection.activeDomain);
   let method = $state<ConnectionMethod>(null);
   let isDisconnecting = $state(false);
   let showDisconnectConfirm = $state(false);
@@ -50,11 +46,10 @@
   );
 
   async function loadData() {
-    await connection.load();
-    method = connection.status.method;
-
     try {
       accounts = await listAccounts();
+      const storedMethod = accounts.find((account) => account.id === accountId)?.method;
+      method = storedMethod === "oauth" || storedMethod === "api_key" ? storedMethod : null;
       activeAccountId = accountId;
     } catch (err) {
       console.error("Error loading accounts:", err);
@@ -103,7 +98,7 @@
             tooltipContentProps={{ hidden: false }}
             class="size-8 justify-center p-0 [&>svg]:size-8 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
           >
-            <Blobatar name={accountId} size={32} class="rounded-lg" />
+            <AccountAvatar name={accountId} size={32} />
           </Sidebar.MenuButton>
         {/snippet}
       </DropdownMenu.Trigger>
@@ -115,11 +110,7 @@
       >
         <DropdownMenu.Label class="p-0 font-normal">
           <div class="flex items-center gap-2 px-1 py-1.5 text-start text-sm">
-            <Blobatar
-              name={accountId}
-              size={32}
-              class="rounded-lg"
-            />
+            <AccountAvatar name={accountId} size={32} />
             <div class="grid flex-1 text-start text-sm leading-tight">
               <span class="truncate font-medium">
                 {accounts.find((account) => account.id === accountId)?.label ?? "Account"}
@@ -141,7 +132,7 @@
                 onclick={() => handleSwitchAccount(account.id)}
                 class={account.id === activeAccountId ? "bg-accent" : ""}
               >
-                <Blobatar name={account.id} size={20} class="rounded" />
+                <AccountAvatar name={account.id} size={20} />
                 <span class="truncate">{account.label}</span>
                 {#if account.id === activeAccountId}
                   <CheckIcon class="ms-auto size-3 text-primary" />

@@ -1,68 +1,31 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { EmailPage } from "./email-page";
-import { errorMessage } from "./utils/errors";
 
 export type Mailbox = "inbox" | "sent";
-export type MailSort = "newest" | "oldest" | "subjectAsc" | "subjectDesc" | "senderAsc" | "senderDesc";
-export interface LocalCursor { value: string; emailId: string; queryKey: string }
 export interface MailSyncStatus { startedAt: number; metadataCompletedAt: number | null; completedAt: number | null; lastError: string | null }
-export interface LocalMailQuery {
-  mailbox: Mailbox;
-  limit?: number;
-  sort?: MailSort;
+export interface MailListItem {
+  id: string;
+  from: string;
+  to: string[];
+  subject: string;
+  createdAt: string;
+  domains?: string[];
   domain?: string;
-  recipient?: string;
-  search?: string;
-  unreadOnly?: boolean;
-  after?: LocalCursor | null;
-}
-export interface LocalMailPage<T> {
-  items: T[];
-  hasMore: boolean;
-  nextCursor: LocalCursor | null;
-  sync: MailSyncStatus | null;
-  isPartial: boolean;
-  downloadedAt: number | null;
+  preview: string;
+  isRead: boolean;
 }
 
-/** Exact downloaded remote page; its cursor is NOT a local query keyset. */
-export function getCachedMailPage<T>(accountId: string, mailbox: Mailbox, limit = 16, after: string | null = null): Promise<EmailPage<T> | null> {
-  return invoke("get_cached_mail_page", { accountId, mailbox, limit, after });
+export interface MailListRequest {
+  mailbox: Mailbox;
+  limit: number;
+  after: string | null;
+  domain: string | null;
+  search: string | null;
+  refresh: boolean;
 }
 
-function asListPage<T>(local: LocalMailPage<T>, cache?: EmailPage<T>["cache"]): EmailPage<T> {
-  return { items: local.items, hasMore: local.hasMore, nextCursor: local.nextCursor ? JSON.stringify(local.nextCursor) : null, ...(cache ? { cache } : {}) };
-}
-
-/** Disk-only list hydration. Empty initialized databases are not empty history. */
-export async function getLocalArchivePage<T>(accountId: string, mailbox: Mailbox, limit: number): Promise<EmailPage<T> | null> {
-  const local = await queryLocalMail<T>(accountId, { mailbox, limit });
-  if (local.downloadedAt === null) return null;
-  return asListPage(local, { downloadedAt: local.downloadedAt, error: null });
-}
-
-/** Visible list is the retained local archive, never a remote-page slice. */
-export async function loadArchivePage<T>(
-  accountId: string, mailbox: Mailbox, limit: number, after: string | null,
-  refreshRemote: (limit: number) => Promise<EmailPage<T> | void>,
-): Promise<EmailPage<T>> {
-  let cache: EmailPage<T>["cache"];
-  let remoteError: string | null = null;
-  if (after === null) {
-    try { cache = (await refreshRemote(limit))?.cache; }
-    catch (error) { remoteError = errorMessage(error, "Remote refresh failed"); }
-  }
-  const local = await queryLocalMail<T>(accountId, { mailbox, limit, after: after ? JSON.parse(after) : null });
-  if (remoteError) {
-    if (local.downloadedAt === null) throw new Error(remoteError);
-    cache = { downloadedAt: local.downloadedAt, error: remoteError };
-  }
-  return asListPage(local, cache);
-}
-
-/** Search/sort/filter the entire downloaded archive, not only visible pages. */
-export function queryLocalMail<T>(accountId: string, query: LocalMailQuery): Promise<LocalMailPage<T>> {
-  return invoke("query_local_mail", { accountId, query });
+export function loadMailList(accountId: string, request: MailListRequest): Promise<EmailPage<MailListItem> & { domains: string[] }> {
+  return invoke("load_mail_list", { accountId, request });
 }
 
 export interface MailArchiveStatus {

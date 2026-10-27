@@ -1,463 +1,96 @@
-<script lang="ts" module>
-    import InboxIcon from "@lucide/svelte/icons/inbox";
-    import SendIcon from "@lucide/svelte/icons/send";
-    import PlusIcon from "@lucide/svelte/icons/plus";
-    import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
-    import BugIcon from "@lucide/svelte/icons/bug";
-    import SettingsDialog from "./settings-dialog.svelte";
-</script>
-
 <script lang="ts">
+  import { Inbox, Send, SquarePen, Bug, Globe } from "@lucide/svelte";
+  import { page } from "$app/state";
+  import { goto } from "$app/navigation";
+  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { toast } from "svelte-sonner";
+  import * as Sidebar from "$lib/components/ui/sidebar";
+  import { Button } from "$lib/components/ui/button";
+  import { useSidebar } from "$lib/components/ui/sidebar";
   import { useAccountId } from "$lib/features/auth/account-context";
   import { mailUrl } from "$lib/features/auth/mail-routes";
+  import type { Mailbox } from "$lib/shared/local-mail";
+  import { errorMessage } from "$lib/shared/utils/errors";
+  import SettingsDialog from "./settings-dialog.svelte";
+  import NavUser from "./nav-user.svelte";
+
+  let { mailbox, domains, domain = $bindable(null) }: {
+    mailbox: Mailbox;
+    domains: string[];
+    domain?: string | null;
+  } = $props();
   const accountId = useAccountId();
-    import NavUser from "./nav-user.svelte";
-    import { useSidebar } from "@/lib/components/ui/sidebar/context.svelte.js";
-    import * as Sidebar from "@/lib/components/ui/sidebar/index.js";
-    import { Button } from "@/lib/components/ui/button/index.js";
-    import type { ComponentProps } from "svelte";
-    import { goto } from "$app/navigation";
-    import { page } from "$app/state";
-    import { onMount, onDestroy, untrack } from "svelte";
-    import { listen } from "@tauri-apps/api/event";
-    import { toast } from "svelte-sonner";
-    import { openUrl } from "@tauri-apps/plugin-opener";
-    import { Loader } from "@lucide/svelte";
-    import type { InboundEmail } from "../shared/inbound";
-    import type { SentEmail } from "../types";
-    import { listSentEmails } from "../shared/sent";
-    import {
-        getReadInboundIds,
-        refreshInbox,
-        markInboundRead,
-    } from "../shared/inbound";
-    import EmailListItem from "@/lib/features/inbox/components/email-list-item.svelte";
-import { authErrorToast, isAuthError } from "@/lib/shared/services/auth-toast.svelte";
-import { errorMessage } from "@/lib/shared/utils/errors";
-    import { createEmailList } from "../shared/email-list.svelte";
-    import { mailDomains } from "$lib/shared/mail-domains";
-    import { getLocalArchivePage, loadArchivePage, getMailArchiveStatus, refreshMailbox, type MailArchiveStatus } from "$lib/shared/local-mail";
+  const sidebar = useSidebar();
+  const composing = $derived(page.url.pathname === mailUrl(accountId, "composer"));
+  const folders = [
+    { label: "Inbox", value: "inbox" as const, icon: Inbox },
+    { label: "Sent", value: "sent" as const, icon: Send },
+  ];
 
-    import type { ArchiveFooterData } from "$lib/shared/archive-status";
+  function closeMobile() {
+    if (sidebar.isMobile) sidebar.setOpenMobile(false);
+  }
 
-    let {
-        ref = $bindable(null),
-        onArchiveStatusChange,
-        ...restProps
-    }: ComponentProps<typeof Sidebar.Root> & {
-        onArchiveStatusChange?: (accountId: string, mailbox: "inbox" | "sent", data: ArchiveFooterData) => void;
-    } = $props();
-
-    /* ---------------------------------------------------------
-     * MODE: which list the sidebar shows, driven by the route
-     * --------------------------------------------------------- */
-    type Mode = "inbox" | "sent";
-
-    const mode = $derived(
-        page.url.pathname.startsWith(mailUrl(accountId, "inbox")) ? ("inbox" as const) : ("sent" as const),
-    );
-
-    const data = {
-        navMain: [
-            { title: "Inbox", url: mailUrl(accountId, "inbox"), icon: InboxIcon, mode: "inbox" as const },
-            { title: "All Sent", url: mailUrl(accountId, "sent"), icon: SendIcon, mode: "sent" as const },
-        ],
-    };
-
-    const activeItem = $derived(
-        data.navMain.find((item) => item.mode === mode) ?? data.navMain[0],
-    );
-
-    const sidebar = useSidebar();
-    const PAGE_SIZE = 16;
-    let manualRefreshing = $state(false);
-
-    /* ---------------------------------------------------------
-     * DOMAIN FILTER (unified views, client-side filtering)
-     * --------------------------------------------------------- */
-    let domainFilter = $state<"all" | string>("all");
-
-    function domainOf(mail: InboundEmail | SentEmail): string {
-        return mailDomains(mail).join(", ");
-    }
-    const sentList = createEmailList<SentEmail>(
-        (limit, after) => loadArchivePage<SentEmail>(accountId, "sent", limit, after,
-            (size) => listSentEmails(accountId, size, null, true)),
-        PAGE_SIZE,
-        (limit) => getLocalArchivePage<SentEmail>(accountId, "sent", limit),
-    );
-
-    const inboxList = createEmailList<InboundEmail>(
-        (limit, after) => loadArchivePage<InboundEmail>(accountId, "inbox", limit, after,
-            () => refreshInbox(accountId)),
-        PAGE_SIZE,
-        (limit) => getLocalArchivePage<InboundEmail>(accountId, "inbox", limit),
-    );
-    let archiveStatus = $state<MailArchiveStatus | null>(null);
-    let archiveStatusMode = $state<Mode | null>(null);
-    let archiveStatusError = $state<string | null>(null);
-    async function refreshArchiveStatus() {
-        const currentMode = mode;
-        try {
-            const status = await getMailArchiveStatus(accountId, currentMode);
-            if (!disposed && mode === currentMode) {
-                const changed = archiveStatus !== null && archiveStatus.downloadedMessages !== status.downloadedMessages;
-                archiveStatus = status;
-                archiveStatusMode = currentMode;
-                archiveStatusError = null;
-                if (changed) void activeList.refreshCached().catch(() => {});
-            }
-        } catch (error) {
-            if (!disposed && mode === currentMode) {
-                archiveStatusMode = currentMode;
-                archiveStatusError = errorMessage(error, "Could not read local-copy status");
-            }
-        }
-    }
-
-    const activeList = $derived(mode === "inbox" ? inboxList : sentList);
-
-    /* ---------------------------------------------------------
-     * DOMAIN FILTER (unified views)
-     * --------------------------------------------------------- */
-    const activeDomains = $derived.by(() => {
-        const set = new Set<string>();
-        for (const mail of activeList.items as (InboundEmail | SentEmail)[]) {
-            for (const domain of mailDomains(mail)) set.add(domain);
-        }
-        return [...set].sort();
-    });
-
-    const visibleItems = $derived(
-        domainFilter === "all"
-            ? (activeList.items as (InboundEmail | SentEmail)[])
-            : (activeList.items as (InboundEmail | SentEmail)[]).filter(
-                  (mail) => mailDomains(mail).includes(domainFilter),
-              ),
-    );
-
-    // History belongs to the account. DNS readiness only controls new
-    // delivery, never access to previously received messages.
-    let lastLoadContext = "";
-    let disposed = false;
-
-    onDestroy(() => {
-        disposed = true;
-        sentList.clearItems();
-        inboxList.clearItems();
-    });
-
-    // Only mode drives loading, not items or flags (empty history is valid).
-    $effect(() => {
-        const currentMode = mode;
-        untrack(() => {
-            if (currentMode === lastLoadContext) return;
-            lastLoadContext = currentMode;
-            domainFilter = "all";
-            archiveStatus = null;
-            archiveStatusError = null;
-            archiveStatusMode = null;
-            void refreshArchiveStatus();
-            const list = currentMode === "inbox" ? inboxList : sentList;
-            void list.refresh().catch((err) => {
-                if (disposed) return;
-                if (isAuthError(err)) authErrorToast(err);
-                else toast.error(errorMessage(err, "Failed to load emails"));
-            });
-        });
-    });
-
-    $effect(() => {
-        const currentMode = mode;
-        const data: ArchiveFooterData = {
-            status: archiveStatusMode === currentMode ? archiveStatus : null,
-            statusError: archiveStatusMode === currentMode ? archiveStatusError : null,
-            refreshError: activeList.error,
-            downloadedAt: activeList.cacheInfo?.downloadedAt ?? null,
-        };
-        untrack(() => onArchiveStatusChange?.(accountId, currentMode, data));
-    });
-
-    async function openFeedback() {
-        try {
-            await openUrl("https://github.com/rxtsel/onlysend/issues/new/choose");
-        } catch (err) {
-            toast.error(errorMessage(err, "Could not open GitHub"));
-        }
-    }
-
-    async function handleRefresh() {
-        const currentMode = mode;
-        const list = activeList;
-        if (manualRefreshing || list.isRefreshing) return;
-        manualRefreshing = true;
-        try {
-            await refreshMailbox(accountId, currentMode);
-            if (disposed || mode !== currentMode) return;
-            await list.refreshCached();
-            if (disposed || mode !== currentMode) return;
-            toast.success("Emails refreshed; local download continues in the background");
-            void refreshArchiveStatus();
-        } catch (err) {
-            if (disposed || mode !== currentMode) return;
-            if (isAuthError(err)) {
-                authErrorToast(err);
-            } else {
-                toast.error(errorMessage(err, "Failed to load emails"));
-            }
-        } finally {
-            manualRefreshing = false;
-        }
-    }
-
-    function handleLoadMore() {
-        void activeList.loadMore().catch((err) => {
-            if (!disposed) toast.error(errorMessage(err, "Failed to load emails"));
-        });
-    }
-
-    /* ---------------------------------------------------------
-     * INBOX READ MARKERS
-     * --------------------------------------------------------- */
-    let readIds = $state<Set<string>>(new Set());
-
-    onMount(async () => {
-        try {
-            const ids = await getReadInboundIds(accountId);
-            if (disposed) return;
-            readIds = new Set(ids);
-        } catch (err) {
-            console.error("Error loading inbox markers:", err);
-        }
-    });
-
-    onMount(() => {
-        const interval = setInterval(() => {
-            if (!disposed && !document.hidden) void refreshArchiveStatus();
-        }, 5_000);
-        return () => clearInterval(interval);
-    });
-
-    // Keep Inbox reachable even before receiving is configured for this
-    // account; the page owns setup/readiness, not a global navigation flag.
-    const navItems = data.navMain;
-
-    async function handleEmailClick(mailId: string) {
-        if (mode === "inbox" && !readIds.has(mailId)) {
-            readIds = new Set([...readIds, mailId]);
-            markInboundRead(accountId, mailId).catch(console.error);
-        }
-        goto(mailUrl(accountId, mode, mailId));
-    }
-
-    onMount(() => {
-        let unlisten: (() => void) | undefined;
-        void listen<{ accountId: string }>("inbox-updated", ({ payload }) => {
-            if (disposed || payload.accountId !== accountId || (manualRefreshing && mode === "inbox")) return;
-            void inboxList.refreshCached().catch(console.error);
-            if (mode === "inbox") void refreshArchiveStatus();
-        }).then((cleanup) => {
-            if (disposed) cleanup();
-            else unlisten = cleanup;
-        }).catch(console.error);
-        return () => unlisten?.();
-    });
+  async function feedback() {
+    try { await openUrl("https://github.com/rxtsel/onlysend/issues/new/choose"); }
+    catch (error) { toast.error(errorMessage(error, "Could not open GitHub")); }
+  }
 </script>
 
-<Sidebar.Root
-    bind:ref
-    collapsible="icon"
-    class="overflow-hidden *:data-[sidebar=sidebar]:flex-row"
-    {...restProps}
->
-    <!-- This is the first sidebar -->
-    <Sidebar.Root
-        collapsible="none"
-        class="w-[calc(var(--sidebar-width-icon)+1px)]! border-e"
-    >
-        <Sidebar.Header>
+<Sidebar.Root collapsible="offcanvas">
+  <div class="flex h-full min-h-0 w-full">
+  <aside class="flex w-14 shrink-0 flex-col items-center border-e bg-sidebar py-4" aria-label="Account and settings">
+    <a href={mailUrl(accountId, "inbox")} aria-label="OnlySend" class="flex size-8 items-center justify-center rounded-lg text-foreground focus-visible:outline focus-visible:outline-ring" onclick={closeMobile}>
+      <Send class="size-5" aria-hidden="true" />
+    </a>
+    <div class="mt-auto flex w-8 flex-col items-center gap-3">
+      <Button size="icon" variant="ghost" onclick={feedback} aria-label="Feedback / report a bug" title="Feedback / report a bug"><Bug /></Button>
+      <SettingsDialog />
+      <NavUser />
+    </div>
+  </aside>
+  <nav class="flex min-w-0 flex-1 flex-col" aria-label="Mailboxes">
+    <Sidebar.Header class="h-16 shrink-0 justify-center px-4 py-0">
+      <Button href={mailUrl(accountId, "composer")} class="h-10 w-full justify-center gap-2 rounded-full" onclick={closeMobile} aria-current={composing ? "page" : undefined}>
+        <SquarePen data-icon="inline-start" /> New message
+      </Button>
+    </Sidebar.Header>
+    <Sidebar.Content class="pt-4">
+      <Sidebar.Group class="px-3">
+        <Sidebar.GroupLabel>Mailboxes</Sidebar.GroupLabel>
+        <Sidebar.GroupContent>
+          <Sidebar.Menu>
+            {#each folders as folder (folder.value)}
+              <Sidebar.MenuItem>
+                <Sidebar.MenuButton isActive={mailbox === folder.value && domain === null && !composing} class="h-10 px-3">
+                  {#snippet child({ props })}
+                    <a {...props} href={mailUrl(accountId, folder.value)} aria-current={mailbox === folder.value && domain === null && !composing ? "page" : undefined} onclick={() => { domain = null; closeMobile(); }}>
+                      <folder.icon /><span>{folder.label}</span>
+                    </a>
+                  {/snippet}
+                </Sidebar.MenuButton>
+              </Sidebar.MenuItem>
+            {/each}
+          </Sidebar.Menu>
+        </Sidebar.GroupContent>
+      </Sidebar.Group>
+      {#if domains.length > 0}
+        <Sidebar.Group class="px-3">
+          <Sidebar.GroupLabel>Domains</Sidebar.GroupLabel>
+          <Sidebar.GroupContent>
             <Sidebar.Menu>
+              {#each domains as name (name)}
                 <Sidebar.MenuItem>
-                    <Sidebar.MenuButton
-                        variant="primary"
-                        size="lg"
-                        class="size-8 justify-center rounded-lg transition-colors p-0"
-                    >
-                        <a
-                            href={mailUrl(accountId, "composer")}
-                            class="flex h-full w-full items-center justify-center"
-                            onclick={() => {
-                                if (sidebar.open) sidebar.setOpen(false);
-                            }}
-                        >
-                            <PlusIcon class="text-white size-5" />
-                        </a>
-                    </Sidebar.MenuButton>
+                  <Sidebar.MenuButton isActive={domain === name} class="h-10 px-3" onclick={() => { domain = name; closeMobile(); void goto(mailUrl(accountId, mailbox)); }}>
+                    <Globe /><span title={name}>{name}</span>
+                  </Sidebar.MenuButton>
                 </Sidebar.MenuItem>
+              {/each}
             </Sidebar.Menu>
-        </Sidebar.Header>
-        <Sidebar.Content>
-            <Sidebar.Group>
-                <Sidebar.GroupContent class="px-1.5 md:px-0">
-                    <Sidebar.Menu>
-                        {#each navItems as item (item.title)}
-                            <Sidebar.MenuItem>
-                                <Sidebar.MenuButton
-                                    tooltipContentProps={{
-                                        hidden: false,
-                                    }}
-                                    onclick={() => {
-                                        sidebar.setOpen(true);
-                                        goto(item.url);
-                                    }}
-                                    isActive={activeItem.title === item.title}
-                                    class="px-2.5 md:px-2"
-                                >
-                                    {#snippet tooltipContent()}
-                                        {item.title}
-                                    {/snippet}
-                                    <item.icon />
-                                    <span>{item.title}</span>
-                                </Sidebar.MenuButton>
-                            </Sidebar.MenuItem>
-                        {/each}
-                    </Sidebar.Menu>
-                </Sidebar.GroupContent>
-            </Sidebar.Group>
-        </Sidebar.Content>
-        <Sidebar.Footer>
-            <Sidebar.Menu>
-                <Sidebar.MenuItem>
-                    <Sidebar.MenuButton
-                        onclick={openFeedback}
-                        class="size-8 justify-center p-0"
-                        aria-label="Feedback / report a bug (opens GitHub)"
-                        tooltipContentProps={{ hidden: false }}
-                    >
-                        {#snippet tooltipContent()}
-                            Feedback / report a bug
-                        {/snippet}
-                        <BugIcon />
-                    </Sidebar.MenuButton>
-                </Sidebar.MenuItem>
-            </Sidebar.Menu>
-            <SettingsDialog />
-            <NavUser />
-        </Sidebar.Footer>
-    </Sidebar.Root>
-
-    <!-- This is the second sidebar -->
-    <Sidebar.Root collapsible="none" class="hidden flex-1 md:flex">
-        <Sidebar.Header class="gap-3.5 border-b p-4">
-            <div class="flex w-full items-center justify-between">
-                <div class="text-foreground text-base font-medium">
-                    {activeItem.title}
-                </div>
-                <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onclick={handleRefresh}
-                    disabled={activeList.isRefreshing || manualRefreshing}
-                    title="Refresh emails"
-                >
-                    <RefreshCwIcon
-                        class={activeList.isRefreshing || manualRefreshing ? "animate-spin" : ""}
-                    />
-                </Button>
-            </div>
-
-            {#if activeDomains.length > 1}
-                <!-- Temporary filter over loaded pages, not setup inclusion. -->
-                <p class="text-xs text-muted-foreground">Filter loaded messages; load more to include older history.</p>
-                <div class="flex flex-wrap gap-1.5">
-                    <button
-                        onclick={() => (domainFilter = "all")}
-                        class="text-xs px-2 py-0.5 rounded-full border transition-colors {domainFilter === 'all'
-                            ? 'bg-primary text-primary-foreground border-primary'
-                            : 'hover:bg-sidebar-accent'}"
-                    >
-                        All
-                    </button>
-                    {#each activeDomains as d (d)}
-                        <button
-                            onclick={() => (domainFilter = d)}
-                            class="text-xs px-2 py-0.5 rounded-full border transition-colors {domainFilter === d
-                                ? 'bg-primary text-primary-foreground border-primary'
-                                : 'hover:bg-sidebar-accent'}"
-                        >
-                            {d}
-                        </button>
-                    {/each}
-                </div>
-            {/if}
-        </Sidebar.Header>
-        <Sidebar.Content
-            class="overflow-y-auto overflow-x-hidden max-w-[400px]"
-        >
-            <Sidebar.Group class="px-0 pt-0">
-                <Sidebar.GroupContent>
-                    {#if activeList.isLoading}
-                        {@const skeletons = Array.from({ length: PAGE_SIZE })}
-                        {#each skeletons}
-                            <div
-                                class="animate-pulse p-4 border-b last:border-b-0"
-                            >
-                                <div
-                                    class="h-4 bg-muted w-3/4 mb-2 rounded"
-                                ></div>
-                                <div class="h-3 bg-muted w-1/2 rounded"></div>
-                            </div>
-                        {/each}
-                    {:else if activeList.error && activeList.items.length === 0}
-                        <div class="p-8 text-center text-sm text-muted-foreground" role="alert">
-                            {activeList.error}
-                            <Button variant="outline" size="sm" onclick={handleRefresh}>
-                                Retry
-                            </Button>
-                        </div>
-                    {:else if activeList.items.length === 0 && !activeList.isRefreshing}
-                        <div
-                            class="p-8 text-center text-sm text-muted-foreground"
-                        >
-                            {#if mode === "inbox"}
-                                No received emails yet
-                            {:else}
-                                No sent emails yet
-                            {/if}
-                        </div>
-                    {:else}
-                        {#if visibleItems.length === 0}
-                            <p class="p-4 text-sm text-muted-foreground">No matching messages in the loaded pages.</p>
-                        {/if}
-                        {#each visibleItems as mail (mail.id)}
-                            <EmailListItem
-                                mail={mail}
-                                {mode}
-                                isActive={page.params.id === mail.id}
-                                isUnread={mode === "inbox" && !readIds.has(mail.id)}
-                                domainLabel={activeDomains.length > 1 ? domainOf(mail) : ""}
-                                onclick={handleEmailClick}
-                            />
-                        {/each}
-
-                        {#if activeList.hasMore}
-                            <button
-                                onclick={handleLoadMore}
-                                disabled={activeList.isLoadingMore}
-                                class="w-full p-4 text-sm text-center text-muted-foreground hover:bg-sidebar-accent transition-colors"
-                            >
-                                {#if activeList.isLoadingMore}
-                                    <Loader
-                                        class="size-4 animate-spin mx-auto"
-                                    />
-                                {:else}
-                                    <span>Load more</span>
-                                {/if}
-                            </button>
-                        {/if}
-                    {/if}
-                </Sidebar.GroupContent>
-            </Sidebar.Group>
-        </Sidebar.Content>
-    </Sidebar.Root>
+          </Sidebar.GroupContent>
+        </Sidebar.Group>
+      {/if}
+    </Sidebar.Content>
+  </nav>
+  </div>
 </Sidebar.Root>

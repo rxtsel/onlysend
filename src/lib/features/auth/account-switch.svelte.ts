@@ -1,7 +1,6 @@
 import { goto } from "$app/navigation";
 import { disconnectResend } from "$lib/shared/api/auth";
 import { clearInboundStatus } from "$lib/shared/inbound-status.svelte";
-import { emailCache } from "$lib/features/sending/email-cache.svelte";
 import { mailUrl, mailboxFromPath } from "./mail-routes";
 import { approveAccountDeparture, resetDepartureApproval } from "./draft-navigation";
 
@@ -13,7 +12,6 @@ export async function logoutMailAccount(accountId: string): Promise<boolean> {
   accountSwitch.busy = true;
   try {
     await disconnectResend(accountId);
-    emailCache.clear(accountId);
     clearInboundStatus(accountId);
     await goto("/");
     return true;

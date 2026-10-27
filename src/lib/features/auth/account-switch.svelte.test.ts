@@ -1,7 +1,6 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import { goto } from "$app/navigation";
 import { disconnectResend } from "$lib/shared/api/auth";
-import { emailCache } from "$lib/features/sending/email-cache.svelte";
 import { clearInboundStatus, getInboundStatus } from "$lib/shared/inbound-status.svelte";
 import { accountSwitch, switchMailAccount, logoutMailAccount } from "./account-switch.svelte";
 import { registerDraftGuard, allowAccountNavigation } from "./draft-navigation";
@@ -14,37 +13,33 @@ beforeEach(() => {
   vi.mocked(disconnectResend).mockReset().mockResolvedValue(undefined);
   accountSwitch.busy = false;
   for (const id of ["a", "b"]) {
-    emailCache.clear(id);
     clearInboundStatus(id);
     getInboundStatus(id).ready = true;
-    emailCache.setList(id, { items: [], hasMore: false, nextCursor: null });
   }
 });
 
-test("logout names the account and preserves other account caches", async () => {
+test("logout names the account and preserves other account state", async () => {
   await logoutMailAccount("a");
   expect(disconnectResend).toHaveBeenCalledWith("a");
   expect(goto).toHaveBeenCalledWith("/");
   expect(accountSwitch.busy).toBe(false);
-  expect(emailCache.getList("a")).toBeNull();
   expect(getInboundStatus("a").ready).toBe(false);
-  expect(emailCache.getList("b")).toEqual({ items: [], hasMore: false, nextCursor: null });
   expect(getInboundStatus("b").ready).toBe(true);
 });
 
-test("failed logout restores the view without navigating or deleting cache", async () => {
+test("failed logout restores the view without navigating or clearing account state", async () => {
   vi.mocked(disconnectResend).mockRejectedValue(new Error("store failure"));
   await expect(logoutMailAccount("a")).rejects.toThrow("store failure");
   expect(goto).not.toHaveBeenCalled();
   expect(accountSwitch.busy).toBe(false);
-  expect(emailCache.getList("a")).toEqual({ items: [], hasMore: false, nextCursor: null });
+  expect(getInboundStatus("a").ready).toBe(true);
 });
 
 test("switch navigates to explicit account mailbox without the previous email ID", async () => {
   await switchMailAccount("b", "/mail/a/inbox/email-from-a");
   expect(goto).toHaveBeenCalledWith("/mail/b/inbox");
   expect(accountSwitch.busy).toBe(false);
-  expect(emailCache.getList("a")).toEqual({ items: [], hasMore: false, nextCursor: null });
+  expect(getInboundStatus("a").ready).toBe(true);
 });
 
 test("failed navigation releases the loading boundary", async () => {
@@ -62,7 +57,6 @@ test("cancelled draft departure does not navigate or remove credentials", async 
     expect(goto).not.toHaveBeenCalled();
     expect(disconnectResend).not.toHaveBeenCalled();
     expect(accountSwitch.busy).toBe(false);
-    expect(emailCache.getList("a")).toEqual({ items: [], hasMore: false, nextCursor: null });
   } finally { cleanup(); }
 });
 
