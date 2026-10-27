@@ -22,7 +22,9 @@ new MX records; review the DNS instructions before changing them.
 - Switch between accounts with separate mail and settings.
 - Manage multiple domains, sender addresses, and DNS configuration.
 - Compose formatted messages with attachments, CC, BCC, and Reply-To.
-- Browse sent mail and an optional inbox.
+- Browse sent mail and an optional inbox with a dedicated reading pane.
+- Search saved mail and filter by domain, including messages outside loaded pages.
+- See previews of already downloaded messages without fetching each body again.
 - Read downloaded message bodies offline, including after restarting the app.
   The footer shows local-copy progress and errors.
 

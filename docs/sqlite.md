@@ -87,7 +87,7 @@ locale-specific alphabet. Reverse index scans support opposite sort directions.
 Domain and recipient indexes support scoped association filters. Read/unread
 lookups use the existing marker primary key.
 
-`query_local_mail` exposes newest/oldest, subject/sender ascending/descending,
+The Rust query adapter supports newest/oldest, subject/sender ascending/descending,
 domain, recipient, unread and full-text filters with limits 1–100. Its opaque
 keyset cursor is bound to account, mailbox, sort and normalized filter/search
 criteria. Resend's `after` IDs are a separate contract and never receive a local
@@ -95,7 +95,15 @@ cursor. SQL values are bound; sort SQL comes only from enums. FTS input is escap
 literal AND terms, not user-supplied SQL or FTS operators. FTS searches always
 restrict account/mailbox, including when matching body text.
 
-Bodies are not overwritten by metadata refreshes. A full scan updates canonical
+`load_mail_list` exposes account-scoped newest-first lists, domain filtering and
+search through one native command. Rust owns cursor decoding, remote revalidation
+and offline fallback. List previews come from the already stored search text and
+read markers are joined in the same query, never fetched per message. The domain
+catalog covers all retained mail, not only loaded pages. Settings panels are
+loaded on demand; list and detail views do not share a JavaScript mail cache.
+
+Bodies are not overwritten by metadata refreshes. Unchanged metadata also skips
+relation and FTS rewrites. A full scan updates canonical
 rows and only the head snapshot, avoiding a new duplicate set of page snapshots
 on every shifted head. Removing local account rows cascades through associations
 and FTS triggers, but production logout intentionally does not call that purge.
@@ -115,7 +123,10 @@ A window-wide bottom status bar shows download progress or errors at the left.
 When the local copy is healthy it collapses to one icon; its hover/focus tooltip
 shows metadata/body counts, mailbox and last completion. Status remains scoped to
 the visible account/mailbox, without adding another polling loop. A body failure does not erase metadata or falsely mark bodies complete.
-`query_local_mail.isPartial` concerns metadata coverage; body coverage is separate.
+The internal query's `isPartial` concerns metadata coverage; body coverage is separate.
+Rust publishes throttled archive-progress events; the UI makes no recurring idle
+status requests. Opening an Inbox message marks it read in the same native call
+and publishes its read state without reloading the entire list.
 Restarted/interrupted scans retain partial copies and retry without duplicating
 IDs. No timestamp-based Resend delta or atomic remote snapshot is assumed: a
 completed traversal describes that scan, not proof that the remote mailbox can
