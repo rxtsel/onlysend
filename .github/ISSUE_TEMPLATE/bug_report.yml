@@ -43,8 +43,55 @@ body:
         - macOS (Intel)
     validations:
       required: true
+  - type: input
+    id: os_version
+    attributes:
+      label: OS version and architecture
+      description: On Linux, include your distribution and desktop environment if known.
+      placeholder: "e.g. Windows 11 24H2 x64; macOS 15.5 Apple Silicon; Ubuntu 24.04 x64, GNOME/Wayland"
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation type
+      options:
+        - Linux .deb
+        - Linux AppImage
+        - Windows installer (.exe)
+        - macOS .dmg
+        - Built from source / development build
+        - Other / not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Resend connection method
+      description: Select the method used by the affected account. Never share the key or token itself.
+      options:
+        - OAuth (Connect with Resend)
+        - API key
+        - Not connected yet
+        - Not applicable / not sure
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: How often does it happen?
+      options:
+        - Every time
+        - Sometimes
+        - Happened once
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Error messages or screenshots
+      description: Paste the exact error text or attach redacted screenshots. Remove credentials, email addresses, message contents, and other private information first.
   - type: textarea
     id: context
     attributes:
       label: Additional context
-      description: OS version, installation format, and redacted screenshots or error messages, if relevant.
+      description: If relevant, mention whether this started after an update, affects one or all accounts, or happens offline or after restarting. For source builds, include the commit hash.
