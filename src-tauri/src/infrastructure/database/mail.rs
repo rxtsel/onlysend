@@ -27,7 +27,7 @@ fn json_error(error: serde_json::Error) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(Box::new(error))
 }
 
-fn timestamp(value: &str) -> Result<i64, String> {
+pub(crate) fn timestamp(value: &str) -> Result<i64, String> {
     let value = value.trim();
     // Resend documents PostgreSQL timestamps such as
     // "2026-04-03 22:13:42.674981+00", not just RFC3339. Expand

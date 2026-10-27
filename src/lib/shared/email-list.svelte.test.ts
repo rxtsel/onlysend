@@ -34,19 +34,6 @@ describe("createEmailList cursor pagination", () => {
     expect(list.items).toEqual([{ id: "b1" }, { id: "b2" }]);
   });
 
-  test("silent refreshes are single-flight even for an empty inbox", async () => {
-    const result = deferred<EmailPage<Item>>();
-    const fetcher = vi.fn(() => result.promise);
-    const list = createEmailList(fetcher);
-    const first = list.refreshSilent();
-    await list.refreshSilent();
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    result.resolve(page([]));
-    await first;
-    expect(list.items).toEqual([]);
-    expect(list.isLoading).toBe(false);
-    expect(list.hasMore).toBe(false);
-  });
 
   test("stale rejection does not surface an error in another account", async () => {
     const result = deferred<EmailPage<Item>>();
@@ -135,14 +122,14 @@ describe("createEmailList cursor pagination", () => {
     expect(list.error).toBeNull();
   });
 
-  test("concurrent load more and polling cannot race cursors", async () => {
+  test("concurrent load more and background disk refresh cannot race cursors", async () => {
     const more = deferred<EmailPage<Item>>();
     const fetcher = vi.fn().mockResolvedValueOnce(page(["1"], "cursor-one")).mockReturnValueOnce(more.promise);
     const list = createEmailList<Item>(fetcher);
     await list.refresh();
     const pending = list.loadMore();
     await list.loadMore();
-    await list.refreshSilent();
+    await list.refreshCached();
     expect(fetcher).toHaveBeenCalledTimes(2);
     more.resolve(page(["2"]));
     await pending;
@@ -165,45 +152,8 @@ describe("createEmailList cursor pagination", () => {
     expect(fetcher).toHaveBeenLastCalledWith(16, "new-cursor");
   });
 
-  test("silent refresh preserves older pages and their tail cursor", async () => {
-    const fetcher = vi.fn().mockResolvedValueOnce(page(["a", "b"], "b"))
-      .mockResolvedValueOnce(page(["c", "d"], "d"))
-      .mockResolvedValueOnce(page(["new", "a"], "a"))
-      .mockResolvedValueOnce(page(["e"]));
-    const list = createEmailList<Item>(fetcher, 2);
-    await list.refresh();
-    await list.loadMore();
-    await list.refreshSilent();
-    expect(list.items.map((item) => item.id)).toEqual(["new", "a", "b", "c", "d"]);
-    await list.loadMore();
-    expect(fetcher).toHaveBeenLastCalledWith(2, "d");
-    expect(list.items.at(-1)?.id).toBe("e");
-  });
 
-  test("silent refresh without overlap resets to the head to avoid skipping unseen emails", async () => {
-    const fetcher = vi.fn().mockResolvedValueOnce(page(["old"], "old"))
-      .mockResolvedValueOnce(page(["newest", "newer"], "newer"))
-      .mockResolvedValueOnce(page(["gap", "old"]));
-    const list = createEmailList<Item>(fetcher, 2);
-    await list.refresh();
-    await list.refreshSilent();
-    expect(list.items.map((item) => item.id)).toEqual(["newest", "newer"]);
-    await list.loadMore();
-    expect(fetcher).toHaveBeenLastCalledWith(2, "newer");
-    expect(list.items.map((item) => item.id)).toEqual(["newest", "newer", "gap", "old"]);
-  });
 
-  test("failed silent refresh preserves items and their continuation for retry", async () => {
-    const fetcher = vi.fn().mockResolvedValueOnce(page(["1"], "one"))
-      .mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(page(["2"]));
-    const list = createEmailList<Item>(fetcher);
-    await list.refresh();
-    await expect(list.refreshSilent()).resolves.toBeUndefined();
-    expect(list.error).toContain("offline");
-    expect(list.items).toEqual([{ id: "1" }]);
-    await list.loadMore();
-    expect(fetcher).toHaveBeenLastCalledWith(16, "one");
-  });
 
   test.each([
     { items: [], hasMore: true, nextCursor: "two" },
@@ -233,6 +183,45 @@ describe("createEmailList cursor pagination", () => {
 });
 
 describe("downloaded snapshots", () => {
+  test("Rust-driven disk refreshes preserve history and the tail cursor without networking", async () => {
+    const remote = vi.fn().mockResolvedValueOnce(page(["a", "b"], "b")).mockResolvedValueOnce(page(["c", "d"], "d")).mockResolvedValueOnce(page(["e"]));
+    const disk = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(page(["new", "a"], "a"));
+    const list = createEmailList<Item>(remote, 2, disk);
+    await list.refresh();
+    await list.loadMore();
+    await list.refreshCached();
+    expect(list.items.map((item) => item.id)).toEqual(["new", "a", "b", "c", "d"]);
+    expect(remote).toHaveBeenCalledTimes(2);
+    await list.loadMore();
+    expect(remote).toHaveBeenLastCalledWith(2, "d");
+  });
+
+  test("disk refresh without overlap resets the cursor so new arrivals cannot leave a gap", async () => {
+    const remote = vi.fn().mockResolvedValueOnce(page(["old"], "old")).mockResolvedValueOnce(page(["gap", "old"]));
+    const disk = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(page(["newest", "newer"], "newer"));
+    const list = createEmailList<Item>(remote, 2, disk);
+    await list.refresh();
+    await list.refreshCached();
+    expect(list.items.map((item) => item.id)).toEqual(["newest", "newer"]);
+    await list.loadMore();
+    expect(remote).toHaveBeenLastCalledWith(2, "newer");
+  });
+
+  test("background disk refresh is single-flight and a failure retains items for retry", async () => {
+    const result = deferred<EmailPage<Item>>();
+    const disk = vi.fn().mockResolvedValueOnce(null).mockReturnValueOnce(result.promise).mockRejectedValueOnce(new Error("disk unavailable"));
+    const list = createEmailList<Item>(async () => page(["head"], "older"), 16, disk);
+    await list.refresh();
+    const pending = list.refreshCached();
+    await list.refreshCached();
+    expect(disk).toHaveBeenCalledTimes(2);
+    result.resolve(page(["head"], "older"));
+    await pending;
+    await expect(list.refreshCached()).rejects.toThrow("disk unavailable");
+    expect(list.items.map((item) => item.id)).toEqual(["head"]);
+    expect(list.hasMore).toBe(true);
+  });
+
   test("shows disk data before remote completion and then replaces it", async () => {
     const remote = deferred<EmailPage<Item>>();
     const disk = { ...page(["disk"], "disk-cursor"), cache: { downloadedAt: 123, error: null } };

@@ -2,6 +2,7 @@ mod config;
 mod domains;
 mod email;
 mod inbound;
+mod notifications;
 mod oauth;
 mod permissions;
 mod sent;
@@ -30,6 +31,8 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .manage(notifications::InboxService::default())
         .manage(oauth::OAuthState::default())
         .setup(|app| {
             // Initialize the store
@@ -85,6 +88,7 @@ pub fn run() {
                 });
             }
 
+            notifications::start(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -126,9 +130,11 @@ pub fn run() {
             domains::set_domain_receiving,
             infrastructure::database::mail::get_cached_mail_page,
             infrastructure::database::mail::query_local_mail,
-            infrastructure::database::sync::sync_mailbox,
+            infrastructure::database::sync::refresh_mailbox,
             infrastructure::database::sync::get_mail_archive_status,
-            inbound::list_inbound_emails,
+            notifications::refresh_inbox,
+            notifications::get_inbox_poll_minutes,
+            notifications::set_inbox_poll_minutes,
             inbound::get_inbound_email,
             infrastructure::settings_store::get_read_inbound_ids,
             infrastructure::settings_store::mark_inbound_read,

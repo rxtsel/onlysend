@@ -27,8 +27,7 @@ export function createEmailList<T extends { id: string }>(
     });
   }
 
-  async function load(append = false, silent = false, diskOnly = false) {
-    if (silent && (isRefreshing || isLoadingMore)) return;
+  async function load(append = false, diskOnly = false) {
     const request = ++generation;
     const after = append ? nextCursor : null;
     try {
@@ -39,7 +38,7 @@ export function createEmailList<T extends { id: string }>(
         isLoadingMore = false;
       }
       // Show the correct account's disk snapshot immediately, then revalidate.
-      if (!append && !silent && !diskOnly && !items.length && fetchCached) {
+      if (!append && !diskOnly && !items.length && fetchCached) {
         const cached = await fetchCached(pageSize, null).catch(() => null);
         if (request !== generation) return;
         if (cached && (!cached.hasMore || (cached.items.length && cached.nextCursor))) {
@@ -57,11 +56,10 @@ export function createEmailList<T extends { id: string }>(
         throw new Error("Email pagination did not advance. Retry or refresh the list.");
       }
 
-      // Polling updates the head without discarding older loaded pages. If a
-      // burst of new messages removes all overlap, restart from the new head
-      // cursor instead of skipping the gap between new and old history.
+      // Rust events update the local head without discarding loaded history.
+      // Without overlap, restart at the head to avoid skipping unseen mail.
       const oldIds = new Set(items.map((item) => item.id));
-      const preserveHistory = silent && page.hasMore && page.items.some((item) => oldIds.has(item.id));
+      const preserveHistory = diskOnly && hasMore && page.hasMore && page.items.some((item) => oldIds.has(item.id));
       if (append) {
         items = unique([...items, ...page.items]);
       } else if (preserveHistory) {
@@ -80,7 +78,6 @@ export function createEmailList<T extends { id: string }>(
     } catch (err) {
       if (request !== generation) return;
       error = errorMessage(err, "Failed to load emails");
-      if (silent) return;
       throw err;
     } finally {
       if (request === generation) {
@@ -100,14 +97,12 @@ export function createEmailList<T extends { id: string }>(
     get isLoadingMore() { return isLoadingMore; },
     get hasMore() { return hasMore; },
     async refresh() { await load(); },
-    async refreshSilent() { await load(false, true); },
     async refreshCached() {
-      if (fetchCached && !isRefreshing && !isLoadingMore) await load(false, false, true);
+      if (fetchCached && !isRefreshing && !isLoadingMore) await load(false, true);
     },
     async loadMore() {
       if (!isLoadingMore && !isRefreshing && hasMore && nextCursor) await load(true);
     },
-    markLoaded() { isLoading = false; },
     clearItems() {
       generation += 1;
       isLoading = true;

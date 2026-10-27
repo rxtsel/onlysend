@@ -3,7 +3,6 @@ use std::collections::{HashMap, HashSet};
 use crate::infrastructure::database::{
     local_state,
     mail::{self, Mailbox},
-    sync,
 };
 use crate::infrastructure::pagination::{email_page, list_options, EmailPage};
 use ammonia::Builder;
@@ -156,60 +155,6 @@ fn recipient_domains(received_for: &[String], to: &[String]) -> Vec<String> {
         }
     }
     domains
-}
-
-#[tauri::command]
-pub async fn list_inbound_emails(
-    app: AppHandle<Wry>,
-    account_id: String,
-    limit: Option<usize>,
-    after: Option<String>,
-) -> Result<EmailPage<InboundEmailDto>, String> {
-    let _ = list_options(limit, after.as_deref())?;
-    let database = local_state::for_account(&app, &account_id).await?;
-    let result = async {
-        let resend = client(&app, &account_id).await?;
-        tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            fetch_inbound_page(&resend, limit, after.as_deref()),
-        )
-        .await
-        .map_err(|_| "Inbox request timed out".to_string())?
-    }
-    .await;
-    match result {
-        Ok(page) => {
-            crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
-            mail::store_page(
-                &database,
-                account_id.clone(),
-                Mailbox::Inbox,
-                limit.unwrap_or(12),
-                after.clone(),
-                &page,
-            )
-            .await?;
-            if after.is_none() {
-                if sync::start(&app, account_id, Mailbox::Inbox, limit.unwrap_or(12), false)
-                    .await
-                    .is_err()
-                {
-                    eprintln!("[WARN] Could not start inbox archive download");
-                }
-            }
-            Ok(page)
-        }
-        Err(error) => mail::cached_page(
-            &database,
-            account_id,
-            Mailbox::Inbox,
-            limit.unwrap_or(12),
-            after,
-            Some(error.clone()),
-        )
-        .await?
-        .ok_or(error),
-    }
 }
 
 pub(crate) async fn fetch_inbound_page(

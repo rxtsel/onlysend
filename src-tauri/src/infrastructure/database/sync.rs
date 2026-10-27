@@ -18,7 +18,7 @@ static RUNNING: LazyLock<Mutex<HashSet<(String, Mailbox)>>> =
 // worker. Interactive requests remain usable while the archive is downloading.
 static REQUEST_CLOCK: LazyLock<tokio::sync::Mutex<Instant>> =
     LazyLock::new(|| tokio::sync::Mutex::new(Instant::now()));
-async fn network_turn() {
+pub(crate) async fn network_turn() {
     let mut last = REQUEST_CLOCK.lock().await;
     let next = *last + Duration::from_millis(650);
     tokio::time::sleep_until(tokio::time::Instant::from_std(next)).await;
@@ -257,20 +257,20 @@ pub async fn get_mail_archive_status(
 }
 
 #[tauri::command]
-pub async fn sync_mailbox(
+pub async fn refresh_mailbox(
     app: AppHandle<Wry>,
     account_id: String,
     mailbox: Mailbox,
-    limit: Option<usize>,
-    force: Option<bool>,
-) -> Result<bool, String> {
-    let _ = crate::infrastructure::pagination::list_options(limit, None)?;
-    start(
-        &app,
-        account_id,
-        mailbox,
-        limit.unwrap_or(16),
-        force.unwrap_or(false),
-    )
-    .await
+) -> Result<(), String> {
+    match mailbox {
+        Mailbox::Inbox => crate::notifications::refresh_inbox(app, account_id, true).await,
+        Mailbox::Sent => {
+            let page = crate::sent::list_sent_emails(app.clone(), account_id.clone(), Some(100), None).await?;
+            if let Some(error) = page.cache.and_then(|cache| cache.error) {
+                return Err(error);
+            }
+            start(&app, account_id, mailbox, 100, true).await?;
+            Ok(())
+        }
+    }
 }

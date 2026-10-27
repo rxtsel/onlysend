@@ -19,7 +19,7 @@
     import { goto } from "$app/navigation";
     import { page } from "$app/state";
     import { onMount, onDestroy, untrack } from "svelte";
-    import { fly } from "svelte/transition";
+    import { listen } from "@tauri-apps/api/event";
     import { toast } from "svelte-sonner";
     import { openUrl } from "@tauri-apps/plugin-opener";
     import { Loader } from "@lucide/svelte";
@@ -28,7 +28,7 @@
     import { listSentEmails } from "../shared/sent";
     import {
         getReadInboundIds,
-        listInboundEmails,
+        refreshInbox,
         markInboundRead,
     } from "../shared/inbound";
     import EmailListItem from "@/lib/features/inbox/components/email-list-item.svelte";
@@ -36,7 +36,7 @@ import { authErrorToast, isAuthError } from "@/lib/shared/services/auth-toast.sv
 import { errorMessage } from "@/lib/shared/utils/errors";
     import { createEmailList } from "../shared/email-list.svelte";
     import { mailDomains } from "$lib/shared/mail-domains";
-    import { getLocalArchivePage, loadArchivePage, getMailArchiveStatus, syncMailbox, type MailArchiveStatus } from "$lib/shared/local-mail";
+    import { getLocalArchivePage, loadArchivePage, getMailArchiveStatus, refreshMailbox, type MailArchiveStatus } from "$lib/shared/local-mail";
 
     import type { ArchiveFooterData } from "$lib/shared/archive-status";
 
@@ -70,16 +70,12 @@ import { errorMessage } from "@/lib/shared/utils/errors";
 
     const sidebar = useSidebar();
     const PAGE_SIZE = 16;
-    const POLL_INTERVAL_MS = 60_000;
+    let manualRefreshing = $state(false);
 
     /* ---------------------------------------------------------
      * DOMAIN FILTER (unified views, client-side filtering)
      * --------------------------------------------------------- */
     let domainFilter = $state<"all" | string>("all");
-
-    function dateOf(mail: InboundEmail | SentEmail): string {
-        return mail.createdAt;
-    }
 
     function domainOf(mail: InboundEmail | SentEmail): string {
         return mailDomains(mail).join(", ");
@@ -93,7 +89,7 @@ import { errorMessage } from "@/lib/shared/utils/errors";
 
     const inboxList = createEmailList<InboundEmail>(
         (limit, after) => loadArchivePage<InboundEmail>(accountId, "inbox", limit, after,
-            (size) => listInboundEmails(accountId, size, null)),
+            () => refreshInbox(accountId)),
         PAGE_SIZE,
         (limit) => getLocalArchivePage<InboundEmail>(accountId, "inbox", limit),
     );
@@ -193,16 +189,14 @@ import { errorMessage } from "@/lib/shared/utils/errors";
     async function handleRefresh() {
         const currentMode = mode;
         const list = activeList;
+        if (manualRefreshing || list.isRefreshing) return;
+        manualRefreshing = true;
         try {
-            await list.refresh();
+            await refreshMailbox(accountId, currentMode);
             if (disposed || mode !== currentMode) return;
-            if (list.cacheInfo?.error) {
-                toast.warning("Showing downloaded emails; remote refresh failed");
-            } else {
-                await syncMailbox(accountId, currentMode, true, PAGE_SIZE);
-                if (disposed || mode !== currentMode) return;
-                toast.success("Emails refreshed; local download continues in the background");
-            }
+            await list.refreshCached();
+            if (disposed || mode !== currentMode) return;
+            toast.success("Emails refreshed; local download continues in the background");
             void refreshArchiveStatus();
         } catch (err) {
             if (disposed || mode !== currentMode) return;
@@ -211,6 +205,8 @@ import { errorMessage } from "@/lib/shared/utils/errors";
             } else {
                 toast.error(errorMessage(err, "Failed to load emails"));
             }
+        } finally {
+            manualRefreshing = false;
         }
     }
 
@@ -254,44 +250,17 @@ import { errorMessage } from "@/lib/shared/utils/errors";
         goto(mailUrl(accountId, mode, mailId));
     }
 
-    /* ---------------------------------------------------------
-     * INBOX POLLING (only while the inbox is visible)
-     * --------------------------------------------------------- */
     onMount(() => {
-        const interval = setInterval(async () => {
-            if (
-                mode !== "inbox" ||
-                document.hidden ||
-                disposed
-            )
-                return;
-
-            try {
-                const previousNewest = inboxList.items[0]?.id;
-                await inboxList.refreshSilent();
-                if (disposed) return;
-
-                const items = inboxList.items;
-                const oldIndex = previousNewest
-                    ? items.findIndex((m) => m.id === previousNewest)
-                    : -1;
-
-                const newCount =
-                    oldIndex === -1
-                        ? Math.max(items.length - 1, 0)
-                        : oldIndex;
-
-                if (newCount > 0) {
-                    toast.success(
-                        `${newCount} new email${newCount > 1 ? "s" : ""}`,
-                    );
-                }
-            } catch (err) {
-                console.error("Inbox polling failed:", err);
-            }
-        }, POLL_INTERVAL_MS);
-
-        return () => clearInterval(interval);
+        let unlisten: (() => void) | undefined;
+        void listen<{ accountId: string }>("inbox-updated", ({ payload }) => {
+            if (disposed || payload.accountId !== accountId || (manualRefreshing && mode === "inbox")) return;
+            void inboxList.refreshCached().catch(console.error);
+            if (mode === "inbox") void refreshArchiveStatus();
+        }).then((cleanup) => {
+            if (disposed) cleanup();
+            else unlisten = cleanup;
+        }).catch(console.error);
+        return () => unlisten?.();
     });
 </script>
 
@@ -388,11 +357,11 @@ import { errorMessage } from "@/lib/shared/utils/errors";
                     variant="ghost"
                     size="icon-sm"
                     onclick={handleRefresh}
-                    disabled={activeList.isRefreshing}
+                    disabled={activeList.isRefreshing || manualRefreshing}
                     title="Refresh emails"
                 >
                     <RefreshCwIcon
-                        class={activeList.isRefreshing ? "animate-spin" : ""}
+                        class={activeList.isRefreshing || manualRefreshing ? "animate-spin" : ""}
                     />
                 </Button>
             </div>

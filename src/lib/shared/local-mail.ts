@@ -44,12 +44,12 @@ export async function getLocalArchivePage<T>(accountId: string, mailbox: Mailbox
 /** Visible list is the retained local archive, never a remote-page slice. */
 export async function loadArchivePage<T>(
   accountId: string, mailbox: Mailbox, limit: number, after: string | null,
-  refreshRemote: (limit: number) => Promise<EmailPage<T>>,
+  refreshRemote: (limit: number) => Promise<EmailPage<T> | void>,
 ): Promise<EmailPage<T>> {
   let cache: EmailPage<T>["cache"];
   let remoteError: string | null = null;
   if (after === null) {
-    try { cache = (await refreshRemote(limit)).cache; }
+    try { cache = (await refreshRemote(limit))?.cache; }
     catch (error) { remoteError = errorMessage(error, "Remote refresh failed"); }
   }
   const local = await queryLocalMail<T>(accountId, { mailbox, limit, after: after ? JSON.parse(after) : null });
@@ -75,7 +75,7 @@ export function getMailArchiveStatus(accountId: string, mailbox: Mailbox): Promi
   return invoke("get_mail_archive_status", { accountId, mailbox });
 }
 
-/** Sequential background metadata/body download. Never deletes remote mail. */
-export function syncMailbox(accountId: string, mailbox: Mailbox, force = false, limit = 16): Promise<boolean> {
-  return invoke("sync_mailbox", { accountId, mailbox, force, limit });
+/** Rust refreshes the head and retries the background archive download. */
+export function refreshMailbox(accountId: string, mailbox: Mailbox): Promise<void> {
+  return invoke("refresh_mailbox", { accountId, mailbox });
 }

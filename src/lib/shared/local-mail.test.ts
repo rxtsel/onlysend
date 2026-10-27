@@ -1,6 +1,6 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { getCachedMailPage, getLocalArchivePage, loadArchivePage, getMailArchiveStatus, queryLocalMail, syncMailbox } from "./local-mail";
+import { getCachedMailPage, getLocalArchivePage, loadArchivePage, getMailArchiveStatus, queryLocalMail, refreshMailbox } from "./local-mail";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 beforeEach(() => vi.mocked(invoke).mockReset().mockResolvedValue(null));
@@ -17,8 +17,8 @@ test("local query uses a separate keyset and structured filters, never SQL", asy
 });
 
 test("background retry and progress are account/mailbox scoped", async () => {
-  await syncMailbox("account-b", "inbox", true);
-  expect(invoke).toHaveBeenCalledWith("sync_mailbox", { accountId: "account-b", mailbox: "inbox", force: true, limit: 16 });
+  await refreshMailbox("account-b", "inbox");
+  expect(invoke).toHaveBeenCalledWith("refresh_mailbox", { accountId: "account-b", mailbox: "inbox" });
   await getMailArchiveStatus("account-b", "sent");
   expect(invoke).toHaveBeenLastCalledWith("get_mail_archive_status", { accountId: "account-b", mailbox: "sent" });
 });
@@ -36,6 +36,14 @@ test("visible head comes from SQLite and preserves mail absent from the remote h
   expect(page.items).toEqual(local.items);
   expect(page.nextCursor).toBe(JSON.stringify(local.nextCursor));
   expect(refresh).toHaveBeenCalledWith(16);
+});
+
+test("Rust-owned inbox refresh returns no remote slice and the list reads SQLite", async () => {
+  vi.mocked(invoke).mockResolvedValue(local);
+  const refresh = vi.fn(async () => {});
+  const page = await loadArchivePage("a", "inbox", 16, null, refresh);
+  expect(refresh).toHaveBeenCalledOnce();
+  expect(page.items).toEqual(local.items);
 });
 
 test("local continuation is never sent to Resend", async () => {
