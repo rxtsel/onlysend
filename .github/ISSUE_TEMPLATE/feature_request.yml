@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest an improvement or share product feedback.
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues before submitting. Feedback is public.
+        Do not include credentials, private emails, or other sensitive information.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Tell us what you are trying to do and what gets in the way.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Suggested improvement
+      description: Describe how you would like OnlySend to work.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or additional context
+      description: Workarounds you have tried, examples, or other useful details.
