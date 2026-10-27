@@ -8,4 +8,5 @@ export interface SentEmail {
   cc: string[];
   bcc: string[];
   replyTo: string | null;
+  lastEvent?: string | null;
 }

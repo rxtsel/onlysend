@@ -13,6 +13,7 @@ export interface MailListItem {
   domain?: string;
   preview: string;
   isRead: boolean;
+  lastEvent?: string | null;
 }
 
 export interface MailListRequest {
