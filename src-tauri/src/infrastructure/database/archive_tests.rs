@@ -691,6 +691,11 @@ async fn installed_sdk_history_is_archived_and_traversable_after_restart() {
                 request.domain = Some("b.example".into());
             }
             let result = mail::query(&database, "a".into(), request).await.unwrap();
+            if mailbox == Mailbox::Sent {
+                for item in &result.items {
+                    assert!(matches!(item["lastEvent"].as_str(), Some("suppressed" | "future_event")));
+                }
+            }
             actual.extend(
                 result
                     .items

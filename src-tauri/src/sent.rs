@@ -6,7 +6,7 @@ use crate::infrastructure::database::{
 use crate::infrastructure::pagination::{email_page, list_options, EmailPage};
 use crate::oauth;
 use crate::permissions;
-use resend_rs::Resend;
+use resend_rs::{ConfigBuilder, Resend};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Wry};
 
@@ -24,6 +24,73 @@ pub struct SentEmail {
     #[serde(default)]
     pub bcc: Vec<String>,
     pub reply_to: Option<String>,
+    #[serde(default)]
+    pub last_event: Option<String>,
+}
+
+// Keep last_event as a string: the SDK's closed enum rejects suppressed.
+#[derive(Debug, Deserialize)]
+struct RemoteSentEmail {
+    id: String,
+    from: String,
+    to: Vec<String>,
+    subject: String,
+    created_at: String,
+    html: Option<String>,
+    text: Option<String>,
+    cc: Option<Vec<String>>,
+    bcc: Option<Vec<String>>,
+    reply_to: Option<Vec<String>>,
+    last_event: Option<String>,
+}
+
+impl From<RemoteSentEmail> for SentEmail {
+    fn from(email: RemoteSentEmail) -> Self {
+        Self {
+            id: email.id,
+            from: email.from,
+            to: email.to,
+            subject: email.subject,
+            html: email.html.or(email.text),
+            created_at: email.created_at,
+            cc: email.cc.unwrap_or_default(),
+            bcc: email.bcc.unwrap_or_default(),
+            last_event: email.last_event,
+            reply_to: email
+                .reply_to
+                .filter(|rt| !rt.is_empty())
+                .map(|rt| rt.join(", ")),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoteSentPage {
+    data: Vec<RemoteSentEmail>,
+    has_more: bool,
+}
+
+async fn sent_response<T: serde::de::DeserializeOwned>(
+    resend: &Resend,
+    request: reqwest::RequestBuilder,
+    context: &str,
+) -> Result<T, String> {
+    // Keep the SDK's HTTP error mapping and rate limiting, but decode our own DTO.
+    let config = ConfigBuilder::new(resend.api_key())
+        .client(resend.client())
+        .build();
+    let response = config
+        .send(
+            request
+                .bearer_auth(resend.api_key())
+                .header("User-Agent", resend.user_agent()),
+        )
+        .await
+        .map_err(|e| permissions::map_resend_error(context, e))?;
+    response
+        .json()
+        .await
+        .map_err(|_| format!("[ERROR] {context}: incompatible email response"))
 }
 
 pub(crate) async fn list_sent_emails(
@@ -87,32 +154,21 @@ pub(crate) async fn fetch_sent_page(
 ) -> Result<EmailPage<SentEmail>, String> {
     let options = list_options(limit, after)?;
     // Each request fetches one remote page, retaining the captured account.
-    let response = match after {
-        Some(cursor) => resend.emails.list(options.list_after(cursor)).await,
-        None => resend.emails.list(options).await,
-    }
-    .map_err(|e| permissions::map_resend_error("Failed to fetch sent emails", e))?;
+    let request = resend.client().get(format!("{}emails", resend.base_url()));
+    let request = match after {
+        Some(cursor) => request.query(&options.list_after(cursor)),
+        None => request.query(&options),
+    };
+    let response: RemoteSentPage =
+        sent_response(resend, request, "Failed to fetch sent emails").await?;
     let has_more = response.has_more;
 
     let sent_emails: Vec<SentEmail> = response
         .data
         .into_iter()
         .map(|email| SentEmail {
-            id: email.id.to_string(),
-            from: email.from,
-            to: email.to,
-            subject: email.subject,
             html: None,
-            created_at: email.created_at,
-            cc: email.cc,
-            bcc: email.bcc,
-            reply_to: email.reply_to.as_ref().and_then(|rt| {
-                if rt.is_empty() {
-                    None
-                } else {
-                    Some(rt.join(", "))
-                }
-            }),
+            ..email.into()
         })
         .collect();
 
@@ -124,8 +180,70 @@ mod tests {
     use super::*;
     use crate::infrastructure::pagination_test_server::mock_history;
 
+    #[test]
+    fn sent_responses_accept_suppressed_and_future_events_with_nullable_fields() {
+        for event in ["suppressed", "future_event", "delivered"] {
+            let value = serde_json::json!({
+                "id": "01a17f8f-b52b-7b2e-847a-609984c9bd58",
+                "from": "Support <support@example.com>",
+                "to": ["recipient@example.com"],
+                "subject": "Test Email",
+                "created_at": "2026-10-27 22:51:27.060000+00",
+                "last_event": event,
+                "message_id": null,
+                "cc": null, "bcc": null, "reply_to": null,
+                "html": null, "text": "Plain text body"
+            });
+            let email: RemoteSentEmail = serde_json::from_value(value.clone()).unwrap();
+            let detail: SentEmail = email.into();
+            assert_eq!(detail.html.as_deref(), Some("Plain text body"));
+            assert_eq!(detail.last_event.as_deref(), Some(event));
+            assert_eq!(serde_json::to_value(&detail).unwrap()["lastEvent"], event);
+            assert!(detail.cc.is_empty());
+            assert!(detail.bcc.is_empty());
+            assert!(detail.reply_to.is_none());
+            let page: RemoteSentPage = serde_json::from_value(serde_json::json!({
+                "data": [value], "has_more": false
+            }))
+            .unwrap();
+            assert_eq!(page.data.len(), 1);
+            assert!(!page.has_more);
+        }
+    }
+
+    #[test]
+    fn sent_response_preserves_recipients_and_requires_core_fields() {
+        let value = serde_json::json!({
+            "id": "email-id", "from": "sender@example.com", "to": ["to@example.com"],
+            "subject": "Test", "created_at": "2026-10-27 22:51:27.060000+00",
+            "html": "<p>Body</p>", "text": "Body",
+            "cc": ["cc@example.com"], "bcc": ["bcc@example.com"],
+            "reply_to": ["first@example.com", "second@example.com"]
+        });
+        let detail: SentEmail = serde_json::from_value::<RemoteSentEmail>(value.clone())
+            .unwrap()
+            .into();
+        assert_eq!(detail.html.as_deref(), Some("<p>Body</p>"));
+        assert!(detail.last_event.is_none());
+        let mut cached = serde_json::to_value(&detail).unwrap();
+        cached.as_object_mut().unwrap().remove("lastEvent");
+        assert!(serde_json::from_value::<SentEmail>(cached).unwrap().last_event.is_none());
+        assert_eq!(detail.cc, ["cc@example.com"]);
+        assert_eq!(detail.bcc, ["bcc@example.com"]);
+        assert_eq!(
+            detail.reply_to.as_deref(),
+            Some("first@example.com, second@example.com")
+        );
+        let mut invalid = value;
+        invalid.as_object_mut().unwrap().remove("id");
+        assert!(serde_json::from_value::<RemoteSentEmail>(invalid).is_err());
+        assert!(
+            serde_json::from_value::<RemoteSentPage>(serde_json::json!({"data": []})).is_err()
+        );
+    }
+
     #[tokio::test]
-    async fn sent_sdk_pages_traverse_history_beyond_previous_limits() {
+    async fn sent_pages_traverse_history_beyond_previous_limits() {
         let (resend, server, expected) = mock_history("/emails");
         let mut after = None;
         let mut ids = Vec::new();
@@ -166,33 +284,19 @@ pub async fn get_sent_email(
     let resend = Resend::new(&credential);
 
     // Get specific email by ID
-    let email = resend
-        .emails
-        .get(&email_id)
-        .await
-        .map_err(|e| permissions::map_resend_error("Failed to fetch email", e))?;
+    let mut url = reqwest::Url::parse(&format!("{}emails", resend.base_url()))
+        .map_err(|_| "[ERROR] Invalid Resend base URL".to_string())?;
+    url.path_segments_mut()
+        .map_err(|_| "[ERROR] Invalid Resend base URL".to_string())?
+        .push(&email_id);
+    let email: RemoteSentEmail =
+        sent_response(&resend, resend.client().get(url), "Failed to fetch email").await?;
 
     let search_text = email
         .text
         .clone()
         .unwrap_or_else(|| mail::plain_html(email.html.as_deref().unwrap_or_default()));
-    let detail = SentEmail {
-        id: email.id.to_string(),
-        from: email.from,
-        to: email.to,
-        subject: email.subject,
-        html: email.html.or(email.text),
-        created_at: email.created_at,
-        cc: email.cc,
-        bcc: email.bcc,
-        reply_to: email.reply_to.as_ref().and_then(|rt| {
-            if rt.is_empty() {
-                None
-            } else {
-                Some(rt.join(", "))
-            }
-        }),
-    };
+    let detail: SentEmail = email.into();
     crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
     mail::store_detail(
         &database,

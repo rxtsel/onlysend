@@ -59,8 +59,14 @@ pub fn mock_history(path: &'static str) -> (Resend, thread::JoinHandle<()>, Vec<
         } else {
             "2026-01-01 00:00:00.000000+00"
         },
-        "message_id": "<fixture@example.com>", "last_event": "delivered",
-        "html": null, "text": null, "bcc": [], "cc": [], "reply_to": [],
+        "message_id": if path == "/emails" { Value::Null } else { json!("<fixture@example.com>") },
+        "last_event": if path == "/emails" {
+            if index % 2 == 0 { "suppressed" } else { "future_event" }
+        } else { "delivered" },
+        "html": null, "text": null,
+        "bcc": if path == "/emails" { Value::Null } else { json!([]) },
+        "cc": if path == "/emails" { Value::Null } else { json!([]) },
+        "reply_to": if path == "/emails" { Value::Null } else { json!([]) },
     })).collect();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
