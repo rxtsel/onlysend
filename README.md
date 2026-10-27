@@ -44,6 +44,16 @@ OnlySend must remain running; quitting the app stops checks. Automatic checks
 fetch new inbox metadata, not the full archive on every interval. An explicit
 Refresh also retries the background archive download.
 
+## Appearance
+
+In **Settings → Appearance**, choose **Light**, **Dark**, or **System** (default).
+System follows your device's appearance, including changes while OnlySend is open.
+
+Email avatars default to **Blobavatars**; choose **Minimal** to use initials.
+Avatars are generated locally from the displayed email address, so the same
+address has the same avatar in Inbox and Sent even when its display name changes.
+Appearance preferences are saved on this device and apply across accounts.
+
 ## Downloads and updates
 
 Release builds target Linux (`.deb` and `.AppImage`), Windows (`.exe`), and macOS
