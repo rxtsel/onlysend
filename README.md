@@ -26,6 +26,22 @@ new MX records; review the DNS instructions before changing them.
 - Read downloaded message bodies offline, including after restarting the app.
   The footer shows local-copy progress and errors.
 
+## Inbox notifications
+
+OnlySend checks connected accounts from Rust every **5 minutes**, including when
+the window is minimized or another screen is open. In **Settings → Notifications**,
+choose 5, 10, 30 or 60 minutes, or turn automatic checks and notifications off.
+The Refresh button still works when automatic checks are off.
+
+The first successful check establishes a silent baseline. Subsequent checks
+notify only new arrivals, with per-account checkpoints retained across restarts.
+Notifications display a count, not email contents. Failed checks back off rather
+than repeatedly hitting the API. System notification settings can suppress alerts.
+
+OnlySend must remain running; quitting the app stops checks. Automatic checks
+fetch new inbox metadata, not the full archive on every interval. An explicit
+Refresh also retries the background archive download.
+
 ## Downloads and updates
 
 Release builds target Linux (`.deb` and `.AppImage`), Windows (`.exe`), and macOS
