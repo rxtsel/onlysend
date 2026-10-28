@@ -11,7 +11,16 @@ for (const [locale, route] of [['es', 'index.html'], ['en', 'en/index.html']]) {
   assert.ok(html.includes('https://github.com/rxtsel/onlysend/releases'));
   assert.ok(html.includes('hreflang="en"') && html.includes('hreflang="es"'));
   assert.ok(html.includes('href="/onlysend/"') && html.includes('href="/onlysend/en/"'));
-  assert.ok(html.includes('aria-controls="demo-image"') && html.includes('id="demo-preview"'));
+  const demo = html.match(/<video\b[^>]*id="demo-preview"[^>]*>[\s\S]*?<\/video>/)?.[0];
+  assert.ok(demo, 'Native demo video exists');
+  assert.ok(/\bplaysinline\b/.test(demo));
+  assert.ok(html.includes('id="demo-play"') && html.includes('aria-controls="demo-preview"'));
+  assert.ok(!/<(?:video|source)\b[^>]*\ssrc=/.test(demo), 'No video source is active before play');
+  assert.ok(demo.includes('preload="none"') && !/\bautoplay\b/.test(demo), 'Video loads only on demand');
+  assert.ok(demo.includes('poster="https://static.xavel.app/onlysend-preview.webp"'));
+  assert.ok(demo.includes('data-src="https://static.xavel.app/onlysend-demo.mp4" type="video/mp4"'));
+  assert.ok(demo.includes('data-src="https://static.xavel.app/onlysend-demo.webm" type="video/webm"'));
+  assert.ok(html.includes('property="og:image" content="https://static.xavel.app/onlysend-preview.webp"'));
   assert.ok(html.includes('Made by ') && html.includes('From Colombia.'));
   const creditHref = html.match(/href="([^"]+)"[^>]*>rxtsel<\/a>/)?.[1];
   assert.ok(creditHref, 'Author link exists');
@@ -25,7 +34,7 @@ for (const [locale, route] of [['es', 'index.html'], ['en', 'en/index.html']]) {
   assert.ok(html.includes(locale === 'es' ? 'Resend procesa el envío y la recepción en sus servidores' : 'Resend processes sending and receiving on its servers'));
   assert.ok(html.includes(locale === 'es' ? 'El almacenamiento local no está cifrado' : 'Local storage is not encrypted'));
   assert.ok(html.includes('hreflang="x-default" href="https://rxtsel.github.io/onlysend/"'));
-  assert.ok(!/<img[^>]+src="[^"]+\.gif"/.test(html), 'Demo starts as a still image');
+  assert.ok(!html.includes('.gif'), 'Website does not load or bundle the README GIF');
   const ids = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]));
   for (const [, url] of html.matchAll(/\b(?:href|src|data-animation|data-poster)="([^"]+)"/g)) {
     if (url.startsWith('#')) {

@@ -3,7 +3,9 @@ import { getRelativeLocaleUrl } from 'astro:i18n';
 import '../styles/global.css';
 import { content, repository, type Locale } from '../content';
 import Icon from './Icon.astro';
-import preview from '../../../assets/preview.gif?url';
+const demoMp4 = 'https://static.xavel.app/onlysend-demo.mp4';
+const demoWebm = 'https://static.xavel.app/onlysend-demo.webm';
+const demoPoster = 'https://static.xavel.app/onlysend-preview.webp';
 
 interface Props { locale: Locale; }
 const { locale } = Astro.props;
@@ -29,7 +31,7 @@ const releases = `${repository}/releases`;
     <meta property="og:title" content={t.title} />
     <meta property="og:description" content={t.description} />
     <meta property="og:url" content={canonical} />
-    <meta property="og:image" content={new URL(`${base}preview.webp`, Astro.site)} />
+    <meta property="og:image" content={demoPoster} />
     <meta property="og:image:alt" content={t.previewAlt} />
     <meta property="og:locale" content={locale === 'en' ? 'en_US' : 'es_ES'} />
     <meta name="twitter:card" content="summary_large_image" />
@@ -71,14 +73,20 @@ const releases = `${repository}/releases`;
               <div class="flex items-center justify-between gap-3 px-3 pt-2 pb-3 text-xs text-muted">
                 <span class="flex items-center gap-1.5" aria-hidden="true"><span class="size-2 rounded-full bg-black/15"></span><span class="size-2 rounded-full bg-black/15"></span><span class="size-2 rounded-full bg-black/15"></span></span>
                 <span>{t.demo}</span>
-                <button id="demo-toggle" type="button" hidden aria-pressed="false" aria-controls="demo-image" data-play={t.play} data-pause={t.pause} class="cursor-pointer rounded-md px-2 py-1 text-ink hover:bg-black/5">{t.play}</button>
               </div>
-              <button id="demo-preview" type="button" disabled aria-label={t.play} aria-pressed="false" aria-controls="demo-image" class="block w-full cursor-pointer rounded-lg disabled:cursor-default">
-                <img id="demo-image" src={`${base}preview.webp`} data-animation={preview} data-poster={`${base}preview.webp`} alt={t.previewAlt} width="1736" height="1080" class="block h-auto w-full rounded-lg border border-black/5" />
-              </button>
+              <div class="relative">
+                <video id="demo-preview" playsinline preload="none" poster={demoPoster} aria-label={t.previewAlt} width="1280" height="720" class="block h-auto w-full rounded-lg border border-black/5">
+                  <source data-src={demoMp4} type="video/mp4" />
+                  <source data-src={demoWebm} type="video/webm" />
+                  <a href={demoMp4}>{t.play}</a>
+                </video>
+                <button id="demo-play" type="button" aria-controls="demo-preview" class="absolute inset-0 flex cursor-pointer items-center justify-center rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4">
+                  <span class="button button-primary shadow-lg">▶ {t.play}</span>
+                </button>
+              </div>
             </div>
             <figcaption class="mt-4 text-center text-xs text-muted">{t.previewNote}</figcaption>
-            <noscript><p class="mt-3 text-center text-sm"><a class="underline underline-offset-4" href={preview}>{t.play}</a></p></noscript>
+            <noscript><p class="mt-3 text-center text-sm"><a class="underline underline-offset-4" href={demoMp4}>{t.play}</a></p></noscript>
           </figure>
         </div>
       </section>
@@ -164,23 +172,24 @@ const releases = `${repository}/releases`;
       </div>
     </footer>
     <script>
-      const button = document.querySelector<HTMLButtonElement>('#demo-toggle');
-      const image = document.querySelector<HTMLImageElement>('#demo-image');
-      const preview = document.querySelector<HTMLButtonElement>('#demo-preview');
-      if (button && image && preview) {
-        button.hidden = false;
-        preview.disabled = false;
-        const toggle = () => {
-          const playing = button.getAttribute('aria-pressed') !== 'true';
-          image.src = playing ? image.dataset.animation! : image.dataset.poster!;
-          button.textContent = playing ? button.dataset.pause! : button.dataset.play!;
-          for (const control of [button, preview]) {
-            control.setAttribute('aria-pressed', String(playing));
-            control.setAttribute('aria-label', button.textContent!);
+      const video = document.querySelector<HTMLVideoElement>('#demo-preview');
+      const button = document.querySelector<HTMLButtonElement>('#demo-play');
+      if (video && button) {
+        button.addEventListener('click', async () => {
+          button.hidden = true;
+          if (!video.querySelector('source[src]')) {
+            for (const source of video.querySelectorAll<HTMLSourceElement>('source[data-src]')) {
+              source.src = source.dataset.src!;
+            }
+            video.load();
           }
-        };
-        button.addEventListener('click', toggle);
-        preview.addEventListener('click', toggle);
+          video.controls = true;
+          try {
+            await video.play();
+          } catch {
+            button.hidden = false;
+          }
+        });
       }
     </script>
     <!-- Cloudflare Web Analytics -->
