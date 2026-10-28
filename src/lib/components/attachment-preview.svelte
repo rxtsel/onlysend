@@ -1,18 +1,19 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import * as Dialog from "$lib/components/ui/dialog";
-  let { open = $bindable(false), name, src, actions, restoreFocus }: {
+  let { open = $bindable(false), name, src, actions, restoreFocus, onclose }: {
     open?: boolean;
     name: string;
     src: string | null;
     actions?: Snippet;
     restoreFocus?: HTMLElement | null;
+    onclose?: () => void;
   } = $props();
   let failed = $state(false);
   $effect(() => { src; failed = false; });
 </script>
 
-<Dialog.Root bind:open>
+<Dialog.Root bind:open onOpenChangeComplete={(isOpen) => { if (!isOpen) onclose?.(); }}>
   <Dialog.Content class="sm:max-w-3xl" onCloseAutoFocus={(event) => {
     if (restoreFocus?.isConnected) { event.preventDefault(); restoreFocus.focus(); }
   }}>

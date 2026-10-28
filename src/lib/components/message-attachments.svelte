@@ -6,7 +6,7 @@
   import AttachmentPreview from "./attachment-preview.svelte";
   import {
     attachmentAction, cancelAttachmentDownload, listEmailAttachments, canPreviewImage,
-    contentId, inlineImageIds, primaryAttachmentAction, MAX_ATTACHMENT_BYTES,
+    contentId, inlineImageIds, primaryAttachmentAction, attachmentStatus, MAX_ATTACHMENT_BYTES,
     type AttachmentContext, type EmailAttachment, type AttachmentAction, type DownloadProgress,
   } from "$lib/shared/attachments";
   import { errorMessage } from "$lib/shared/utils/errors";
@@ -97,6 +97,10 @@
       }
     }
   }
+  function releasePreview() {
+    preview = null;
+    previewTrigger = null;
+  }
   async function cancel() {
     if (!busy) return;
     try { await cancelAttachmentDownload(context.accountId, busy.requestId); }
@@ -105,14 +109,14 @@
   onMount(() => { items = initialItems; void load(); });
   onDestroy(() => {
     disposed = true;
+    releasePreview();
     for (const id of requests) void cancelAttachmentDownload(context.accountId, id).catch(() => {});
   });
 </script>
 
-{#if visible.length || listing || error}
+{#if visible.length || error}
   <section class="mt-5 space-y-2" aria-label="Attachments">
     {#if visible.length}
-      <p class="text-xs font-medium text-muted-foreground">Attachments · {visible.length}</p>
       <ul class="grid grid-cols-1 gap-2 xl:grid-cols-2">
         {#each visible as item (item.id)}
           {@const name = item.filename || "Attachment"}
@@ -120,7 +124,7 @@
           {@const finishing = current?.total != null && current.downloaded >= current.total}
           <li class="min-w-0">
             <AttachmentCard {name} contentType={item.contentType} size={item.size} disabled={!!busy}
-              status={current ? finishing ? "Finishing…" : `${current.action === "preview" ? "Loading preview" : "Downloading"}${current.total ? ` · ${Math.min(100, Math.floor(current.downloaded / current.total * 100))}%` : "…"}` : undefined}
+              status={current ? attachmentStatus(current.action, current) : undefined}
               onactivate={(event) => run(item, primaryAttachmentAction(item), event.currentTarget as HTMLElement)}
               actionLabel={primaryAttachmentAction(item) === "preview" ? `Preview ${name}` : primaryAttachmentAction(item) === "open" ? `Open ${name} in the default application` : `Save ${name} as`}>
               {#snippet actions()}
@@ -131,12 +135,11 @@
           </li>
         {/each}
       </ul>
-      <p class="text-[11px] text-muted-foreground">Files up to 25 MB · Image previews up to 5 MB</p>
-    {:else if listing}<p class="text-xs text-muted-foreground" role="status">Loading attachments…</p>{/if}
+    {/if}
     {#if error}<div class="flex items-center gap-2 text-xs text-muted-foreground" role="status"><span>{error}</span><Button type="button" variant="ghost" size="sm" disabled={listing} onclick={load}>Retry</Button></div>{/if}
   </section>
 {/if}
-<AttachmentPreview bind:open={previewOpen} name={preview?.attachment.filename || "Image"} src={preview?.src || null} restoreFocus={previewTrigger}>
+<AttachmentPreview bind:open={previewOpen} name={preview?.attachment.filename || "Image"} src={preview?.src || null} restoreFocus={previewTrigger} onclose={releasePreview}>
   {#snippet actions()}
     {#if preview}
       <Button type="button" variant="outline" disabled={!!busy} onclick={() => preview && run(preview.attachment, "open")}><ExternalLink class="size-4" />Open externally</Button>

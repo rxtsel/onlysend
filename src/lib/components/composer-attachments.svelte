@@ -18,13 +18,18 @@
       if (canPreviewImage(file.type) && file.size <= 5 * 1024 * 1024 && !urls.has(file)) urls.set(file, URL.createObjectURL(file));
     }
     images = new Map(urls);
-    if (selected && !files.includes(selected)) open = false;
+    if (selected && !files.includes(selected)) { open = false; selected = null; }
   });
-  onDestroy(() => { for (const url of urls.values()) URL.revokeObjectURL(url); urls.clear(); });
+  onDestroy(() => {
+    for (const url of urls.values()) URL.revokeObjectURL(url);
+    urls.clear();
+    images = new Map();
+    selected = null;
+  });
 </script>
 
 {#if files.length}
-  <section class="max-h-48 space-y-2 overflow-y-auto rounded-b-md border border-t-0 p-3" aria-label="Selected attachments">
+  <section class="mt-3 max-h-48 shrink-0 overflow-y-auto" aria-label="Selected attachments">
     <ul class="grid grid-cols-1 gap-2 lg:grid-cols-2">
       {#each files as file (file)}
         <li class="min-w-0">
@@ -37,7 +42,6 @@
         </li>
       {/each}
     </ul>
-    <p class="text-[11px] text-muted-foreground">Up to 25 MB total · Image previews up to 5 MB</p>
   </section>
 {/if}
-<AttachmentPreview bind:open name={selected?.name || "Image"} src={selected ? images.get(selected) || null : null} />
+<AttachmentPreview bind:open name={selected?.name || "Image"} src={selected ? images.get(selected) || null : null} onclose={() => { selected = null; }} />

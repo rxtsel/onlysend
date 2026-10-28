@@ -138,7 +138,7 @@
 <div
   inert={disabled}
   aria-disabled={disabled || undefined}
-  class={cn("border rounded-t-md h-full shrink", {
+  class={cn("border rounded-md h-full shrink", {
     "border-red-500": ariaInvalid,
     "border-0 -ml-4 max-w-full w-full": !editable,
   })}

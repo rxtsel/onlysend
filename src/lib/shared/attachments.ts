@@ -39,6 +39,13 @@ export function primaryAttachmentAction(item: EmailAttachment): AttachmentAction
   return extension && ["png", "jpg", "jpeg", "gif", "webp", "pdf", "zip", "docx", "xlsx", "pptx", "odt", "ods", "odp"].includes(extension) ? "open" : "save";
 }
 
+export function attachmentStatus(action: AttachmentAction, progress: DownloadProgress): string {
+  const label = action === "open" ? "Opening" : action === "preview" ? "Loading preview" : "Saving";
+  return progress.total && progress.downloaded > 0 && progress.downloaded < progress.total
+    ? `${label} · ${Math.floor(progress.downloaded / progress.total * 100)}%`
+    : `${label}…`;
+}
+
 export function formatAttachmentSize(bytes: number | null): string {
   if (bytes == null) return "";
   if (bytes < 1024) return `${bytes} B`;

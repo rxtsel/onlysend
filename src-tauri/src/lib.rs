@@ -151,6 +151,12 @@ pub fn run() {
             config::delete_from_email,
             sent::get_sent_email
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<attachments::AttachmentTransfers>()
+                    .cleanup_on_exit();
+            }
+        });
 }
