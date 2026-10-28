@@ -82,6 +82,7 @@ pub(crate) fn sanitize_email_html(html: &str) -> String {
     Builder::default()
         .tags(tags)
         .rm_clean_content_tags(["style"])
+        .add_clean_content_tags(["title"])
         .tag_attributes(attributes)
         .generic_attributes(set(&[
             "align",
@@ -228,6 +229,26 @@ mod tests {
         assert!(document
             .html
             .contains("https://example.com/pay?a=1&amp;b=2"));
+    }
+
+    #[test]
+    fn document_title_does_not_leak_into_the_body_or_remove_matching_headings() {
+        let document = prepare_email_document(
+            r#"<!doctype html><html><head><title>Verify your email address</title>
+            <style>h1 { color: #ff6633; }</style></head><body>
+            <h1>Verify your email address</h1><p>Message content</p></body></html>"#
+                .into(),
+            None,
+            None,
+        );
+        assert!(!document.html.contains("<title"));
+        assert_eq!(
+            document.html.matches("Verify your email address").count(),
+            1
+        );
+        assert!(document.html.contains("<h1>Verify your email address</h1>"));
+        assert!(document.html.contains("h1 { color: #ff6633; }"));
+        assert!(document.html.contains("Message content"));
     }
 
     #[test]
