@@ -49,9 +49,16 @@ The composer uses the same cards, supports adding/removing files individually,
 and accepts **25 MB total**. Image preview URLs are released when files are removed
 or the draft closes. Attachment bytes are prepared only when sending.
 
-Attachment files need a network connection unless you have saved them separately.
-Private temporary copies used for external opening remain until OnlySend exits;
-a crash or an external application's file lock can leave temporary copies behind.
+An attachment is downloaded once per session and reused for previews, external
+opening and **Save as…**, including offline. Missing or incomplete temporary files
+are downloaded again. The external viewer gets a separate working copy, reused
+within the session, so its edits cannot change the original attachment. **Save as…**
+in OnlySend always copies the original; use the external viewer's own Save as to
+keep edits before quitting OnlySend.
+The index lives only in Rust memory, not SQLite. OnlySend attempts to remove its
+private session folder and pending save temporaries when exiting; a crash or an
+external application's file lock can leave temporary copies behind. A new session
+needs to download again.
 
 ## Inbox notifications
 
@@ -100,8 +107,9 @@ OnlySend uses Resend for sending and receiving; no separate OnlySend mail server
 is required. Downloaded messages are kept locally even if they disappear from
 Resend's lists. Disconnecting an account does not erase its local archive.
 
-Local storage is **not encrypted**. Offline copies include message bodies and
-attachment metadata, not attachment files or remote images.
+Local storage is **not encrypted**. The persistent mail archive includes message
+bodies and attachment metadata, not attachment files or remote images. Downloaded
+attachment bytes are kept separately in private session temporaries or saved by you.
 
 ## Contributing
 

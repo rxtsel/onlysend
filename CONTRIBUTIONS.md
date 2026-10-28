@@ -4,8 +4,8 @@ OnlySend uses Svelte 5/SvelteKit for the UI and Tauri 2/Rust for desktop service
 
 ## Development
 
-Install Bun, stable Rust, and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
-for your OS. On Linux with Nix, `nix develop` provides build dependencies and the
+Install Node.js 24.15+ (or 26+), Bun, stable Rust, and the
+[Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS. On Linux with Nix, `nix develop` provides build dependencies and the
 WebKit TLS/multimedia environment. External browser links use GLib's `gio open`
 on Linux (`libglib2.0-bin` on Debian/Ubuntu); deep-link registration also needs
 `xdg-utils`. The Debian package declares both dependencies. AppImage users need
@@ -59,7 +59,16 @@ authorization URLs in bug reports.
 For attachments, use test accounts and check Inbox and Sent separately: native
 Save as (including cancel and overwrite), external PDF opening, raster preview,
 CID images, expired URLs, offline metadata, cancellation and account switching.
-Existing destination files must survive failed or cancelled downloads. In the
+Existing destination files must survive failed or cancelled downloads. Reopen the
+same attachment offline during the same session: it must reuse its temporary file.
+Save as must copy without removing that file; editing the saved copy must not
+change the cached source. Edit a document from the external viewer, then reopen it:
+working edits must survive while OnlySend's Save as still exports the original.
+Check normal exit cleans the private session folder and destination-side save
+temporaries, including during a pending copy, without touching saved documents.
+Close an image preview and remove a selected composer image: payload references
+must clear, and removed thumbnail URLs must be revoked. No persistent attachment
+index is created. In the
 composer, add a second selection, remove a file, reselect it, and verify the sent
 message contains only the visible files. Also test plain-text Sent messages with
 newlines and literal `<tags>`; they must not become HTML. Desktop/dialog acceptance
