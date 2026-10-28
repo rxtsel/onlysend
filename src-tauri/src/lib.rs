@@ -1,6 +1,7 @@
 mod config;
 mod domains;
 mod email;
+mod email_document;
 mod external;
 mod inbound;
 mod mailbox;
@@ -123,6 +124,7 @@ pub fn run() {
             permissions::probe_full_access,
             email::send_email,
             external::open_external_url,
+            email_document::prepare_email_document,
             infrastructure::settings_store::get_domain_preferences,
             infrastructure::settings_store::save_domain_preferences,
             domains::list_domains,

@@ -1,11 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use crate::email_document::sanitize_email_html;
 
 use crate::infrastructure::database::{
     local_state,
     mail::{self, Mailbox},
 };
 use crate::infrastructure::pagination::{email_page, list_options, EmailPage};
-use ammonia::Builder;
 use resend_rs::types::GetInboundEmailOptions;
 use resend_rs::{types::InboundAttachment, Resend};
 use serde::{Deserialize, Serialize};
@@ -58,75 +57,6 @@ fn map_attachment(a: &InboundAttachment) -> InboundAttachmentDto {
         content_type: a.content_type.clone(),
         size: a.size,
     }
-}
-
-fn set(items: &[&'static str]) -> HashSet<&'static str> {
-    items.iter().copied().collect()
-}
-
-/// Allowlist sanitizer for untrusted email HTML. Scripts, frames and forms
-/// are removed here; the frontend renders the result inside a fully
-/// sandboxed iframe as the second security boundary.
-fn sanitize_email_html(html: &str) -> String {
-    let tags = set(&[
-        "a",
-        "b",
-        "blockquote",
-        "br",
-        "center",
-        "code",
-        "div",
-        "em",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "hr",
-        "i",
-        "img",
-        "li",
-        "ol",
-        "p",
-        "pre",
-        "s",
-        "span",
-        "strong",
-        "sub",
-        "sup",
-        "table",
-        "tbody",
-        "td",
-        "tfoot",
-        "th",
-        "thead",
-        "tr",
-        "u",
-        "ul",
-        "font",
-    ]);
-
-    let tag_attributes: HashMap<&str, HashSet<&str>> = HashMap::from([
-        ("a", set(&["href", "target"])),
-        ("img", set(&["src", "alt", "width", "height"])),
-        ("font", set(&["color", "size", "face"])),
-        (
-            "table",
-            set(&["border", "cellpadding", "cellspacing", "width"]),
-        ),
-        ("td", set(&["colspan", "rowspan", "width", "bgcolor"])),
-        ("th", set(&["colspan", "rowspan", "width", "bgcolor"])),
-    ]);
-
-    let generic_attributes = set(&["align", "valign", "dir", "lang"]);
-
-    Builder::default()
-        .tags(tags)
-        .tag_attributes(tag_attributes)
-        .generic_attributes(generic_attributes)
-        .clean(html)
-        .to_string()
 }
 
 async fn client(app: &AppHandle<Wry>, account_id: &str) -> Result<Resend, String> {

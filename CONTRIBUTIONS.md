@@ -51,7 +51,10 @@ For browser-link changes, test Donate, Help, About, API keys and OAuth in the
 same desktop session as `gio open https://resend.com`. On Linux, cover Nix/dev,
 Debian and AppImage separately. A failed launcher must leave the app usable;
 Donate/API keys offer a copy-link fallback, and OAuth keeps its authorization
-URL available. Never include authorization URLs in bug reports.
+URL available. In the mail reader, test text links, a linked logo, a payment
+button, keyboard activation, Ctrl/Cmd-click and middle-click. Fragment links must
+stay within the message; sender scripts must not execute. Never include
+authorization URLs in bug reports.
 
 Build a local desktop executable without installers:
 
