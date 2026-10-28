@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.1.7 - 2026-10-28
+
+### Features
+- Add native attachment actions and composer previews (6c65507)
+- Reuse session downloads and isolate edits (1f703a6)
+- Add threaded message replies (b40477d)
+- Group messages into secure conversations (72ffec0)
+
+
+### Fixes
+- Launch external links through native browser service (4d70b09)
+- Route sandboxed email links to the native browser (ef37b65)
+- Preserve email styling and recover original HTML (71006e2)
+- Strip document title text from rendered email bodies (1b8e15a)
+- Preserve original reply recipients (454b8e8)
+
+
+### Maintenance
+- Cover preview reference cleanup (83ea366)
+- Add jsdom for component tests (31100b5)
+- Document session cache behavior (462d45a)
+- Install node for release builds (c9960af)
+- Cover reply composer and attachment layout (46467e9)
+- Document reply workflow and checks (9664851)
+- Add mailparse for reply headers (69fff94)
+- Add horizontal footer margin (697d5f4)
+- Group fields into bordered sections (d6d7428)
+- Simplify content and add centered logo and badges (2318660)
+
 ## v0.1.6 - 2026-10-28
 
 ### Features
