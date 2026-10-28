@@ -2932,6 +2932,7 @@ dependencies = [
  "ammonia",
  "base64 0.22.1",
  "chrono",
+ "mailparse",
  "rand 0.10.2",
  "reqwest 0.13.4",
  "resend-rs",
