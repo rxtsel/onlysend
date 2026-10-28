@@ -5,19 +5,19 @@ Independent from the Svelte/Tauri desktop app.
 
 ## Develop
 
-Use Node.js 24 and pnpm (version pinned in package.json).
+Use Node.js 24 and Bun (version pinned in package.json).
 
 ```sh
 cd website
-pnpm install
-pnpm dev
+bun install --frozen-lockfile
+bun run dev
 ```
 
 Open http://localhost:4321/onlysend/.
 
-- `pnpm test`: build both languages and check generated links/assets.
-- `pnpm preview`: serve the production build locally.
-- `pnpm build`: generate static files in `dist/`.
+- `bun run test`: build both languages and check generated links/assets.
+- `bun run preview`: serve the production build locally.
+- `bun run build`: generate static files in `dist/`.
 
 ## Content
 
