@@ -1,7 +1,7 @@
 {
   "name": "only-send",
   "version": "0.1.5",
-  "description": "A clean and minimal email composer powered by Resend.",
+  "description": "A clean and minimal email composer by Rxtsel, powered by Resend.",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
