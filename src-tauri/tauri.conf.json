@@ -32,6 +32,11 @@
       "dmg",
       "nsis"
     ],
+    "linux": {
+      "deb": {
+        "depends": ["libglib2.0-bin", "xdg-utils"]
+      }
+    },
     "macOS": {
       "signingIdentity": "-"
     },

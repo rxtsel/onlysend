@@ -38,6 +38,7 @@
         librsvg
         openssl
         desktop-file-utils
+        xdg-utils
 
         # WebKit's multimedia backend requires the app plugin (appsink).
         gst_all_1.gstreamer
@@ -51,7 +52,8 @@
 
       shellHook = ''
         export RUST_BACKTRACE=1
-        export XDG_DATA_DIRS="$GSETTINGS_SCHEMAS_PATH"
+        # Keep desktop application associations visible inside the dev shell.
+        export XDG_DATA_DIRS="$GSETTINGS_SCHEMAS_PATH:''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
         # Preserve desktop modules (e.g. dconf/GVfs) while registering TLS.
         export GIO_EXTRA_MODULES="${pkgs.glib-networking}/lib/gio/modules''${GIO_EXTRA_MODULES:+:$GIO_EXTRA_MODULES}"
         # Respect an existing custom/system CA bundle.

@@ -6,7 +6,10 @@ OnlySend uses Svelte 5/SvelteKit for the UI and Tauri 2/Rust for desktop service
 
 Install Bun, stable Rust, and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
 for your OS. On Linux with Nix, `nix develop` provides build dependencies and the
-WebKit TLS/multimedia environment.
+WebKit TLS/multimedia environment. External browser links use GLib's `gio open`
+on Linux (`libglib2.0-bin` on Debian/Ubuntu); deep-link registration also needs
+`xdg-utils`. The Debian package declares both dependencies. AppImage users need
+the host's GLib tools and a configured default browser.
 
 ```sh
 bun install --frozen-lockfile
@@ -43,6 +46,12 @@ git diff --check
 When editing workflows, run `actionlint .github/workflows/release.yml`. Tests do
 not replace desktop acceptance: check restart/offline reading, account switching,
 HTML images, and update/draft behavior on the platforms affected.
+
+For browser-link changes, test Donate, Help, About, API keys and OAuth in the
+same desktop session as `gio open https://resend.com`. On Linux, cover Nix/dev,
+Debian and AppImage separately. A failed launcher must leave the app usable;
+Donate/API keys offer a copy-link fallback, and OAuth keeps its authorization
+URL available. Never include authorization URLs in bug reports.
 
 Build a local desktop executable without installers:
 

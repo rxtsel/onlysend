@@ -1,6 +1,6 @@
 <script lang="ts">
   import { LoaderCircle } from "@lucide/svelte";
-  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { openUrl } from "$lib/shared/api/external";
   import { toast } from "svelte-sonner";
   import { Button } from "$lib/components/ui/button";
   import * as Field from "$lib/components/ui/field";

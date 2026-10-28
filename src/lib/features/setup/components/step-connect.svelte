@@ -1,6 +1,6 @@
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
-  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { openUrl } from "$lib/shared/api/external";
   import { onMount } from "svelte";
   import { fly } from "svelte/transition";
 
@@ -43,6 +43,16 @@
   let view = $state<View>("buttons");
   let errors = $state<Record<string, string>>({});
   let authorizeUrl = $state("");
+
+  async function openApiKeys() {
+    const url = "https://resend.com/api-keys";
+    try { await openUrl(url); }
+    catch {
+      toast.error("Could not open the default browser", {
+        action: { label: "Copy link", onClick: () => { void copyToClipboard(url, "Link copied"); } },
+      });
+    }
+  }
 
   /* ---------------------------------------------------------
    * ANIMATED VIEW SWITCHING (slide + height)
@@ -221,7 +231,7 @@
                 <button
                   type="button"
                   class="underline underline-offset-4 font-medium"
-                  onclick={() => openUrl("https://resend.com/api-keys")}
+                  onclick={openApiKeys}
                 >
                   Resend dashboard
                 </button>.
