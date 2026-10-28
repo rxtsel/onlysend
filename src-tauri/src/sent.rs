@@ -32,6 +32,10 @@ pub struct SentEmail {
     pub reply_to: Option<String>,
     #[serde(default)]
     pub last_event: Option<String>,
+    #[serde(default)]
+    pub thread_id: Option<String>,
+    #[serde(default)]
+    pub message_id: Option<String>,
 }
 
 // Keep last_event as a string: the SDK's closed enum rejects suppressed.
@@ -48,10 +52,61 @@ struct RemoteSentEmail {
     bcc: Option<Vec<String>>,
     reply_to: Option<Vec<String>>,
     last_event: Option<String>,
+    #[serde(default)]
+    message_id: Option<String>,
+    #[serde(default)]
+    headers: Option<std::collections::HashMap<String, String>>,
+}
+
+fn sent_reply_thread_id(email: &RemoteSentEmail) -> Option<String> {
+    let header = |name: &str| {
+        email
+            .headers
+            .as_ref()?
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    };
+    header("References")
+        .and_then(crate::inbound::parsed_message_ids)
+        .and_then(|ids| ids.first().cloned())
+        .or_else(|| {
+            header("In-Reply-To")
+                .and_then(crate::inbound::parsed_message_ids)
+                .and_then(|ids| ids.first().cloned())
+        })
+}
+
+fn sent_message_id(email: &RemoteSentEmail) -> Option<String> {
+    email
+        .message_id
+        .as_deref()
+        .and_then(crate::inbound::parsed_message_ids)
+        .and_then(|ids| ids.first().map(|id| format!("<{id}>")))
+        .or_else(|| {
+            email
+                .headers
+                .as_ref()?
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case("Message-ID"))
+                .and_then(|(_, value)| crate::inbound::parsed_message_ids(value))
+                .and_then(|ids| ids.first().map(|id| format!("<{id}>")))
+        })
+}
+
+fn sent_thread_id(email: &RemoteSentEmail) -> Option<String> {
+    sent_reply_thread_id(email).or_else(|| {
+        sent_message_id(email)
+            .as_deref()
+            .and_then(crate::inbound::parsed_message_ids)
+            .and_then(|ids| ids.first().cloned())
+    })
 }
 
 impl From<RemoteSentEmail> for SentEmail {
     fn from(email: RemoteSentEmail) -> Self {
+        let thread_id = sent_thread_id(&email);
+        let message_id = sent_message_id(&email);
         Self {
             id: email.id,
             from: email.from,
@@ -69,6 +124,8 @@ impl From<RemoteSentEmail> for SentEmail {
                 .reply_to
                 .filter(|rt| !rt.is_empty())
                 .map(|rt| rt.join(", ")),
+            thread_id,
+            message_id,
         }
     }
 }
@@ -189,6 +246,20 @@ pub(crate) async fn fetch_sent_page(
 mod tests {
     use super::*;
     use crate::infrastructure::pagination_test_server::mock_history;
+
+    #[test]
+    fn sent_reply_headers_map_to_the_oldest_message_in_the_conversation() {
+        let email: RemoteSentEmail = serde_json::from_value(serde_json::json!({
+            "id":"email-id", "from":"sender@example.test", "to":["recipient@example.test"],
+            "subject":"Re: Subject", "created_at":"2026-01-01T00:00:00Z",
+            "message_id":"<reply@example.test>", "headers":{
+                "In-Reply-To":"<parent@example.test>",
+                "References":"<root@example.test> <parent@example.test>"
+            }
+        }))
+        .unwrap();
+        assert_eq!(sent_thread_id(&email).as_deref(), Some("root@example.test"));
+    }
 
     #[test]
     fn sent_responses_accept_suppressed_and_future_events_with_nullable_fields() {
@@ -314,8 +385,28 @@ pub async fn get_sent_email(
     .transpose()?;
     if let Some(detail) = cached
         .as_ref()
-        .filter(|detail| detail.body_format_version > 0)
+        .filter(|detail| detail.body_format_version > 0 && detail.thread_id.is_some())
     {
+        if let Some(thread_id) = &detail.thread_id {
+            if mail::thread_id_for(
+                &database,
+                account_id.clone(),
+                Mailbox::Sent,
+                email_id.clone(),
+            )
+            .await?
+            .is_none()
+            {
+                mail::store_thread_link(
+                    &database,
+                    account_id.clone(),
+                    Mailbox::Sent,
+                    email_id.clone(),
+                    thread_id.clone(),
+                )
+                .await?;
+            }
+        }
         return Ok(detail.clone());
     }
     // Legacy cache merged text into HTML. Recover the source without deleting offline mail.
@@ -338,7 +429,9 @@ pub async fn get_sent_email(
             .text
             .clone()
             .unwrap_or_else(|| mail::plain_html(email.html.as_deref().unwrap_or_default()));
+        let reply_thread_id = sent_reply_thread_id(&email);
         let detail: SentEmail = email.into();
+        let thread_id = detail.thread_id.clone();
         crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
         mail::store_detail(
             &database,
@@ -349,6 +442,35 @@ pub async fn get_sent_email(
             search_text,
         )
         .await?;
+        if let Some(thread_id) = reply_thread_id {
+            mail::store_thread_link(
+                &database,
+                account_id.clone(),
+                Mailbox::Sent,
+                email_id.clone(),
+                thread_id,
+            )
+            .await?;
+        } else if let Some(thread_id) = thread_id {
+            if mail::thread_id_for(
+                &database,
+                account_id.clone(),
+                Mailbox::Sent,
+                email_id.clone(),
+            )
+            .await?
+            .is_none()
+            {
+                mail::store_thread_link(
+                    &database,
+                    account_id.clone(),
+                    Mailbox::Sent,
+                    email_id.clone(),
+                    thread_id,
+                )
+                .await?;
+            }
+        }
         Ok::<_, String>(detail)
     })
     .await

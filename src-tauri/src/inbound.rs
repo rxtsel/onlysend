@@ -48,6 +48,8 @@ pub struct InboundEmailDetailDto {
     #[serde(default)]
     pub references: Option<String>,
     #[serde(default)]
+    pub in_reply_to: Option<String>,
+    #[serde(default)]
     pub received_for: Vec<String>,
 }
 
@@ -65,7 +67,10 @@ impl InboundEmailDetailDto {
     }
 }
 
-fn original_recipients(headers: &std::collections::HashMap<String, String>, fallback: &[String]) -> Vec<String> {
+fn original_recipients(
+    headers: &std::collections::HashMap<String, String>,
+    fallback: &[String],
+) -> Vec<String> {
     headers
         .iter()
         .find(|(name, _)| name.eq_ignore_ascii_case("to"))
@@ -75,12 +80,64 @@ fn original_recipients(headers: &std::collections::HashMap<String, String>, fall
                 .iter()
                 .flat_map(|address| match address {
                     mailparse::MailAddr::Single(mailbox) => vec![mailbox.addr.clone()],
-                    mailparse::MailAddr::Group(group) => group.addrs.iter().map(|mailbox| mailbox.addr.clone()).collect(),
+                    mailparse::MailAddr::Group(group) => group
+                        .addrs
+                        .iter()
+                        .map(|mailbox| mailbox.addr.clone())
+                        .collect(),
                 })
                 .collect()
         })
         .filter(|addresses: &Vec<String>| !addresses.is_empty())
         .unwrap_or_else(|| fallback.to_vec())
+}
+
+pub(crate) fn parsed_message_ids(value: &str) -> Option<Vec<String>> {
+    let values = serde_json::from_str::<Vec<String>>(value).ok();
+    let ids: Vec<String> = if let Some(values) = values {
+        values
+            .into_iter()
+            .flat_map(|value| {
+                mailparse::msgidparse(&value)
+                    .map(|ids| ids.iter().cloned().collect::<Vec<_>>())
+                    .unwrap_or_default()
+            })
+            .collect()
+    } else {
+        mailparse::msgidparse(value).ok()?.iter().cloned().collect()
+    };
+    Some(
+        ids.into_iter()
+            .filter(|id| {
+                !id.is_empty()
+                    && !id
+                        .chars()
+                        .any(|ch| ch.is_control() || ch.is_whitespace() || matches!(ch, '<' | '>'))
+            })
+            .collect(),
+    )
+}
+
+pub(crate) fn thread_id(detail: &InboundEmailDetailDto) -> Option<String> {
+    detail
+        .references
+        .as_deref()
+        .and_then(parsed_message_ids)
+        .and_then(|ids| ids.first().cloned())
+        .or_else(|| {
+            detail
+                .in_reply_to
+                .as_deref()
+                .and_then(parsed_message_ids)
+                .and_then(|ids| ids.first().cloned())
+        })
+        .or_else(|| {
+            detail
+                .message_id
+                .as_deref()
+                .and_then(parsed_message_ids)
+                .and_then(|ids| ids.first().cloned())
+        })
 }
 
 fn map_attachment(a: &InboundAttachment) -> InboundAttachmentDto {
@@ -182,6 +239,16 @@ pub(crate) async fn get_inbound_email(
         .as_ref()
         .filter(|detail| detail.can_reuse(require_reply_metadata))
     {
+        if let Some(thread_id) = thread_id(detail) {
+            mail::store_thread_link(
+                &database,
+                account_id.clone(),
+                Mailbox::Inbox,
+                email_id.clone(),
+                thread_id,
+            )
+            .await?;
+        }
         return Ok(detail.clone());
     }
     // Old cache entries lost their CSS; recover the source without deleting the offline copy.
@@ -218,6 +285,11 @@ pub(crate) async fn get_inbound_email(
                 .iter()
                 .find(|(name, _)| name.eq_ignore_ascii_case("references"))
                 .map(|(_, value)| value.clone()),
+            in_reply_to: email
+                .headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("in-reply-to"))
+                .map(|(_, value)| value.clone()),
             received_for: email.received_for.clone(),
         };
         crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
@@ -230,6 +302,16 @@ pub(crate) async fn get_inbound_email(
             search_text,
         )
         .await?;
+        if let Some(thread_id) = thread_id(&detail) {
+            mail::store_thread_link(
+                &database,
+                account_id.clone(),
+                Mailbox::Inbox,
+                email_id.clone(),
+                thread_id,
+            )
+            .await?;
+        }
         Ok::<_, String>(detail)
     }
     .await;
@@ -284,7 +366,7 @@ pub async fn open_inbound_email(
 #[cfg(test)]
 mod tests {
     use super::{fetch_inbound_page, recipient_domains, InboundEmailDetailDto};
-    use crate::email_document::sanitize_email_html;
+    use crate::email_html::sanitize_email_html;
     use crate::infrastructure::pagination_test_server::mock_history;
 
     #[tokio::test]
@@ -306,6 +388,30 @@ mod tests {
         server.join().unwrap();
         assert_eq!(ids, expected);
         assert!(after.is_none());
+    }
+
+    #[test]
+    fn thread_id_uses_first_reference_then_parent_then_message_id() {
+        let mut detail: InboundEmailDetailDto = serde_json::from_value(serde_json::json!({
+            "id":"email", "from":"sender@example.test", "to":["inbox@example.test"],
+            "subject":"Re: hello", "createdAt":"2026-01-01T00:00:00Z", "html":null,
+            "text":"reply", "attachments":[], "messageId":"<reply@example.test>",
+            "inReplyTo":"<parent@example.test>", "references":"[\"<root@example.test>\",\"<parent@example.test>\"]"
+        })).unwrap();
+        assert_eq!(
+            super::thread_id(&detail).as_deref(),
+            Some("root@example.test")
+        );
+        detail.references = None;
+        assert_eq!(
+            super::thread_id(&detail).as_deref(),
+            Some("parent@example.test")
+        );
+        detail.in_reply_to = None;
+        assert_eq!(
+            super::thread_id(&detail).as_deref(),
+            Some("reply@example.test")
+        );
     }
 
     #[test]

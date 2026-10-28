@@ -115,7 +115,7 @@
 </script>
 
 {#if visible.length || error}
-  <section class="@container/attachments max-h-48 shrink-0 space-y-2 overflow-y-auto px-6 py-4 lg:px-8" aria-label="Attachments">
+  <section class="@container/attachments mt-4 shrink-0 space-y-2 px-0 pt-4" aria-label="Attachments">
     {#if visible.length}
       <ul class="grid grid-cols-1 gap-2 @xl/attachments:grid-cols-2">
         {#each visible as item (item.id)}

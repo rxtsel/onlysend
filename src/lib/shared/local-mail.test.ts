@@ -1,9 +1,14 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { loadMailList, getMailArchiveStatus, refreshMailbox } from "./local-mail";
+import { loadMailList, getMailArchiveStatus, refreshMailbox, getMailThread } from "./local-mail";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 beforeEach(() => { vi.mocked(invoke).mockReset().mockResolvedValue(null); });
+
+test("thread lookup passes explicit account, mailbox and email ownership", async () => {
+  await getMailThread("a", "inbox", "message-id");
+  expect(invoke).toHaveBeenCalledExactlyOnceWith("get_mail_thread", { accountId: "a", mailbox: "inbox", emailId: "message-id" });
+});
 
 test("manual refresh and status are delegated to the native account/mailbox", async () => {
   await refreshMailbox("b", "inbox");

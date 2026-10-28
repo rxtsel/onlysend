@@ -14,6 +14,8 @@ export interface MailListItem {
   preview: string;
   isRead: boolean;
   lastEvent?: string | null;
+  threadId?: string;
+  threadCount?: number;
 }
 
 export interface MailListRequest {
@@ -27,6 +29,20 @@ export interface MailListRequest {
 
 export function loadMailList(accountId: string, request: MailListRequest): Promise<EmailPage<MailListItem> & { domains: string[] }> {
   return invoke("load_mail_list", { accountId, request });
+}
+
+export interface MailThreadMessage {
+  id: string;
+  mailbox: Mailbox;
+  from: string;
+  to: string[];
+  subject: string;
+  createdAt: string;
+  preview: string;
+}
+
+export function getMailThread(accountId: string, mailbox: Mailbox, emailId: string): Promise<MailThreadMessage[]> {
+  return invoke("get_mail_thread", { accountId, mailbox, emailId });
 }
 
 export interface MailArchiveStatus {

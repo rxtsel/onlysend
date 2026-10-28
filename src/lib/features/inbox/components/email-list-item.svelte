@@ -7,9 +7,10 @@
   import { sentFailureLabel } from "$lib/shared/sent-status";
   import { CircleAlert } from "@lucide/svelte";
 
-  let { mail, mode, isActive = false, isUnread = false, onclick }: {
+  let { mail, mode, threadCount = 1, isActive = false, isUnread = false, onclick }: {
     mail: MailListItem;
     mode: Mailbox;
+    threadCount?: number;
     isActive?: boolean;
     isUnread?: boolean;
     onclick: (id: string) => void;
@@ -33,6 +34,7 @@
     </div>
     <div class="mt-1 flex min-w-0 items-center gap-2">
       <p class={cn("min-w-0 flex-1 truncate text-[13px]", isUnread ? "font-medium text-foreground" : "text-foreground/80")}>{mail.subject || "(No subject)"}</p>
+      {#if threadCount > 1}<span class="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" aria-label={`${mail.threadCount ?? threadCount} messages in conversation`}>{mail.threadCount ?? threadCount}</span>{/if}
       {#if failureLabel}
         <span class="relative size-4 shrink-0">
           <span class="sr-only">{failureLabel}</span>

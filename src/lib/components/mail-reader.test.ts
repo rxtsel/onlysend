@@ -5,23 +5,43 @@ import Reader from "./__tests__/mail-reader-harness.svelte";
 import { getInboundEmail } from "$lib/shared/inbound";
 import { getSentEmail } from "$lib/shared/sent";
 import { listEmailAttachments } from "$lib/shared/attachments";
+import { getMailThread } from "$lib/shared/local-mail";
 
 vi.mock("$lib/shared/inbound", () => ({ getInboundEmail: vi.fn() }));
 vi.mock("$lib/shared/sent", () => ({ getSentEmail: vi.fn() }));
+vi.mock("$lib/shared/local-mail", () => ({ getMailThread: vi.fn().mockResolvedValue([]) }));
 vi.mock("$lib/shared/attachments", async (original) => ({ ...await original<typeof import("$lib/shared/attachments")>(), listEmailAttachments: vi.fn().mockResolvedValue([]) }));
 vi.mock("svelte-sonner", () => ({ toast: { error: vi.fn() } }));
 
 let target: HTMLElement;
 let instance: ReturnType<typeof mount>;
 beforeEach(() => {
+  vi.mocked(getMailThread).mockReset().mockResolvedValue([]);
   target = document.createElement("div");
   document.body.append(target);
 });
 afterEach(async () => { await unmount(instance); document.body.replaceChildren(); });
 
+test("shows the list item's cached preview while the full message is loading", async () => {
+  vi.mocked(getInboundEmail).mockReturnValueOnce(new Promise(() => {}));
+  instance = mount(Reader, { target, props: { preview: {
+    accountId: "account-a", mailbox: "inbox", mail: {
+      id: "b3e2b2b6-3f0e-4c8e-9ad3-2f43a1e2c7f1", from: "sender@example.test", to: ["me@example.test"],
+      subject: "Cached subject", createdAt: "2026-01-01T00:00:00Z", preview: "Cached preview snippet", isRead: true, threadCount: 2,
+    },
+  } } });
+  await vi.waitFor(() => expect(target.querySelector('[aria-label="Loading full message"]')).not.toBeNull());
+  expect(target.textContent).toContain("Cached preview snippet");
+  expect(target.textContent).toContain("sender");
+  expect(target.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(3);
+  expect(target.querySelector('[aria-busy="true"] > div:first-child > span')?.getAttribute("style")).toContain("width: 32px");
+  expect(target.querySelector("time")?.classList.contains("whitespace-nowrap")).toBe(true);
+});
+
 test("received attachments sit below the content and leave the subject at full width", async () => {
   const attachment = { id: "file", filename: "invoice.pdf", contentType: "application/pdf", size: 100 };
   vi.mocked(listEmailAttachments).mockResolvedValueOnce([attachment]);
+  vi.mocked(getMailThread).mockResolvedValue([]);
   vi.mocked(getInboundEmail).mockResolvedValue({
     id: "message", from: "sender@example.com", to: ["me@example.com"],
     subject: "Private subject", createdAt: "2026-01-01T00:00:00Z",
@@ -31,23 +51,71 @@ test("received attachments sit below the content and leave the subject at full w
   await vi.waitFor(() => expect(target.querySelector('[aria-label="Attachments"]')).not.toBeNull());
   const header = target.querySelector("header")!;
   const attachments = target.querySelector('[aria-label="Attachments"]')!;
-  expect(header.querySelector("h1")?.textContent).toBe("Private subject");
-  expect(header.querySelector("h1")?.parentElement).toBe(header);
+  expect(target.querySelector("[data-slot=collapsible-trigger]")).toBeNull();
   expect(header.contains(attachments)).toBe(false);
   expect(attachments.classList.contains("@container/attachments")).toBe(true);
   expect(attachments.querySelector("ul")?.classList.contains("@xl/attachments:grid-cols-2")).toBe(true);
-  expect(attachments.previousElementSibling?.textContent).toContain("Private body");
-  expect(target.querySelector("article")?.lastElementChild).toBe(attachments);
+  expect(target.querySelector("pre")?.textContent).toBe("Private body");
+  expect(target.querySelector("article ol")?.contains(attachments)).toBe(true);
   expect(target.textContent).toContain("reply@example.com");
 });
 
-test("sent mail does not accidentally offer a reply to the user's own From address", async () => {
+test("a thread's Reply action targets the exact message card", async () => {
+  const emailId = "b3e2b2b6-3f0e-4c8e-9ad3-2f43a1e2c7f1";
+  vi.mocked(getInboundEmail).mockResolvedValue({
+    id: emailId, from: "sender@example.test", to: ["me@example.test"],
+    subject: "Re: Topic", createdAt: "2026-01-02T00:00:00Z", html: null, text: "Latest reply", attachments: [],
+  });
+  vi.mocked(getMailThread).mockResolvedValue([
+    { id: "root", mailbox: "inbox", from: "author@example.test", to: ["me@example.test"], subject: "Topic", createdAt: "2026-01-01T00:00:00Z", preview: "Original" },
+    { id: emailId, mailbox: "inbox", from: "sender@example.test", to: ["me@example.test"], subject: "Re: Topic", createdAt: "2026-01-02T00:00:00Z", preview: "Latest reply" },
+  ]);
+  instance = mount(Reader, { target });
+  await vi.waitFor(() => expect(target.querySelector('[aria-label="Reply to message from sender@example.test"]')).not.toBeNull());
+  expect(target.querySelector('[aria-label="Reply to message from sender@example.test"]')?.getAttribute("href"))
+    .toBe(`/mail/account-a/composer?reply=${emailId}`);
+});
+
+test("thread view keeps the subject above chronological, expandable message cards", async () => {
+  vi.mocked(getInboundEmail).mockResolvedValue({
+    id: "current", from: "sender@example.test", to: ["me@example.test"],
+    subject: "Re: Topic", createdAt: "2026-01-02T00:00:00Z", html: null, text: "Latest reply", attachments: [],
+  });
+  vi.mocked(getMailThread).mockResolvedValue([
+    { id: "root", mailbox: "inbox", from: "author@example.test", to: ["me@example.test"], subject: "Topic", createdAt: "2026-01-01T00:00:00Z", preview: "Original" },
+    { id: "b3e2b2b6-3f0e-4c8e-9ad3-2f43a1e2c7f1", mailbox: "inbox", from: "sender@example.test", to: ["me@example.test"], subject: "Re: Topic", createdAt: "2026-01-02T00:00:00Z", preview: "Latest reply" },
+    { id: "newest", mailbox: "inbox", from: "newest@example.test", to: ["me@example.test"], subject: "Re: Topic", createdAt: "2026-01-03T00:00:00Z", preview: "Newest reply" },
+  ]);
+  instance = mount(Reader, { target });
+  await vi.waitFor(() => expect(target.querySelector('[aria-label="Conversation messages"]')).not.toBeNull());
+  expect(getMailThread).toHaveBeenCalledExactlyOnceWith("account-a", "inbox", "b3e2b2b6-3f0e-4c8e-9ad3-2f43a1e2c7f1");
+  const cards = target.querySelectorAll<HTMLButtonElement>('[aria-label="Conversation messages"] button');
+  expect(cards).toHaveLength(3);
+  expect(cards[0].textContent).toContain("author");
+  expect(cards[0].textContent).toContain("Original");
+  expect(cards[0].querySelector("p")?.classList.contains("line-clamp-1")).toBe(true);
+  expect(cards[1].textContent).toContain("sender");
+  expect(cards[1].textContent).toContain("To me@example.test");
+  expect(target.textContent).toContain("Latest reply");
+  expect(cards[0].getAttribute("aria-expanded")).toBe("false");
+  expect(cards[1].getAttribute("aria-expanded")).toBe("false");
+  expect(cards[2].getAttribute("aria-expanded")).toBe("true");
+  expect(target.textContent).not.toContain("messages in this conversation");
+});
+
+test("Sent shows mixed inbox/sent thread messages and never replies to the user's own From address", async () => {
   vi.mocked(getSentEmail).mockResolvedValue({
     id: "message", from: "me@example.com", to: ["recipient@example.com"],
-    subject: "Sent subject", createdAt: "2026-01-01T00:00:00Z", html: null,
+    subject: "Sent subject", createdAt: "2026-01-02T00:00:00Z", html: null,
     text: "Sent body", cc: [], bcc: [], replyTo: null,
   });
+  vi.mocked(getMailThread).mockResolvedValue([
+    { id: "received", mailbox: "inbox", from: "recipient@example.test", to: ["me@example.test"], subject: "Topic", createdAt: "2026-01-01T00:00:00Z", preview: "Original" },
+    { id: "b3e2b2b6-3f0e-4c8e-9ad3-2f43a1e2c7f1", mailbox: "sent", from: "me@example.test", to: ["recipient@example.test"], subject: "Re: Topic", createdAt: "2026-01-02T00:00:00Z", preview: "Reply" },
+  ]);
   instance = mount(Reader, { target, props: { mailbox: "sent" } });
-  await vi.waitFor(() => expect(target.querySelector("h1")?.textContent).toBe("Sent subject"));
+  await vi.waitFor(() => expect(target.querySelectorAll('[aria-label="Conversation messages"] button')).toHaveLength(2));
+  expect(getMailThread).toHaveBeenCalledExactlyOnceWith("account-a", "sent", "b3e2b2b6-3f0e-4c8e-9ad3-2f43a1e2c7f1");
+  expect(target.querySelector("article")?.textContent).toContain("Sent body");
   expect(target.querySelector('[aria-label="Reply to this message"]')).toBeNull();
 });

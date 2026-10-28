@@ -27,17 +27,18 @@ let instance: ReturnType<typeof mount>;
 beforeEach(() => { target = document.createElement("div"); document.body.append(target); });
 afterEach(async () => { await unmount(instance); document.body.replaceChildren(); });
 
-test("Reply occupies the right of the Message toolbar rather than the subject", () => {
+test("keeps the subject full-width while thread status is unknown", () => {
   pageState.url = new URL(`https://app.test/mail/account-a/inbox/${emailId}`);
   pageState.params.id = emailId;
   instance = mount(Layout, { target });
   flushSync();
   const header = target.querySelector("main > header")!;
-  const reply = header.querySelector<HTMLAnchorElement>('[aria-label="Reply to this message"]')!;
-  expect(reply.getAttribute("href")).toBe(`/mail/account-a/composer?reply=${emailId}`);
-  expect(header.lastElementChild).toBe(reply);
-  expect(reply.previousElementSibling?.textContent).toBe("Message");
-  expect(reply.previousElementSibling?.classList.contains("flex-1")).toBe(true);
+  const subject = header.querySelector("h1")!;
+  expect(subject.textContent).toBe("Loading subject");
+  expect(subject.querySelector('[data-slot="skeleton"]')).not.toBeNull();
+  expect(subject.classList.contains("flex-1")).toBe(true);
+  expect(header.querySelector('[aria-label="Reply to this message"]')).toBeNull();
+  expect(header.classList.contains("items-start")).toBe(true);
 });
 
 test("the Sent toolbar does not reply to the user's own address", () => {

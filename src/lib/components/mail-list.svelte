@@ -19,12 +19,13 @@
   import { errorMessage } from "$lib/shared/utils/errors";
   import { cn } from "$lib/utils";
 
-  let { mailbox, domain, active = true, class: className, onDomainsChange, onArchiveStatusChange }: {
+  let { mailbox, domain, active = true, class: className, onDomainsChange, onSelectMail, onArchiveStatusChange }: {
     mailbox: Mailbox;
     domain: string | null;
     active?: boolean;
     class?: string;
     onDomainsChange: (domains: string[]) => void;
+    onSelectMail: (mail: MailListItem, mailbox: Mailbox) => void;
     onArchiveStatusChange: (accountId: string, mailbox: Mailbox, data: ArchiveFooterData) => void;
   } = $props();
   const accountId = useAccountId();
@@ -57,6 +58,21 @@
       return result.cache ? result : null;
     },
   );
+  const threads = $derived.by(() => {
+    const grouped = new Map<string, { mail: MailListItem; count: number; unread: boolean; ids: Set<string> }>();
+    for (const mail of list.items) {
+      const key = mail.threadId ?? `message:${mail.id}`;
+      const thread = grouped.get(key);
+      if (thread) {
+        thread.count += 1;
+        thread.unread ||= mailbox === "inbox" && !mail.isRead;
+        thread.ids.add(mail.id);
+      } else {
+        grouped.set(key, { mail, count: mail.threadCount ?? 1, unread: mailbox === "inbox" && !mail.isRead, ids: new Set([mail.id]) });
+      }
+    }
+    return [...grouped.values()];
+  });
 
   function report(error: unknown) {
     if (disposed) return;
@@ -119,6 +135,12 @@
     const owner = mailbox;
     untrack(() => onArchiveStatusChange(accountId, owner, data));
   });
+
+  function openMail(id: string, threadCount: number) {
+    const mail = list.items.find((item) => item.id === id);
+    if (mail) onSelectMail({ ...mail, threadCount }, mailbox);
+    void goto(mailUrl(accountId, mailbox, id));
+  }
 
   async function refresh() {
     if (manualRefreshing || list.isRefreshing) return;
@@ -199,8 +221,9 @@
         {#if list.error || !list.cacheInfo}<Button variant="outline" size="sm" onclick={refresh}>{list.error ? "Try again" : "Check for mail"}</Button>{/if}
       </div>
     {:else}
-      {#each list.items as mail (mail.id)}
-        <EmailListItem {mail} mode={mailbox} isActive={page.params.id === mail.id} isUnread={mailbox === "inbox" && !mail.isRead && page.params.id !== mail.id} onclick={(id) => goto(mailUrl(accountId, mailbox, id))} />
+      {#each threads as thread (thread.mail.threadId ?? thread.mail.id)}
+        {@const mail = thread.mail}
+        <EmailListItem {mail} mode={mailbox} threadCount={mail.threadCount ?? thread.count} isActive={thread.ids.has(page.params.id ?? "")} isUnread={thread.unread} onclick={(id) => openMail(id, mail.threadCount ?? thread.count)} />
       {/each}
       {#if list.hasMore}
         <div class="p-3"><Button class="w-full" variant="ghost" disabled={list.isLoadingMore || list.isRefreshing} onclick={() => { void list.loadMore().catch(report); }}>

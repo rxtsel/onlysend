@@ -66,6 +66,8 @@ pub struct ReplyContext {
     message_id: String,
     #[serde(skip)]
     references: String,
+    #[serde(skip)]
+    thread_id: String,
 }
 
 fn address(value: &str) -> Result<String, String> {
@@ -84,13 +86,32 @@ fn message_ids(value: &str) -> Result<Vec<String>, String> {
     if value.len() > 16 * 1024 {
         return Err("Message-ID header is too large".into());
     }
-    let ids = mailparse::msgidparse(value).map_err(|_| "Invalid Message-ID header")?;
-    if ids.iter().any(|id| {
-        id.is_empty()
-            || id
-                .chars()
-                .any(|ch| ch.is_control() || ch.is_whitespace() || matches!(ch, '<' | '>'))
-    }) {
+    let ids = match serde_json::from_str::<Vec<String>>(value) {
+        Ok(values) => values
+            .into_iter()
+            .map(|value| {
+                let parsed =
+                    mailparse::msgidparse(&value).map_err(|_| "Invalid Message-ID header")?;
+                if parsed.len() != 1 {
+                    return Err("Invalid Message-ID header".into());
+                }
+                Ok(parsed[0].clone())
+            })
+            .collect::<Result<Vec<_>, String>>()?,
+        Err(_) => mailparse::msgidparse(value)
+            .map_err(|_| "Invalid Message-ID header")?
+            .iter()
+            .cloned()
+            .collect(),
+    };
+    if ids.is_empty()
+        || ids.iter().any(|id| {
+            id.is_empty()
+                || id
+                    .chars()
+                    .any(|ch| ch.is_control() || ch.is_whitespace() || matches!(ch, '<' | '>'))
+        })
+    {
         return Err("Invalid Message-ID header".into());
     }
     Ok(ids.iter().map(|id| format!("<{id}>")).collect())
@@ -134,6 +155,10 @@ fn reply_context(original: &crate::inbound::InboundEmailDetailDto) -> Result<Rep
         message_ids(original.references.as_deref().unwrap_or_default()).unwrap_or_default();
     references.retain(|id| id != &message_id);
     references.push(message_id.clone());
+    let thread_id = references
+        .first()
+        .cloned()
+        .unwrap_or_else(|| message_id.clone());
     let normalized = original
         .subject
         .split_whitespace()
@@ -166,6 +191,7 @@ fn reply_context(original: &crate::inbound::InboundEmailDetailDto) -> Result<Rep
         from_candidates,
         message_id,
         references: references.join(" "),
+        thread_id,
     })
 }
 
@@ -243,13 +269,26 @@ pub async fn send_email(
     let credential = oauth::get_account_credential(&app, &account_id).await?;
     crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
     let resend = Resend::new(&credential);
-
-    resend
-        .emails
-        .send(email)
+    let database =
+        crate::infrastructure::database::local_state::for_account(&app, &account_id).await?;
+    let sent =
+        resend.emails.send(email).await.map_err(|e| {
+            permissions::friendly_error(format!("[ERROR] Error sending email: {e}"))
+        })?;
+    if let Some(reply) = reply {
+        if crate::infrastructure::database::mail::store_thread_link(
+            &database,
+            account_id,
+            crate::infrastructure::database::mail::Mailbox::Sent,
+            sent.id.to_string(),
+            reply.thread_id,
+        )
         .await
-        .map_err(|e| permissions::friendly_error(format!("[ERROR] Error sending email: {e}")))?;
-
+        .is_err()
+        {
+            eprintln!("[WARN] Sent reply but could not save its local thread link");
+        }
+    }
     Ok(())
 }
 
@@ -281,9 +320,10 @@ mod tests {
             "REPLIES@example.com".into(),
         ];
         original.received_for = vec!["alias@example.com".into()];
+        original.references = Some(r#"["<root@example.com>","<parent@example.com>"]"#.into());
         let context = reply_context(&original).unwrap();
         assert_eq!(context.to, vec!["replies@example.com"]);
-        assert_eq!(context.from_candidates, vec!["alias@example.com"]);
+        assert_eq!(context.from_candidates, vec!["support@example.com"]);
         assert_eq!(
             context.references,
             "<root@example.com> <parent@example.com>"
