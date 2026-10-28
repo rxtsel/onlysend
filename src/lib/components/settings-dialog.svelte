@@ -87,7 +87,7 @@
           </Sidebar.Group>
         </Sidebar.Content>
       </Sidebar.Root>
-      <main class="flex h-[min(480px,calc(100svh-2rem))] min-w-0 flex-1 flex-col overflow-hidden">
+      <main class="flex h-[min(500px,calc(100svh-2rem))] min-w-0 flex-1 flex-col overflow-hidden">
         <header
           class="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
         >
