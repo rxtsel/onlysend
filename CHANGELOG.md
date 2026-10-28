@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.1.6 - 2026-10-28
+
+### Features
+- Refresh app icons and creator attribution (8f98383)
+- Add cloudflare web analytics (603d4ba)
+
+
+### Fixes
+- Allow the startup permission check (a549b07)
+
+
+### Maintenance
+- Align tauri rust and javascript versions (b13ccfc)
+- Simplify the app description (168df4f)
+- Remove the website section (8c81b03)
+- Migrate from pnpm to bun (1350b33)
+- Update the full preview and add a cover image (c72cb19)
+
+
+### Performance
+- Load the cdn demo only after play (68dc71e)
+
 ## v0.1.5 - 2026-10-28
 
 ### Features

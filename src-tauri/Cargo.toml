@@ -1,6 +1,6 @@
 [package]
 name = "only-send"
-version = "0.1.5"
+version = "0.1.6"
 description = "A clean and minimal email composer by Rxtsel."
 authors = ["Cristhian Melo @rxtsel"]
 edition = "2021"
