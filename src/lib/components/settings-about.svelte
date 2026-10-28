@@ -27,7 +27,7 @@
             try { await openUrl(event.currentTarget.href); }
             catch { toast.error("Could not open rxtsel.dev"); }
           }}
-        >Rxtsel</a>, powered by Resend.
+        >Rxtsel</a>.
       </Field.Description>
     </div>
     <Item.Root variant="outline" size="sm">
