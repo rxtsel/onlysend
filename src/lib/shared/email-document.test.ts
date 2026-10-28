@@ -1,10 +1,11 @@
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
-import { expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { emailLinkFromMessage, prepareEmailDocument } from "./email-document";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+afterEach(() => { vi.unstubAllGlobals(); });
 
 const bridge = readFileSync(new URL("../../../src-tauri/src/email-links.js", import.meta.url), "utf8");
 const token = "test-document";
@@ -39,9 +40,18 @@ function frameBridge() {
 
 test("the frame is prepared natively, never by concatenating raw mail in Svelte", async () => {
   const document = { html: "safe document", token };
+  const parseFromString = vi.fn(() => ({
+    documentElement: { attributes: [{ name: "lang", value: "en" }] },
+    body: { attributes: [{ name: "style", value: "margin:0;background:#eee" }, { name: "onload", value: "untrusted()" }] },
+  }));
+  vi.stubGlobal("DOMParser", class { parseFromString = parseFromString; });
   vi.mocked(invoke).mockResolvedValue(document);
   expect(await prepareEmailDocument("<p>mail</p>")).toEqual(document);
-  expect(invoke).toHaveBeenCalledWith("prepare_email_document", { html: "<p>mail</p>" });
+  expect(parseFromString).toHaveBeenCalledWith("<p>mail</p>", "text/html");
+  expect(invoke).toHaveBeenCalledWith("prepare_email_document", {
+    html: "<p>mail</p>", htmlAttributes: { lang: "en" },
+    bodyAttributes: { style: "margin:0;background:#eee", onload: "untrusted()" },
+  });
 });
 
 test.each([

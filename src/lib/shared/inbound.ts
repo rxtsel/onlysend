@@ -20,7 +20,7 @@ export interface InboundAttachment {
 }
 
 export interface InboundEmailDetail extends Omit<InboundEmail, "domain" | "domains"> {
-  /** Sanitized HTML body, rendered inside a sandboxed iframe. */
+  /** Original HTML source; only display the document returned by prepareEmailDocument. */
   html: string | null;
   text: string | null;
   attachments: InboundAttachment[];

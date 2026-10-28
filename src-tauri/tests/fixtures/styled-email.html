@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en" style="background:#edf2f7">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="https://example.com/email.css" media="screen">
+  <style>
+    @import url("https://example.com/brand.css");
+    @font-face { font-family: Brand; src: url("https://example.com/brand.woff2"); }
+    body { margin:0; font-family:Brand,Arial,sans-serif; }
+    .payment-button { background:#2563eb; color:#fff; border-radius:8px; }
+    @media (max-width:600px) { .email-container { width:100% !important; } }
+  </style>
+</head>
+<body class="email-body" style="margin:0;padding:24px;background:#f8fafc" bgcolor="#f8fafc">
+  <table class="email-container" width="600" cellpadding="0" cellspacing="0" role="presentation">
+    <tr><td style="padding:32px;background:#fff" background="https://example.com/background.png">
+      <img src="https://example.com/logo.png" srcset="https://example.com/logo@2x.png 2x" width="120" alt="Example">
+      <h1 style="font-size:24px;color:#111827">Your invoice is ready</h1>
+      <a class="payment-button" id="payment" href="https://example.com/pay?invoice=123&amp;source=email" style="display:inline-block;padding:14px 24px;text-decoration:none;font-weight:600">Pay online</a>
+      <p>Or <a href="https://example.com/pay?invoice=123">copy and paste this link</a>.</p>
+      <img src="data:image/png;base64,iVBORw0KGgo=" alt="Embedded image">
+    </td></tr>
+  </table>
+</body>
+</html>

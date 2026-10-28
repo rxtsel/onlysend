@@ -28,6 +28,13 @@ new MX records; review the DNS instructions before changing them.
 - Read downloaded message bodies offline, including after restarting the app.
   The footer shows local-copy progress and errors.
 
+## Email content
+
+Email images, stylesheets, and fonts load automatically, including remote resources.
+Their servers may detect when you open a message. Sender scripts and forms remain
+blocked, and links open in your system browser. Remote resources are not saved
+for offline reading.
+
 ## Inbox notifications
 
 OnlySend checks connected accounts from Rust every **5 minutes**, including when

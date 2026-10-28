@@ -6,7 +6,13 @@ export interface EmailDocument {
 }
 
 export function prepareEmailDocument(html: string): Promise<EmailDocument> {
-  return invoke("prepare_email_document", { html });
+  // Inert parsing preserves html/body styles that Ammonia's fragment parser drops.
+  const parsed = new DOMParser().parseFromString(html, "text/html");
+  return invoke("prepare_email_document", {
+    html,
+    htmlAttributes: Object.fromEntries(Array.from(parsed.documentElement.attributes, ({ name, value }) => [name, value])),
+    bodyAttributes: Object.fromEntries(Array.from(parsed.body.attributes, ({ name, value }) => [name, value])),
+  });
 }
 
 /** Opaque frames have origin "null"; source AND per-document identity are required. */
