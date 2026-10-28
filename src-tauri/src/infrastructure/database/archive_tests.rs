@@ -14,6 +14,63 @@ use serde_json::{json, Value};
 fn message(id: &str, subject: &str, date: &str) -> Value {
     json!({"id":id,"subject":subject,"createdAt":date,"from":"Sender <sender@remote.example>","to":["recipient@header.example"],"domains":["a.example","b.example"],"domain":"a.example"})
 }
+#[tokio::test]
+async fn attachment_metadata_is_account_scoped_and_does_not_replace_original_bodies() {
+    let temporary = TemporaryDatabase::new();
+    let database = temporary.database();
+    database.initialize().await.unwrap();
+    let detail = json!({"html":"<style>.button{color:red}</style><a>Pay</a>","text":"literal <team>\nline", "htmlSourceVersion":1});
+    for (account, mailbox) in [
+        ("a", Mailbox::Inbox),
+        ("b", Mailbox::Inbox),
+        ("a", Mailbox::Sent),
+    ] {
+        mail::store_detail(
+            &database,
+            account.into(),
+            mailbox,
+            "email".into(),
+            &detail,
+            "body".into(),
+        )
+        .await
+        .unwrap();
+    }
+    let attachments = vec![
+        json!({"id":"file","filename":"invoice.pdf","contentType":"application/pdf","size":100}),
+    ];
+    mail::store_attachments(
+        &database,
+        "a".into(),
+        Mailbox::Inbox,
+        "email".into(),
+        &attachments,
+    )
+    .await
+    .unwrap();
+    let updated: Value = serde_json::from_str(
+        &mail::cached_detail(&database, "a".into(), "inbox".into(), "email".into())
+            .await
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(updated["html"], detail["html"]);
+    assert_eq!(updated["text"], detail["text"]);
+    assert_eq!(updated["htmlSourceVersion"], 1);
+    assert_eq!(updated["attachments"], json!(attachments));
+    for (account, mailbox) in [("b", "inbox"), ("a", "sent")] {
+        let untouched: Value = serde_json::from_str(
+            &mail::cached_detail(&database, account.into(), mailbox.into(), "email".into())
+                .await
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(untouched, detail);
+    }
+}
+
 fn page(items: Vec<Value>) -> EmailPage<Value> {
     email_page(items, false, None, |item| item["id"].as_str().unwrap()).unwrap()
 }
@@ -693,7 +750,10 @@ async fn installed_sdk_history_is_archived_and_traversable_after_restart() {
             let result = mail::query(&database, "a".into(), request).await.unwrap();
             if mailbox == Mailbox::Sent {
                 for item in &result.items {
-                    assert!(matches!(item["lastEvent"].as_str(), Some("suppressed" | "future_event")));
+                    assert!(matches!(
+                        item["lastEvent"].as_str(),
+                        Some("suppressed" | "future_event")
+                    ));
                 }
             }
             actual.extend(

@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { LoaderCircle, Paperclip } from "@lucide/svelte";
+  import { LoaderCircle } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
   import MailAvatar from "./mail-avatar.svelte";
+  import MessageAttachments from "./message-attachments.svelte";
   import { useAccountId } from "$lib/features/auth/account-context";
   import { getInboundEmail, type InboundAttachment } from "$lib/shared/inbound";
   import { getSentEmail } from "$lib/shared/sent";
@@ -52,11 +53,10 @@
   });
   onDestroy(() => { disposed = true; });
 
-  function sizeLabel(bytes: number | null): string {
-    if (bytes == null) return "";
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  async function displayInlineImages(images: Record<string, string>) {
+    if (disposed || !email?.html || !Object.keys(images).length) return;
+    const prepared = await prepareEmailDocument(email.html, images);
+    if (!disposed) document = prepared;
   }
 </script>
 
@@ -90,16 +90,8 @@
           </details>
         </div>
       </div>
-      {#if email.attachments?.length}
-        <ul class="mt-5 flex flex-wrap gap-2" aria-label="Attachments">
-          {#each email.attachments as attachment (attachment.id)}
-            <li class="flex max-w-full items-center gap-2 rounded-lg border px-3 py-2 text-xs" title={attachment.contentType}>
-              <Paperclip class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-              <span class="truncate">{attachment.filename || "Attachment"}</span>
-              <span class="shrink-0 text-muted-foreground">{sizeLabel(attachment.size)}</span>
-            </li>
-          {/each}
-        </ul>
+      {#if emailId && (mailbox === "sent" || email.attachments?.length)}
+        <MessageAttachments context={{ accountId, mailbox, emailId }} initialItems={email.attachments || []} html={email.html} oninlineimages={displayInlineImages} />
       {/if}
     </header>
     <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain">

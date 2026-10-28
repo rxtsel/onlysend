@@ -1,3 +1,4 @@
+mod attachments;
 mod config;
 mod domains;
 mod email;
@@ -34,6 +35,8 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .manage(attachments::AttachmentTransfers::default())
         .plugin(tauri_plugin_notification::init())
         .manage(notifications::InboxService::default())
         .manage(oauth::OAuthState::default())
@@ -123,6 +126,9 @@ pub fn run() {
             oauth::disconnect_resend,
             permissions::probe_full_access,
             email::send_email,
+            attachments::list_email_attachments,
+            attachments::attachment_action,
+            attachments::cancel_attachment_download,
             external::open_external_url,
             email_document::prepare_email_document,
             infrastructure::settings_store::get_domain_preferences,
@@ -145,6 +151,12 @@ pub fn run() {
             config::delete_from_email,
             sent::get_sent_email
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<attachments::AttachmentTransfers>()
+                    .cleanup_on_exit();
+            }
+        });
 }

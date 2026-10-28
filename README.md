@@ -35,6 +35,31 @@ Their servers may detect when you open a message. Sender scripts and forms remai
 blocked, and links open in your system browser. Remote resources are not saved
 for offline reading.
 
+## Attachments
+
+Received and sent messages show attachment cards. Click an image for a preview,
+click a supported document to open it with the default application, or choose
+**Save as…**. Downloads show progress and can be cancelled. PNG, JPEG, GIF and WebP
+previews support files up to **5 MB**; downloads support **25 MB** per file.
+Other file types, including executable files, HTML and SVG, must be saved rather
+than opened automatically. Images referenced by `cid:` are loaded into the message
+when available and are not repeated as attachment cards.
+
+The composer uses the same cards, supports adding/removing files individually,
+and accepts **25 MB total**. Image preview URLs are released when files are removed
+or the draft closes. Attachment bytes are prepared only when sending.
+
+An attachment is downloaded once per session and reused for previews, external
+opening and **Save as…**, including offline. Missing or incomplete temporary files
+are downloaded again. The external viewer gets a separate working copy, reused
+within the session, so its edits cannot change the original attachment. **Save as…**
+in OnlySend always copies the original; use the external viewer's own Save as to
+keep edits before quitting OnlySend.
+The index lives only in Rust memory, not SQLite. OnlySend attempts to remove its
+private session folder and pending save temporaries when exiting; a crash or an
+external application's file lock can leave temporary copies behind. A new session
+needs to download again.
+
 ## Inbox notifications
 
 OnlySend checks connected accounts from Rust every **5 minutes**, including when
@@ -82,8 +107,9 @@ OnlySend uses Resend for sending and receiving; no separate OnlySend mail server
 is required. Downloaded messages are kept locally even if they disappear from
 Resend's lists. Disconnecting an account does not erase its local archive.
 
-Local storage is **not encrypted**. Offline copies include message bodies and
-attachment metadata, not attachment files or remote images.
+Local storage is **not encrypted**. The persistent mail archive includes message
+bodies and attachment metadata, not attachment files or remote images. Downloaded
+attachment bytes are kept separately in private session temporaries or saved by you.
 
 ## Contributing
 

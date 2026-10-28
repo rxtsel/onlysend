@@ -19,7 +19,10 @@
   import { toast } from "svelte-sonner";
   import { goto, beforeNavigate } from "$app/navigation";
   import { invoke } from "@tauri-apps/api/core";
-  import type { AttachmentPayload, FromEmail } from "@/lib/types";
+  import type { FromEmail } from "@/lib/types";
+  import { encodeAttachments } from "$lib/shared/attachments";
+  import { errorMessage } from "$lib/shared/utils/errors";
+  import ComposerAttachments from "$lib/components/composer-attachments.svelte";
   import { onMount, onDestroy } from "svelte";
   import { listFromEmails, formatFromEmail } from "@/lib/shared/from-emails";
 
@@ -31,7 +34,7 @@
   let composerEditor = $state<{ focus: () => boolean } | null>(null);
   let content = $state<string>("");
   let files = $state<File[]>([]);
-  let attachments = $state<AttachmentPayload[]>([]);
+  let isSending = $state(false);
 
   let isCcEnabled = $state<boolean>(false);
   let isBccEnabled = $state<boolean>(false);
@@ -58,6 +61,7 @@
 
   async function handleSubmit(event: Event) {
     event.preventDefault();
+    if (isSending) return;
 
     errors = {};
     const form = event.currentTarget as HTMLFormElement;
@@ -78,9 +82,7 @@
         ? (formData.get("replyTo") as string | null)
         : null,
       content,
-      files,
       messageId,
-      attachments,
     };
 
     const parsed = emailComposerSchema.safeParse(payload);
@@ -93,8 +95,12 @@
       return;
     }
 
+    isSending = true;
+    const sendingToast = toast.loading("Sending message…");
     try {
-      await invoke("send_email", { accountId, data: parsed.data });
+      const attachments = await encodeAttachments(files);
+      if (disposed) return;
+      await invoke("send_email", { accountId, data: { ...parsed.data, attachments } });
 
       if (disposed) return;
       sent = true;
@@ -110,7 +116,6 @@
       ccEmails = [];
       bccEmails = [];
       messageId = null;
-      attachments = [];
       form.reset();
 
       toast.success("Email send successfully!");
@@ -121,7 +126,10 @@
     } catch (err) {
       if (disposed) return;
       console.error(err);
-      toast.error("Failed to send email. Please try again.");
+      toast.error(errorMessage(err, "Failed to send email. Please try again."));
+    } finally {
+      toast.dismiss(sendingToast);
+      if (!disposed) isSending = false;
     }
   }
 
@@ -148,7 +156,9 @@
   class="h-full w-full overflow-hidden px-1"
   onsubmit={handleSubmit}
   id="compose-email-form"
+  aria-busy={isSending}
 >
+  <fieldset disabled={isSending} class="contents">
   <Field.Group class="h-full">
     <!-- From and Group buttons -->
     <div class="flex gap-1 items-end">
@@ -311,38 +321,14 @@
           bind:this={composerEditor}
           bind:content
           bind:files
+          disabled={isSending}
           aria-invalid={!!errors.content}
-          bind:attachments
         />
-        {#if files.length}
-          <div class="border border-t-0 min-h-20 max-h-30 rounded-b-md z-10">
-            <ul
-              class="py-2 pr-2 pl-7 flex list-disc flex-wrap flex-col gap-1 overflow-y-auto h-full"
-            >
-              {#each files as file, index}
-                <li class="flex items-center gap-1">
-                  <span class="truncate text-sm text-muted-foreground"
-                    >{file.name}</span
-                  >
-                  <button
-                    class="size-fit group"
-                    type="button"
-                    onclick={() => {
-                      files = files.filter((_, i) => i !== index);
-                    }}
-                  >
-                    <X
-                      class="size-3 text-muted-foreground group-hover:text-black"
-                    />
-                  </button>
-                </li>
-              {/each}
-            </ul>
-          </div>
-        {/if}
+        <ComposerAttachments bind:files />
       </div>
     </Field.Field>
   </Field.Group>
+  </fieldset>
 </form>
 
 {#snippet headers()}

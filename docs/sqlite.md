@@ -152,5 +152,9 @@ Frontend tests cover disk hydration, stale account responses, failed refresh
 indicators, disk-only background refresh and separation of local/remote cursors.
 Real Tauri acceptance of background body downloads, restart/offline behavior and
 restricted credentials is still required; fixtures do not certify live Resend
-permissions or remote retention behavior. Export/purge UI, attachment downloads,
-retention controls and the full search/filter toolbar remain separate work.
+permissions or remote retention behavior. Attachment metadata updates are scoped
+by account, mailbox and message and preserve the original body/source version.
+Binary attachments and signed download URLs are not stored in SQLite; downloads
+are on demand. A Rust-only, account/mailbox/message/attachment-scoped session map
+reuses complete temporary files until exit; it creates no table or migration. Export/purge UI, retention controls and the full search/filter
+toolbar remain separate work.

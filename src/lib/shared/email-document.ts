@@ -1,13 +1,22 @@
 import { invoke } from "@tauri-apps/api/core";
+import { contentId } from "./attachments";
 
 export interface EmailDocument {
   html: string;
   token: string;
 }
 
-export function prepareEmailDocument(html: string): Promise<EmailDocument> {
+export function prepareEmailDocument(html: string, inlineImages: Record<string, string> = {}): Promise<EmailDocument> {
   // Inert parsing preserves html/body styles that Ammonia's fragment parser drops.
   const parsed = new DOMParser().parseFromString(html, "text/html");
+  if (Object.keys(inlineImages).length) {
+    for (const image of parsed.querySelectorAll("img[src]")) {
+      const source = image.getAttribute("src") || "";
+      const id = contentId(source);
+      if (/^cid:/i.test(source) && Object.hasOwn(inlineImages, id)) image.setAttribute("src", inlineImages[id]);
+    }
+    html = parsed.documentElement.outerHTML;
+  }
   return invoke("prepare_email_document", {
     html,
     htmlAttributes: Object.fromEntries(Array.from(parsed.documentElement.attributes, ({ name, value }) => [name, value])),

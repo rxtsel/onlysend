@@ -17,6 +17,8 @@ export interface InboundAttachment {
   filename: string | null;
   contentType: string;
   size: number | null;
+  contentId?: string | null;
+  contentDisposition?: string | null;
 }
 
 export interface InboundEmailDetail extends Omit<InboundEmail, "domain" | "domains"> {

@@ -18,6 +18,12 @@ pub struct SentEmail {
     pub to: Vec<String>,
     pub subject: String,
     pub html: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub body_format_version: u8,
+    #[serde(default)]
+    pub attachments: Vec<crate::attachments::AttachmentInfo>,
     pub created_at: String,
     #[serde(default)]
     pub cc: Vec<String>,
@@ -51,7 +57,10 @@ impl From<RemoteSentEmail> for SentEmail {
             from: email.from,
             to: email.to,
             subject: email.subject,
-            html: email.html.or(email.text),
+            html: email.html,
+            text: email.text,
+            body_format_version: 1,
+            attachments: Vec::new(),
             created_at: email.created_at,
             cc: email.cc.unwrap_or_default(),
             bcc: email.bcc.unwrap_or_default(),
@@ -168,6 +177,7 @@ pub(crate) async fn fetch_sent_page(
         .into_iter()
         .map(|email| SentEmail {
             html: None,
+            text: None,
             ..email.into()
         })
         .collect();
@@ -196,7 +206,8 @@ mod tests {
             });
             let email: RemoteSentEmail = serde_json::from_value(value.clone()).unwrap();
             let detail: SentEmail = email.into();
-            assert_eq!(detail.html.as_deref(), Some("Plain text body"));
+            assert!(detail.html.is_none());
+            assert_eq!(detail.text.as_deref(), Some("Plain text body"));
             assert_eq!(detail.last_event.as_deref(), Some(event));
             assert_eq!(serde_json::to_value(&detail).unwrap()["lastEvent"], event);
             assert!(detail.cc.is_empty());
@@ -209,6 +220,26 @@ mod tests {
             assert_eq!(page.data.len(), 1);
             assert!(!page.has_more);
         }
+    }
+
+    #[test]
+    fn plain_text_keeps_newlines_and_literal_markup_and_legacy_cache_is_detectable() {
+        let text = "Hello <team>\n\nUse a < b & keep <script> as text.";
+        let remote: RemoteSentEmail = serde_json::from_value(serde_json::json!({
+            "id":"email", "from":"sender@example.com", "to":["to@example.com"],
+            "subject":"Plain", "created_at":"2026-01-01T00:00:00Z",
+            "html":null, "text":text, "cc":null, "bcc":null, "reply_to":null, "last_event":null
+        }))
+        .unwrap();
+        let detail: SentEmail = remote.into();
+        assert!(detail.html.is_none());
+        assert_eq!(detail.text.as_deref(), Some(text));
+        assert_eq!(detail.body_format_version, 1);
+        let mut legacy = serde_json::to_value(&detail).unwrap();
+        legacy.as_object_mut().unwrap().remove("bodyFormatVersion");
+        legacy.as_object_mut().unwrap().remove("text");
+        let cached: SentEmail = serde_json::from_value(legacy).unwrap();
+        assert_eq!(cached.body_format_version, 0);
     }
 
     #[test]
@@ -227,7 +258,10 @@ mod tests {
         assert!(detail.last_event.is_none());
         let mut cached = serde_json::to_value(&detail).unwrap();
         cached.as_object_mut().unwrap().remove("lastEvent");
-        assert!(serde_json::from_value::<SentEmail>(cached).unwrap().last_event.is_none());
+        assert!(serde_json::from_value::<SentEmail>(cached)
+            .unwrap()
+            .last_event
+            .is_none());
         assert_eq!(detail.cc, ["cc@example.com"]);
         assert_eq!(detail.bcc, ["bcc@example.com"]);
         assert_eq!(
@@ -237,9 +271,7 @@ mod tests {
         let mut invalid = value;
         invalid.as_object_mut().unwrap().remove("id");
         assert!(serde_json::from_value::<RemoteSentEmail>(invalid).is_err());
-        assert!(
-            serde_json::from_value::<RemoteSentPage>(serde_json::json!({"data": []})).is_err()
-        );
+        assert!(serde_json::from_value::<RemoteSentPage>(serde_json::json!({"data": []})).is_err());
     }
 
     #[tokio::test]
@@ -268,44 +300,67 @@ pub async fn get_sent_email(
     email_id: String,
 ) -> Result<SentEmail, String> {
     let database = local_state::for_account(&app, &account_id).await?;
-    if let Some(json) = mail::cached_detail(
+    let cached = mail::cached_detail(
         &database,
         account_id.clone(),
         "sent".into(),
         email_id.clone(),
     )
     .await?
+    .map(|json| {
+        serde_json::from_str::<SentEmail>(&json)
+            .map_err(|_| "Could not read downloaded email".to_string())
+    })
+    .transpose()?;
+    if let Some(detail) = cached
+        .as_ref()
+        .filter(|detail| detail.body_format_version > 0)
     {
-        return serde_json::from_str(&json).map_err(|_| "Could not read downloaded email".into());
+        return Ok(detail.clone());
     }
-    // Bearer credential: API key or OAuth access token
-    let credential = oauth::get_account_credential(&app, &account_id).await?;
+    // Legacy cache merged text into HTML. Recover the source without deleting offline mail.
+    let downloaded = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        // Bearer credential: API key or OAuth access token
+        let credential = oauth::get_account_credential(&app, &account_id).await?;
 
-    let resend = Resend::new(&credential);
+        let resend = Resend::new(&credential);
 
-    // Get specific email by ID
-    let mut url = reqwest::Url::parse(&format!("{}emails", resend.base_url()))
-        .map_err(|_| "[ERROR] Invalid Resend base URL".to_string())?;
-    url.path_segments_mut()
-        .map_err(|_| "[ERROR] Invalid Resend base URL".to_string())?
-        .push(&email_id);
-    let email: RemoteSentEmail =
-        sent_response(&resend, resend.client().get(url), "Failed to fetch email").await?;
+        // Get specific email by ID
+        let mut url = reqwest::Url::parse(&format!("{}emails", resend.base_url()))
+            .map_err(|_| "[ERROR] Invalid Resend base URL".to_string())?;
+        url.path_segments_mut()
+            .map_err(|_| "[ERROR] Invalid Resend base URL".to_string())?
+            .push(&email_id);
+        let email: RemoteSentEmail =
+            sent_response(&resend, resend.client().get(url), "Failed to fetch email").await?;
 
-    let search_text = email
-        .text
-        .clone()
-        .unwrap_or_else(|| mail::plain_html(email.html.as_deref().unwrap_or_default()));
-    let detail: SentEmail = email.into();
-    crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
-    mail::store_detail(
-        &database,
-        account_id,
-        Mailbox::Sent,
-        email_id,
-        &detail,
-        search_text,
-    )
-    .await?;
-    Ok(detail)
+        let search_text = email
+            .text
+            .clone()
+            .unwrap_or_else(|| mail::plain_html(email.html.as_deref().unwrap_or_default()));
+        let detail: SentEmail = email.into();
+        crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
+        mail::store_detail(
+            &database,
+            account_id.clone(),
+            Mailbox::Sent,
+            email_id.clone(),
+            &detail,
+            search_text,
+        )
+        .await?;
+        Ok::<_, String>(detail)
+    })
+    .await
+    .unwrap_or_else(|_| Err("Sent email download timed out".into()));
+    match downloaded {
+        Ok(detail) => Ok(detail),
+        Err(error) => match cached {
+            Some(detail) => {
+                crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
+                Ok(detail)
+            }
+            None => Err(error),
+        },
+    }
 }

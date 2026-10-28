@@ -3,6 +3,7 @@ import { runInNewContext } from "node:vm";
 import { afterEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { emailLinkFromMessage, prepareEmailDocument } from "./email-document";
+import { inlineImageIds } from "./attachments";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -51,6 +52,27 @@ test("the frame is prepared natively, never by concatenating raw mail in Svelte"
   expect(invoke).toHaveBeenCalledWith("prepare_email_document", {
     html: "<p>mail</p>", htmlAttributes: { lang: "en" },
     bodyAttributes: { style: "margin:0;background:#eee", onload: "untrusted()" },
+  });
+});
+
+test("CID images are replaced only with resolved resources and still pass through native sanitization", async () => {
+  let source = "cid:Logo%40example";
+  const image = { getAttribute: () => source, setAttribute: (_name: string, value: string) => { source = value; } };
+  vi.stubGlobal("DOMParser", class {
+    parseFromString() {
+      return {
+        querySelectorAll: () => [image],
+        documentElement: { attributes: [], get outerHTML() { return `<html><body><img src="${source}"></body></html>`; } },
+        body: { attributes: [] },
+      };
+    }
+  });
+  expect([...inlineImageIds("source")]).toEqual(["Logo@example"]);
+  const data = "data:image/png;base64,iVBORw0KGgo=";
+  await prepareEmailDocument("source", { "Logo@example": data });
+  expect(source).toBe(data);
+  expect(invoke).toHaveBeenLastCalledWith("prepare_email_document", {
+    html: `<html><body><img src="${data}"></body></html>`, htmlAttributes: {}, bodyAttributes: {},
   });
 });
 
