@@ -26,6 +26,7 @@ export interface InboundEmailDetail extends Omit<InboundEmail, "domain" | "domai
   html: string | null;
   text: string | null;
   attachments: InboundAttachment[];
+  replyTo?: string[];
 }
 
 export async function getInboundEmail(

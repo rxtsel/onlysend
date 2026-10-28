@@ -16,7 +16,7 @@
 
   let { mailbox, emailId }: { mailbox: Mailbox; emailId: string | undefined } = $props();
   const accountId = useAccountId();
-  type Message = { subject: string; from: string; to: string[]; createdAt: string; html: string | null; text?: string | null; cc?: string[]; replyTo?: string | null; attachments?: InboundAttachment[] };
+  type Message = { subject: string; from: string; to: string[]; createdAt: string; html: string | null; text?: string | null; cc?: string[]; replyTo?: string | string[] | null; attachments?: InboundAttachment[] };
   let email = $state<Message | null>(null);
   let document = $state<EmailDocument | null>(null);
   let frame = $state<HTMLIFrameElement | null>(null);
@@ -84,15 +84,12 @@
               <dt>From</dt><dd class="break-all text-foreground">{email.from}</dd>
               <dt>To</dt><dd class="break-all text-foreground">{email.to.join(", ")}</dd>
               {#if email.cc?.length}<dt>CC</dt><dd class="break-all text-foreground">{email.cc.join(", ")}</dd>{/if}
-              {#if email.replyTo}<dt>Reply to</dt><dd class="break-all text-foreground">{email.replyTo}</dd>{/if}
+              {#if email.replyTo?.length}<dt>Reply to</dt><dd class="break-all text-foreground">{Array.isArray(email.replyTo) ? email.replyTo.join(", ") : email.replyTo}</dd>{/if}
               <dt>Date</dt><dd class="text-foreground">{formatFullEmailDate(email.createdAt)}</dd>
             </dl>
           </details>
         </div>
       </div>
-      {#if emailId && (mailbox === "sent" || email.attachments?.length)}
-        <MessageAttachments context={{ accountId, mailbox, emailId }} initialItems={email.attachments || []} html={email.html} oninlineimages={displayInlineImages} />
-      {/if}
     </header>
     <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
       {#if document}
@@ -104,5 +101,8 @@
         <p class="p-8 text-sm text-muted-foreground">No content available.</p>
       {/if}
     </div>
+    {#if emailId && (mailbox === "sent" || email.attachments?.length)}
+      <MessageAttachments context={{ accountId, mailbox, emailId }} initialItems={email.attachments || []} html={email.html} oninlineimages={displayInlineImages} />
+    {/if}
   </article>
 {/if}

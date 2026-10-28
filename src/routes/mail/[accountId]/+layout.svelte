@@ -1,7 +1,8 @@
 <script lang="ts">
   import { page } from "$app/state";
-  import { untrack } from "svelte";
-  import { ArrowLeft, Send, LoaderCircle } from "@lucide/svelte";
+  import { setContext, untrack } from "svelte";
+  import { COMPOSER_STATUS, type ComposerStatus } from "$lib/features/sending/composer-context";
+  import { ArrowLeft, Reply, Send, LoaderCircle } from "@lucide/svelte";
   import AppSidebar from "$lib/components/app-sidebar.svelte";
   import MailList from "$lib/components/mail-list.svelte";
   import MailStatusFooter from "$lib/components/mail-status-footer.svelte";
@@ -20,6 +21,10 @@
   provideAccount(() => accountId);
   const mailbox = $derived<Mailbox>(page.url.pathname.startsWith(mailUrl(accountId, "inbox")) ? "inbox" : "sent");
   const isComposer = $derived(page.url.pathname === mailUrl(accountId, "composer"));
+  const replyId = $derived(page.url.searchParams.get("reply"));
+  const composerKey = $derived(replyId === null ? "composer" : `reply:${replyId}`);
+  const composerStatus = $state<ComposerStatus>({ ready: false, sending: false });
+  setContext(COMPOSER_STATUS, composerStatus);
   const isDetail = $derived(Boolean(page.params.id));
   let domain = $state<string | null>(null);
   let domains = $state<string[]>([]);
@@ -28,6 +33,10 @@
     untrack(() => { domain = null; domains = []; });
   });
   let confirmSend = $state(false);
+  $effect.pre(() => {
+    accountId; isComposer; replyId;
+    untrack(() => { confirmSend = false; composerStatus.ready = false; composerStatus.sending = false; });
+  });
   let archiveFooter = $state<ArchiveFooterSnapshot | null>(null);
   const footerData = $derived(selectArchiveFooter(archiveFooter, accountId, mailbox));
   function updateArchiveStatus(owner: string, mailbox: Mailbox, data: ArchiveFooterData) {
@@ -56,10 +65,14 @@
       <main class={cn("min-h-0 min-w-0 flex-1 bg-background", isComposer || isDetail ? "flex flex-col" : "hidden lg:flex lg:flex-col")} aria-label={isComposer ? "Compose message" : "Message preview"}>
         <header class="flex h-16 shrink-0 items-center gap-3 border-b px-5">
           {#if isComposer}
-            <Sidebar.Trigger aria-label="Toggle mailboxes" />
-            <h1 class="flex-1 text-base font-semibold tracking-tight">New message</h1>
+            {#if replyId !== null}
+              <Button href={mailUrl(accountId, "inbox", replyId)} variant="ghost" size="icon" aria-label="Back to original message"><ArrowLeft /></Button>
+            {:else}
+              <Sidebar.Trigger aria-label="Toggle mailboxes" />
+            {/if}
+            <h1 class="flex-1 text-base font-semibold tracking-tight">{replyId !== null ? "Reply" : "New message"}</h1>
             <AlertDialog.Root bind:open={confirmSend}>
-              <AlertDialog.Trigger class={buttonVariants({ variant: "default" })}><Send /> Send</AlertDialog.Trigger>
+              <AlertDialog.Trigger disabled={!composerStatus.ready || composerStatus.sending} class={buttonVariants({ variant: "default" })}><Send /> {composerStatus.sending ? "Sending…" : "Send"}</AlertDialog.Trigger>
               <AlertDialog.Content>
                 <AlertDialog.Header>
                   <AlertDialog.Title>Send this message?</AlertDialog.Title>
@@ -73,11 +86,14 @@
             </AlertDialog.Root>
           {:else}
             <Button href={mailUrl(accountId, mailbox)} variant="ghost" size="icon" class="lg:hidden" aria-label="Back to messages"><ArrowLeft /></Button>
-            <span class="text-sm font-medium text-muted-foreground">{isDetail ? "Message" : "Preview"}</span>
+            <span class="flex-1 text-sm font-medium text-muted-foreground">{isDetail ? "Message" : "Preview"}</span>
+            {#if isDetail && mailbox === "inbox"}
+              <Button href={`${mailUrl(accountId, "composer")}?reply=${encodeURIComponent(page.params.id!)}`} variant="outline" size="sm" aria-label="Reply to this message"><Reply class="size-4" />Reply</Button>
+            {/if}
           {/if}
         </header>
         <div class={cn("min-h-0 flex-1", isComposer ? "overflow-y-auto p-5 md:p-8" : "overflow-hidden")}>
-          {#key page.params.id ?? (isComposer ? "composer" : mailbox)}
+          {#key page.params.id ?? (isComposer ? composerKey : mailbox)}
             {@render children()}
           {/key}
         </div>

@@ -228,7 +228,7 @@ async fn scan(
         let download = async {
             match mailbox {
                 Mailbox::Inbox => {
-                    crate::inbound::get_inbound_email(app.clone(), account.to_string(), id).await?;
+                    crate::inbound::get_inbound_email(app.clone(), account.to_string(), id, false).await?;
                 }
                 Mailbox::Sent => {
                     crate::sent::get_sent_email(app.clone(), account.to_string(), id).await?;

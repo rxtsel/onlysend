@@ -126,6 +126,7 @@ pub fn run() {
             oauth::disconnect_resend,
             permissions::probe_full_access,
             email::send_email,
+            email::prepare_reply,
             attachments::list_email_attachments,
             attachments::attachment_action,
             attachments::cancel_attachment_download,
