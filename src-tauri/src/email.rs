@@ -36,8 +36,35 @@ pub struct EmailComposerData {
     pub attachments: Vec<AttachmentPayload>,
 }
 
+fn attachment_bytes(attachment: &AttachmentPayload, total: &mut u64) -> Result<Vec<u8>, String> {
+    let limit = crate::attachments::MAX_ATTACHMENT_BYTES;
+    if attachment.filename.is_empty()
+        || attachment
+            .filename
+            .chars()
+            .any(|ch| ch.is_control() || matches!(ch, '/' | '\\'))
+    {
+        return Err("Invalid attachment filename".into());
+    }
+    if attachment.content.len() as u64 > (limit + 2) / 3 * 4 {
+        return Err("Attachments must total no more than 25 MB".into());
+    }
+    let bytes = general_purpose::STANDARD
+        .decode(&attachment.content)
+        .map_err(|_| "Invalid attachment data")?;
+    *total += bytes.len() as u64;
+    if *total > limit {
+        return Err("Attachments must total no more than 25 MB".into());
+    }
+    Ok(bytes)
+}
+
 #[tauri::command]
-pub async fn send_email(app: AppHandle<Wry>, account_id: String, data: EmailComposerData) -> Result<(), String> {
+pub async fn send_email(
+    app: AppHandle<Wry>,
+    account_id: String,
+    data: EmailComposerData,
+) -> Result<(), String> {
     // Bearer credential: API key or OAuth access token
     let credential = oauth::get_account_credential(&app, &account_id).await?;
 
@@ -69,11 +96,9 @@ pub async fn send_email(app: AppHandle<Wry>, account_id: String, data: EmailComp
     }
 
     // Attachments
+    let mut total = 0;
     for att in &data.attachments {
-        // content come as base64
-        let bytes = general_purpose::STANDARD
-            .decode(&att.content)
-            .map_err(|e| format!("[ERROR] Failed to decode attachment {}: {e}", att.filename))?;
+        let bytes = attachment_bytes(att, &mut total)?;
 
         let attachment = CreateAttachment::from_content(bytes).with_filename(att.filename.as_str());
 
@@ -88,4 +113,31 @@ pub async fn send_email(app: AppHandle<Wry>, account_id: String, data: EmailComp
         .map_err(|e| permissions::friendly_error(format!("[ERROR] Error sending email: {e}")))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn attachment_data_is_bounded_validated_and_counted_across_files() {
+        let mut total = 0;
+        let file = AttachmentPayload {
+            filename: "file.bin".into(),
+            content: general_purpose::STANDARD.encode([0, 255]),
+        };
+        assert_eq!(attachment_bytes(&file, &mut total).unwrap(), vec![0, 255]);
+        assert_eq!(total, 2);
+        total = crate::attachments::MAX_ATTACHMENT_BYTES - 1;
+        assert!(attachment_bytes(&file, &mut total).is_err());
+        let invalid = AttachmentPayload {
+            filename: "file.bin".into(),
+            content: "invalid!".into(),
+        };
+        assert!(attachment_bytes(&invalid, &mut 0).is_err());
+        let invalid = AttachmentPayload {
+            filename: "../file.bin".into(),
+            content: "".into(),
+        };
+        assert!(attachment_bytes(&invalid, &mut 0).is_err());
+    }
 }

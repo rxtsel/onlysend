@@ -16,7 +16,8 @@
 
   import { cn } from "@/lib/utils";
   import Input from "../ui/input/input.svelte";
-  import type { AttachmentPayload } from "@/lib/types";
+  import { validateAttachmentFiles } from "$lib/shared/attachments";
+  import { toast } from "svelte-sonner";
 
   let element = $state<HTMLDivElement | null>(null);
   let editor = $state<Editor | null>(null);
@@ -25,8 +26,8 @@
     content = $bindable(""),
     placeholder = "Write your email...",
     editable = true,
+    disabled = false,
     files = $bindable<File[]>([]),
-    attachments = $bindable<AttachmentPayload[]>([]),
     "aria-invalid": ariaInvalid,
   } = $props();
 
@@ -36,6 +37,8 @@
     writer.focus();
     return document.activeElement === writer;
   }
+
+  $effect(() => { editor?.setEditable(editable && !disabled); });
 
   // States reactive for buttons
   let isBold = $state(false);
@@ -133,6 +136,8 @@
 </script>
 
 <div
+  inert={disabled}
+  aria-disabled={disabled || undefined}
   class={cn("border rounded-t-md h-full shrink", {
     "border-red-500": ariaInvalid,
     "border-0 -ml-4 max-w-full w-full": !editable,
@@ -263,35 +268,16 @@
             application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,
             application/vnd.ms-powerpoint,
             application/vnd.openxmlformats-officedocument.presentationml.presentation"
-          onchange={async (e) => {
+          onchange={(e) => {
             const input = e.currentTarget as HTMLInputElement;
             if (!input.files) return;
 
-            const selectedFiles = Array.from(input.files);
-            files = selectedFiles;
-
-            // Convert to base64 to send it to Rust
-            const newAttachments: AttachmentPayload[] = [];
-
-            for (const file of selectedFiles) {
-              const buffer = await file.arrayBuffer();
-              const bytes = new Uint8Array(buffer);
-
-              // ArrayBuffer -> base64
-              let binary = "";
-              for (let i = 0; i < bytes.length; i++) {
-                binary += String.fromCharCode(bytes[i]);
-              }
-              const base64 = btoa(binary);
-
-              newAttachments.push({
-                filename: file.name,
-                content: base64,
-                mimeType: file.type || "application/octet-stream",
-              });
-            }
-
-            attachments = newAttachments;
+            try {
+              const next = Array.from(new Set([...files, ...Array.from(input.files)]));
+              validateAttachmentFiles(next);
+              files = next;
+            } catch (error) { toast.error(error instanceof Error ? error.message : "Could not attach files"); }
+            finally { input.value = ""; }
           }}
         />
         <Paperclip class="size-4" />

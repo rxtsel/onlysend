@@ -35,6 +35,24 @@ Their servers may detect when you open a message. Sender scripts and forms remai
 blocked, and links open in your system browser. Remote resources are not saved
 for offline reading.
 
+## Attachments
+
+Received and sent messages show attachment cards. Click an image for a preview,
+click a supported document to open it with the default application, or choose
+**Save as…**. Downloads show progress and can be cancelled. PNG, JPEG, GIF and WebP
+previews support files up to **5 MB**; downloads support **25 MB** per file.
+Other file types, including executable files, HTML and SVG, must be saved rather
+than opened automatically. Images referenced by `cid:` are loaded into the message
+when available and are not repeated as attachment cards.
+
+The composer uses the same cards, supports adding/removing files individually,
+and accepts **25 MB total**. Image preview URLs are released when files are removed
+or the draft closes. Attachment bytes are prepared only when sending.
+
+Attachment files need a network connection unless you have saved them separately.
+Private temporary copies used for external opening remain until OnlySend exits;
+a crash or an external application's file lock can leave temporary copies behind.
+
 ## Inbox notifications
 
 OnlySend checks connected accounts from Rust every **5 minutes**, including when

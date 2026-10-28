@@ -25,14 +25,7 @@ pub struct InboundEmailDto {
     pub domains: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InboundAttachmentDto {
-    pub id: String,
-    pub filename: Option<String>,
-    pub content_type: String,
-    pub size: Option<u32>,
-}
+pub type InboundAttachmentDto = crate::attachments::AttachmentInfo;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,6 +55,8 @@ fn map_attachment(a: &InboundAttachment) -> InboundAttachmentDto {
         filename: a.filename.clone(),
         content_type: a.content_type.clone(),
         size: a.size,
+        content_id: a.content_id.clone(),
+        content_disposition: a.content_disposition.clone(),
     }
 }
 

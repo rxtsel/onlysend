@@ -80,6 +80,21 @@ pub(crate) async fn cached_detail(
     ).optional()).await
 }
 
+pub(crate) async fn store_attachments<T: Serialize>(
+    database: &Database,
+    account_id: String,
+    mailbox: Mailbox,
+    email_id: String,
+    attachments: &[T],
+) -> Result<(), String> {
+    let json =
+        serde_json::to_string(attachments).map_err(|_| "Could not store attachment metadata")?;
+    database.run(move |connection| {
+        connection.execute("UPDATE email_bodies SET detail_json=json_set(detail_json,'$.attachments',json(?4)) WHERE account_id=?1 AND mailbox=?2 AND email_id=?3", params![account_id,mailbox.as_str(),email_id,json])?;
+        Ok(())
+    }).await
+}
+
 pub(crate) fn plain_html(html: &str) -> String {
     ammonia::Builder::default()
         .tags(std::collections::HashSet::new())

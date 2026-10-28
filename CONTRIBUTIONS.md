@@ -56,6 +56,15 @@ button, keyboard activation, Ctrl/Cmd-click and middle-click. Fragment links mus
 stay within the message; sender scripts must not execute. Never include
 authorization URLs in bug reports.
 
+For attachments, use test accounts and check Inbox and Sent separately: native
+Save as (including cancel and overwrite), external PDF opening, raster preview,
+CID images, expired URLs, offline metadata, cancellation and account switching.
+Existing destination files must survive failed or cancelled downloads. In the
+composer, add a second selection, remove a file, reselect it, and verify the sent
+message contains only the visible files. Also test plain-text Sent messages with
+newlines and literal `<tags>`; they must not become HTML. Desktop/dialog acceptance
+is required on each OS; unit tests do not exercise native file dialogs.
+
 Build a local desktop executable without installers:
 
 ```sh
