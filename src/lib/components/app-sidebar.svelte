@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Inbox, Send, SquarePen, Bug, Globe, Settings } from "@lucide/svelte";
+  import { Inbox, Send, SquarePen, Bug, Globe } from "@lucide/svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { openUrl } from "@tauri-apps/plugin-opener";
@@ -93,11 +93,6 @@
       <Sidebar.MenuItem>
         <Sidebar.MenuButton class="h-10 gap-4" onclick={feedback} aria-label="Feedback / report a bug" tooltipContent="Feedback / report a bug">
           <Bug /><span class="group-data-[collapsible=icon]:hidden">Feedback &amp; bugs</span>
-        </Sidebar.MenuButton>
-      </Sidebar.MenuItem>
-      <Sidebar.MenuItem>
-        <Sidebar.MenuButton class="h-10 gap-4" aria-label="Settings" aria-haspopup="dialog" tooltipContent="Settings" onclick={() => window.dispatchEvent(new CustomEvent("open-settings"))}>
-          <Settings /><span class="group-data-[collapsible=icon]:hidden">Settings</span>
         </Sidebar.MenuButton>
       </Sidebar.MenuItem>
     </Sidebar.Menu>

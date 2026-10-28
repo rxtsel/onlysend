@@ -5,6 +5,7 @@
     CheckIcon,
     PlusIcon,
     SparklesIcon,
+    SettingsIcon,
     UnplugIcon,
   } from "@lucide/svelte";
   import AccountAvatar from "./account-avatar.svelte";
@@ -35,6 +36,8 @@
   let showDisconnectConfirm = $state(false);
   let accounts = $state<AccountMeta[]>([]);
   let activeAccountId = $state<string | null>(null);
+  let accountButton = $state<HTMLButtonElement | null>(null);
+  let openingSettings = false;
 
   const METHOD_LABELS: Record<Exclude<ConnectionMethod, null>, string> = {
     oauth: "Connected via OAuth",
@@ -93,12 +96,13 @@
         {#snippet child({ props })}
           <Sidebar.MenuButton
             {...props}
-            aria-label="Switch account"
-            tooltipContent="Switch account"
+            bind:ref={accountButton}
+            aria-label="Account"
+            tooltipContent="Account"
             class="h-10 p-0 group-data-[collapsible=icon]:p-0! data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
           >
             <AccountAvatar name={accountId} size={32} />
-            <span class="group-data-[collapsible=icon]:hidden">Switch account</span>
+            <span class="group-data-[collapsible=icon]:hidden">Account</span>
           </Sidebar.MenuButton>
         {/snippet}
       </DropdownMenu.Trigger>
@@ -107,6 +111,13 @@
         side={sidebar.isMobile ? "bottom" : "right"}
         align="end"
         sideOffset={4}
+        onCloseAutoFocus={(event) => {
+          if (!openingSettings) return;
+          openingSettings = false;
+          event.preventDefault();
+          accountButton?.focus();
+          window.dispatchEvent(new CustomEvent("open-settings"));
+        }}
       >
         <DropdownMenu.Label class="p-0 font-normal">
           <div class="flex items-center gap-2 px-1 py-1.5 text-start text-sm">
@@ -139,13 +150,17 @@
                 {/if}
               </DropdownMenu.Item>
             {/each}
-            <DropdownMenu.Separator />
           </DropdownMenu.Group>
         {/if}
         <DropdownMenu.Group>
           <DropdownMenu.Item onclick={() => goto("/setup")}>
             <PlusIcon />
             Add account
+          </DropdownMenu.Item>
+          <DropdownMenu.Separator />
+          <DropdownMenu.Item onSelect={() => { openingSettings = true; }}>
+            <SettingsIcon />
+            Settings
           </DropdownMenu.Item>
           <DropdownMenu.Item onclick={() => openUrl("https://donate.stripe.com/00wdR8dOd0YF7Ipce0a7C04")}>
             <SparklesIcon />
