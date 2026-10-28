@@ -154,12 +154,8 @@ fn reply_context(original: &crate::inbound::InboundEmailDetailDto) -> Result<Rep
             subject
         }
     );
-    let recipients = if original.received_for.is_empty() {
-        &original.to
-    } else {
-        &original.received_for
-    };
-    let from_candidates = recipients
+    let from_candidates = original
+        .to
         .iter()
         .take(50)
         .filter_map(|recipient| address(recipient).ok())

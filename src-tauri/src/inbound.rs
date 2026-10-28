@@ -65,6 +65,24 @@ impl InboundEmailDetailDto {
     }
 }
 
+fn original_recipients(headers: &std::collections::HashMap<String, String>, fallback: &[String]) -> Vec<String> {
+    headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("to"))
+        .and_then(|(_, value)| mailparse::addrparse(value).ok())
+        .map(|addresses| {
+            addresses
+                .iter()
+                .flat_map(|address| match address {
+                    mailparse::MailAddr::Single(mailbox) => vec![mailbox.addr.clone()],
+                    mailparse::MailAddr::Group(group) => group.addrs.iter().map(|mailbox| mailbox.addr.clone()).collect(),
+                })
+                .collect()
+        })
+        .filter(|addresses: &Vec<String>| !addresses.is_empty())
+        .unwrap_or_else(|| fallback.to_vec())
+}
+
 fn map_attachment(a: &InboundAttachment) -> InboundAttachmentDto {
     InboundAttachmentDto {
         id: a.id.to_string(),
@@ -186,7 +204,7 @@ pub(crate) async fn get_inbound_email(
         let detail = InboundEmailDetailDto {
             id: email.id.to_string(),
             from: email.from.clone(),
-            to: email.to.clone(),
+            to: original_recipients(&email.headers, &email.to),
             subject: email.subject.clone(),
             created_at: email.created_at.clone(),
             html: email.html.clone(),
@@ -288,6 +306,18 @@ mod tests {
         server.join().unwrap();
         assert_eq!(ids, expected);
         assert!(after.is_none());
+    }
+
+    #[test]
+    fn original_to_header_overrides_resend_envelope_alias() {
+        let headers = std::collections::HashMap::from([(
+            "To".to_string(),
+            "inbox@example.test, Other <other@example.com>".to_string(),
+        )]);
+        assert_eq!(
+            super::original_recipients(&headers, &["resend@resend.app".into()]),
+            vec!["inbox@example.test", "other@example.com"]
+        );
     }
 
     #[test]
