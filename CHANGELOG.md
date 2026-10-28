@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.1.5 - 2026-10-28
+
+### Features
+- Show delivery failure badges in sent list (0760f63)
+- Reveal failure badge label on hover (74ff798)
+- Move settings entry into account menu (5bc3643)
+
+
+### Fixes
+- Tolerate suppressed and unknown delivery events (56ab3dc)
+- Focus message body on tab from subject (9c207d0)
+
+
+### Maintenance
+- Expand bug report template (ed7f99e)
+- Increase dialog height (317a5a4)
+
 ## v0.1.4 - 2026-10-27
 
 ### Features
