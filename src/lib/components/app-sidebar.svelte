@@ -2,7 +2,7 @@
   import { Inbox, Send, SquarePen, Bug, Globe } from "@lucide/svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
-  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { openUrl } from "$lib/shared/api/external";
   import { toast } from "svelte-sonner";
   import * as Sidebar from "$lib/components/ui/sidebar";
   import { useSidebar } from "$lib/components/ui/sidebar";

@@ -8,11 +8,17 @@
   import { getSentEmail } from "$lib/shared/sent";
   import { formatEmailDate, formatFullEmailDate } from "$lib/shared/utils/dates";
   import type { Mailbox } from "$lib/shared/local-mail";
+  import { prepareEmailDocument, emailLinkFromMessage, type EmailDocument } from "$lib/shared/email-document";
+  import { openUrl } from "$lib/shared/api/external";
+  import { copyToClipboard } from "$lib/shared/services/clipboard.svelte";
+  import { toast } from "svelte-sonner";
 
   let { mailbox, emailId }: { mailbox: Mailbox; emailId: string | undefined } = $props();
   const accountId = useAccountId();
   type Message = { subject: string; from: string; to: string[]; createdAt: string; html: string | null; text?: string | null; cc?: string[]; replyTo?: string | null; attachments?: InboundAttachment[] };
   let email = $state<Message | null>(null);
+  let document = $state<EmailDocument | null>(null);
+  let frame = $state<HTMLIFrameElement | null>(null);
   let loading = $state(true);
   let failed = $state(false);
   let disposed = false;
@@ -24,11 +30,26 @@
     try {
       if (!emailId) throw new Error("Missing message ID");
       const result = mailbox === "inbox" ? await getInboundEmail(accountId, emailId) : await getSentEmail(accountId, emailId);
-      if (!disposed) email = result;
+      const prepared = result.html ? await prepareEmailDocument(result.html) : null;
+      if (!disposed) { email = result; document = prepared; }
     } catch { if (!disposed) failed = true; }
     finally { if (!disposed) loading = false; }
   }
-  onMount(() => { void load(); });
+  async function openEmailLink(event: MessageEvent) {
+    const url = emailLinkFromMessage(event, frame?.contentWindow ?? null, document?.token);
+    if (!url) return;
+    try { await openUrl(url); }
+    catch {
+      toast.error("Could not open this link in the default browser", {
+        action: { label: "Copy link", onClick: () => { void copyToClipboard(url, "Link copied"); } },
+      });
+    }
+  }
+  onMount(() => {
+    void load();
+    window.addEventListener("message", openEmailLink);
+    return () => window.removeEventListener("message", openEmailLink);
+  });
   onDestroy(() => { disposed = true; });
 
   function sizeLabel(bytes: number | null): string {
@@ -82,9 +103,9 @@
       {/if}
     </header>
     <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-      {#if email.html}
-        <!-- Mail is untrusted, never grant scripts or same-origin access. -->
-        <iframe title="Email content" sandbox="" referrerpolicy="no-referrer" loading="lazy" style:color-scheme="light" class="h-full min-h-80 w-full border-0 bg-white" srcdoc={email.html}></iframe>
+      {#if document}
+        <!-- No same-origin: CSP authorizes only the app's link bridge, not email scripts. -->
+        <iframe bind:this={frame} title="Email content" sandbox="allow-scripts" referrerpolicy="no-referrer" loading="lazy" style:color-scheme="light" class="h-full min-h-80 w-full border-0 bg-white" srcdoc={document.html}></iframe>
       {:else if email.text}
         <pre class="whitespace-pre-wrap break-words p-6 font-sans text-sm leading-7 lg:p-8">{email.text}</pre>
       {:else}

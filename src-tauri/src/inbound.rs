@@ -1,11 +1,8 @@
-use std::collections::{HashMap, HashSet};
-
 use crate::infrastructure::database::{
     local_state,
     mail::{self, Mailbox},
 };
 use crate::infrastructure::pagination::{email_page, list_options, EmailPage};
-use ammonia::Builder;
 use resend_rs::types::GetInboundEmailOptions;
 use resend_rs::{types::InboundAttachment, Resend};
 use serde::{Deserialize, Serialize};
@@ -45,10 +42,18 @@ pub struct InboundEmailDetailDto {
     pub to: Vec<String>,
     pub subject: String,
     pub created_at: String,
-    /// Sanitized HTML body, when available.
+    /// Original HTML source; the reader must prepare a sanitized document before display.
     pub html: Option<String>,
+    #[serde(default)]
+    pub html_source_version: u8,
     pub text: Option<String>,
     pub attachments: Vec<InboundAttachmentDto>,
+}
+
+impl InboundEmailDetailDto {
+    fn needs_html_upgrade(&self) -> bool {
+        self.html.is_some() && self.html_source_version == 0
+    }
 }
 
 fn map_attachment(a: &InboundAttachment) -> InboundAttachmentDto {
@@ -58,75 +63,6 @@ fn map_attachment(a: &InboundAttachment) -> InboundAttachmentDto {
         content_type: a.content_type.clone(),
         size: a.size,
     }
-}
-
-fn set(items: &[&'static str]) -> HashSet<&'static str> {
-    items.iter().copied().collect()
-}
-
-/// Allowlist sanitizer for untrusted email HTML. Scripts, frames and forms
-/// are removed here; the frontend renders the result inside a fully
-/// sandboxed iframe as the second security boundary.
-fn sanitize_email_html(html: &str) -> String {
-    let tags = set(&[
-        "a",
-        "b",
-        "blockquote",
-        "br",
-        "center",
-        "code",
-        "div",
-        "em",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "hr",
-        "i",
-        "img",
-        "li",
-        "ol",
-        "p",
-        "pre",
-        "s",
-        "span",
-        "strong",
-        "sub",
-        "sup",
-        "table",
-        "tbody",
-        "td",
-        "tfoot",
-        "th",
-        "thead",
-        "tr",
-        "u",
-        "ul",
-        "font",
-    ]);
-
-    let tag_attributes: HashMap<&str, HashSet<&str>> = HashMap::from([
-        ("a", set(&["href", "target"])),
-        ("img", set(&["src", "alt", "width", "height"])),
-        ("font", set(&["color", "size", "face"])),
-        (
-            "table",
-            set(&["border", "cellpadding", "cellspacing", "width"]),
-        ),
-        ("td", set(&["colspan", "rowspan", "width", "bgcolor"])),
-        ("th", set(&["colspan", "rowspan", "width", "bgcolor"])),
-    ]);
-
-    let generic_attributes = set(&["align", "valign", "dir", "lang"]);
-
-    Builder::default()
-        .tags(tags)
-        .tag_attributes(tag_attributes)
-        .generic_attributes(generic_attributes)
-        .clean(html)
-        .to_string()
 }
 
 async fn client(app: &AppHandle<Wry>, account_id: &str) -> Result<Resend, String> {
@@ -197,52 +133,79 @@ pub(crate) async fn get_inbound_email(
     email_id: String,
 ) -> Result<InboundEmailDetailDto, String> {
     let database = local_state::for_account(&app, &account_id).await?;
-    if let Some(json) = mail::cached_detail(
+    let cached = mail::cached_detail(
         &database,
         account_id.clone(),
         "inbox".into(),
         email_id.clone(),
     )
     .await?
+    .map(|json| {
+        serde_json::from_str::<InboundEmailDetailDto>(&json)
+            .map_err(|_| "Could not read downloaded email".to_string())
+    })
+    .transpose()?;
+    if let Some(detail) = cached
+        .as_ref()
+        .filter(|detail| !detail.needs_html_upgrade())
     {
-        let mut detail: InboundEmailDetailDto = serde_json::from_str(&json)
-            .map_err(|_| "Could not read downloaded email".to_string())?;
-        detail.html = detail.html.as_deref().map(sanitize_email_html);
-        return Ok(detail);
+        return Ok(detail.clone());
     }
-    let resend = client(&app, &account_id).await?;
-
-    let email = resend
-        .receiving
-        .get(&email_id, GetInboundEmailOptions::default())
+    // Old cache entries lost their CSS; recover the source without deleting the offline copy.
+    let downloaded = async {
+        let resend = client(&app, &account_id).await?;
+        let email = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            resend
+                .receiving
+                .get(&email_id, GetInboundEmailOptions::default()),
+        )
         .await
+        .map_err(|_| "Email download timed out".to_string())?
         .map_err(|e| permissions::map_resend_error("Failed to fetch email", e))?;
 
-    let search_text = email
-        .text
-        .clone()
-        .unwrap_or_else(|| mail::plain_html(email.html.as_deref().unwrap_or_default()));
-    let detail = InboundEmailDetailDto {
-        id: email.id.to_string(),
-        from: email.from.clone(),
-        to: email.to.clone(),
-        subject: email.subject.clone(),
-        created_at: email.created_at.clone(),
-        html: email.html.as_deref().map(sanitize_email_html),
-        text: email.text.clone(),
-        attachments: email.attachments.iter().map(map_attachment).collect(),
-    };
-    crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
-    mail::store_detail(
-        &database,
-        account_id,
-        Mailbox::Inbox,
-        email_id,
-        &detail,
-        search_text,
-    )
-    .await?;
-    Ok(detail)
+        let search_text = email
+            .text
+            .clone()
+            .unwrap_or_else(|| mail::plain_html(email.html.as_deref().unwrap_or_default()));
+        let detail = InboundEmailDetailDto {
+            id: email.id.to_string(),
+            from: email.from.clone(),
+            to: email.to.clone(),
+            subject: email.subject.clone(),
+            created_at: email.created_at.clone(),
+            html: email.html.clone(),
+            html_source_version: 1,
+            text: email.text.clone(),
+            attachments: email.attachments.iter().map(map_attachment).collect(),
+        };
+        crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
+        mail::store_detail(
+            &database,
+            account_id.clone(),
+            Mailbox::Inbox,
+            email_id.clone(),
+            &detail,
+            search_text,
+        )
+        .await?;
+        Ok::<_, String>(detail)
+    }
+    .await;
+    match downloaded {
+        Ok(detail) => Ok(detail),
+        Err(error) => {
+            if let Some(detail) = cached {
+                crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
+                eprintln!(
+                    "[WARN] Could not restore original email formatting; using downloaded copy"
+                );
+                Ok(detail)
+            } else {
+                Err(error)
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -275,7 +238,8 @@ pub async fn open_inbound_email(
 
 #[cfg(test)]
 mod tests {
-    use super::{fetch_inbound_page, recipient_domains, sanitize_email_html};
+    use super::{fetch_inbound_page, recipient_domains, InboundEmailDetailDto};
+    use crate::email_document::sanitize_email_html;
     use crate::infrastructure::pagination_test_server::mock_history;
 
     #[tokio::test]
@@ -314,6 +278,27 @@ mod tests {
         assert_eq!(recipient_domains(&[], &header), vec!["c.example"]);
         assert!(recipient_domains(&["invalid".into()], &header).is_empty());
         assert!(recipient_domains(&[], &[]).is_empty());
+    }
+
+    #[test]
+    fn legacy_html_is_upgraded_but_original_source_and_plain_text_are_reusable() {
+        let source = include_str!("../tests/fixtures/styled-email.html");
+        let legacy = serde_json::json!({
+            "id": "email", "from": "sender@example.com", "to": ["to@example.com"],
+            "subject": "Invoice", "createdAt": "2026-01-01T00:00:00Z",
+            "html": source, "text": "Pay online", "attachments": []
+        });
+        let detail: InboundEmailDetailDto = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(detail.needs_html_upgrade());
+        let mut current = legacy.clone();
+        current["htmlSourceVersion"] = serde_json::json!(1);
+        let detail: InboundEmailDetailDto = serde_json::from_value(current).unwrap();
+        assert!(!detail.needs_html_upgrade());
+        assert_eq!(serde_json::to_value(detail).unwrap()["html"], source);
+        let mut text_only = legacy;
+        text_only["html"] = serde_json::Value::Null;
+        let detail: InboundEmailDetailDto = serde_json::from_value(text_only).unwrap();
+        assert!(!detail.needs_html_upgrade());
     }
 
     #[test]

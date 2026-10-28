@@ -2,7 +2,7 @@
   import { ArrowUpCircle, LoaderCircle, TriangleAlert } from "@lucide/svelte";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
   import { Button } from "$lib/components/ui/button";
-  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { openUrl } from "$lib/shared/api/external";
   import { appUpdate } from "$lib/shared/app-update.svelte";
   import { confirmAppDeparture } from "$lib/features/auth/draft-navigation";
 

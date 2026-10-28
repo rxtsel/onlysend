@@ -8,7 +8,6 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager, State, Wry};
-use tauri_plugin_opener::OpenerExt;
 
 use crate::infrastructure::credentials_store as store;
 
@@ -176,9 +175,10 @@ pub async fn connect_resend(
         challenge = urlencoding_form(&challenge),
     );
 
-    app.opener()
-        .open_url(authorize_url.clone(), None::<&str>)
-        .map_err(|e| format!("[ERROR] Failed to open browser: {}", e))?;
+    // Keep the copy fallback available even when the desktop launcher fails.
+    if let Err(error) = crate::external::open_browser(app.clone(), authorize_url.clone()).await {
+        eprintln!("[WARN] {error}");
+    }
 
     Ok(authorize_url)
 }

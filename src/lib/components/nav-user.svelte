@@ -23,7 +23,8 @@
   import { page } from "$app/state";
   import { switchMailAccount } from "@/lib/features/auth/account-switch.svelte";
   import { toast } from "svelte-sonner";
-  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { openUrl } from "$lib/shared/api/external";
+  import { copyToClipboard } from "$lib/shared/services/clipboard.svelte";
   import { ConnectionStore } from "@/lib/features/auth/connection-store.svelte";
 
   import * as AlertDialog from "@/lib/components/ui/alert-dialog";
@@ -66,6 +67,16 @@
     } catch (err) {
       console.error("Error switching account:", err);
       toast.error("Failed to switch account");
+    }
+  }
+
+  async function donate() {
+    const url = "https://donate.stripe.com/00wdR8dOd0YF7Ipce0a7C04";
+    try { await openUrl(url); }
+    catch {
+      toast.error("Could not open the default browser", {
+        action: { label: "Copy link", onClick: () => { void copyToClipboard(url, "Link copied"); } },
+      });
     }
   }
 
@@ -162,7 +173,7 @@
             <SettingsIcon />
             Settings
           </DropdownMenu.Item>
-          <DropdownMenu.Item onclick={() => openUrl("https://donate.stripe.com/00wdR8dOd0YF7Ipce0a7C04")}>
+          <DropdownMenu.Item onclick={donate}>
             <HeartHandshakeIcon />
             Support OnlySend
           </DropdownMenu.Item>
