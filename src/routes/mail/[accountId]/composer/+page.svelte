@@ -172,15 +172,35 @@
   </div>
 {:else}
 <form
-  class="h-full w-full overflow-hidden px-1"
+  class="h-full w-full overflow-hidden"
   onsubmit={handleSubmit}
   id="compose-email-form"
   aria-busy={isSending}
 >
   <fieldset disabled={isSending} class="contents">
-  <Field.Group class="h-full">
+  <Field.Group class="h-full gap-0 overflow-hidden rounded-xl border bg-background">
+    <Field.Field class="shrink-0 border-b px-4 py-3">
+      <Field.Label for="subject">Subject</Field.Label>
+      <Input
+        id="subject"
+        type="text"
+        name="subject"
+        placeholder="Subject"
+        readonly={isReply}
+        class={isReply ? "bg-muted/40" : undefined}
+        bind:value={subject}
+        aria-invalid={!!errors.subject}
+        onkeydown={(event) => {
+          if (event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && composerEditor?.focus()) {
+            event.preventDefault();
+          }
+        }}
+      />
+      {#if errors.subject}<Field.Error>{errors.subject}</Field.Error>{/if}
+    </Field.Field>
+    <div class="shrink-0 space-y-3 border-b px-4 py-3">
     <!-- From and Group buttons -->
-    <div class="flex gap-1 items-end">
+    <div class="flex items-end gap-3">
       <Field.Field class="flex-1">
         <Field.Label for="from">From</Field.Label>
         <Select.Root type="single" name="from" bind:value={from}>
@@ -232,7 +252,7 @@
     </div>
 
     <!-- To and cc -->
-    <div class="flex gap-1">
+    <div class="flex gap-3">
       <Field.Field class="flex-1">
         <Field.Label for="to">To</Field.Label>
         <InputTag
@@ -275,30 +295,10 @@
       </Field.Field>
     {/if}
 
-    <Field.Field>
-      <Field.Label for="subject">Subject</Field.Label>
-      <Input
-        id="subject"
-        type="text"
-        name="subject"
-        placeholder="Subject"
-        readonly={isReply}
-        class={isReply ? "bg-muted/40" : undefined}
-        bind:value={subject}
-        aria-invalid={!!errors.subject}
-        onkeydown={(event) => {
-          if (event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && composerEditor?.focus()) {
-            event.preventDefault();
-          }
-        }}
-      />
-      {#if errors.subject}
-        <Field.Error>{errors.subject}</Field.Error>
-      {/if}
-    </Field.Field>
-    <Field.Field class="h-full">
-      <Field.Label for="content">Content</Field.Label>
-      <div class="h-full flex flex-col">
+    </div>
+    <Field.Field class="min-h-0 flex-1 p-4">
+      <Field.Label for="content" class="sr-only">Content</Field.Label>
+      <div class="flex h-full min-h-0 flex-col gap-3">
         <Editor
           bind:this={composerEditor}
           bind:content
