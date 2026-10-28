@@ -115,9 +115,9 @@
 </script>
 
 {#if visible.length || error}
-  <section class="mt-5 space-y-2" aria-label="Attachments">
+  <section class="@container/attachments mt-4 shrink-0 space-y-2 px-0 pt-4" aria-label="Attachments">
     {#if visible.length}
-      <ul class="grid grid-cols-1 gap-2 xl:grid-cols-2">
+      <ul class="grid grid-cols-1 gap-2 @xl/attachments:grid-cols-2">
         {#each visible as item (item.id)}
           {@const name = item.filename || "Attachment"}
           {@const current = busy?.attachmentId === item.id ? busy : null}

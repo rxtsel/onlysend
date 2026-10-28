@@ -30,6 +30,18 @@ pub struct ListPage {
     domains: Vec<String>,
 }
 
+fn detail_thread_id(mailbox: &str, json: &str) -> Option<String> {
+    if mailbox == Mailbox::Inbox.as_str() {
+        serde_json::from_str::<crate::inbound::InboundEmailDetailDto>(json)
+            .ok()
+            .and_then(|detail| crate::inbound::thread_id(&detail))
+    } else {
+        serde_json::from_str::<Value>(json)
+            .ok()
+            .and_then(|detail| detail["threadId"].as_str().map(str::to_owned))
+    }
+}
+
 fn local_query(request: &ListRequest) -> Result<LocalQuery, String> {
     let after = request
         .after
@@ -82,6 +94,64 @@ fn list_page(
         },
         domains,
     })
+}
+
+#[tauri::command]
+pub async fn get_mail_thread(
+    app: AppHandle<Wry>,
+    account_id: String,
+    mailbox: Mailbox,
+    email_id: String,
+) -> Result<Vec<Value>, String> {
+    if uuid::Uuid::parse_str(&email_id).is_err() {
+        return Err("Invalid email ID".into());
+    }
+    let database = local_state::for_account(&app, &account_id).await?;
+    let Some(thread_id) =
+        mail::thread_id_for(&database, account_id.clone(), mailbox, email_id).await?
+    else {
+        return Ok(Vec::new());
+    };
+    let candidates =
+        mail::cached_thread_candidates(&database, account_id.clone(), format!("<{thread_id}>"))
+            .await?;
+    for (candidate_mailbox, candidate_id, json) in candidates {
+        let linked =
+            detail_thread_id(&candidate_mailbox, &json).as_deref() == Some(thread_id.as_str());
+        if linked {
+            mail::store_thread_link(
+                &database,
+                account_id.clone(),
+                if candidate_mailbox == Mailbox::Inbox.as_str() {
+                    Mailbox::Inbox
+                } else {
+                    Mailbox::Sent
+                },
+                candidate_id,
+                thread_id.clone(),
+            )
+            .await?;
+        }
+    }
+    let messages = mail::cached_thread(&database, account_id.clone(), thread_id, mailbox).await?;
+    crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
+    messages
+        .into_iter()
+        .map(|(mailbox, json)| {
+            let message: Value =
+                serde_json::from_str(&json).map_err(|_| "Could not read downloaded thread")?;
+            let body = message["text"]
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| mail::plain_html(message["html"].as_str().unwrap_or_default()));
+            let preview = body.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(240).collect::<String>();
+            Ok(serde_json::json!({
+                "id": message["id"], "mailbox": mailbox, "from": message["from"],
+                "to": message["to"].as_array().cloned().unwrap_or_default(),
+                "subject": message["subject"], "createdAt": message["createdAt"], "preview": preview
+            }))
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -146,6 +216,26 @@ mod tests {
             is_partial: true,
             downloaded_at,
         }
+    }
+
+    #[test]
+    fn cached_thread_candidates_match_references_and_sent_thread_ids() {
+        let inbound = serde_json::json!({
+            "id":"message", "from":"sender@example.test", "to":[], "subject":"Re",
+            "createdAt":"2026-01-01T00:00:00Z", "html":null, "text":"body", "attachments":[],
+            "references":"[\"<root@example.test>\",\"<parent@example.test>\"]"
+        })
+        .to_string();
+        let sent = serde_json::json!({"id":"sent", "threadId":"root@example.test"}).to_string();
+        assert_eq!(
+            detail_thread_id("inbox", &inbound).as_deref(),
+            Some("root@example.test")
+        );
+        assert_eq!(
+            detail_thread_id("sent", &sent).as_deref(),
+            Some("root@example.test")
+        );
+        assert_eq!(detail_thread_id("sent", &inbound), None);
     }
 
     #[test]

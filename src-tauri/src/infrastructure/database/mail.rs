@@ -80,6 +80,104 @@ pub(crate) async fn cached_detail(
     ).optional()).await
 }
 
+pub(crate) async fn store_thread_link(
+    database: &Database,
+    account_id: String,
+    mailbox: Mailbox,
+    email_id: String,
+    thread_id: String,
+) -> Result<(), String> {
+    database.run(move |connection| {
+        connection.execute("INSERT OR IGNORE INTO account_state VALUES (?1)", [&account_id])?;
+        connection.execute(
+            "INSERT INTO email_threads VALUES (?1,?2,?3,?4) ON CONFLICT(account_id,mailbox,email_id) DO UPDATE SET thread_id=excluded.thread_id",
+            params![account_id, mailbox.as_str(), email_id, thread_id],
+        )?;
+        Ok(())
+    }).await
+}
+
+pub(crate) async fn cached_thread(
+    database: &Database,
+    account_id: String,
+    thread_id: String,
+    preferred_mailbox: Mailbox,
+) -> Result<Vec<(String, String)>, String> {
+    let rows = database.run(move |connection| {
+        let mut statement = connection.prepare(
+            "SELECT e.mailbox,e.created_at_ms,b.detail_json FROM email_threads t JOIN emails e USING(account_id,mailbox,email_id) JOIN email_bodies b USING(account_id,mailbox,email_id) WHERE t.account_id=?1 AND t.thread_id=?2 ORDER BY e.created_at_ms,e.email_id",
+        )?;
+        let rows = statement.query_map(params![account_id, thread_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?))
+        })?.collect::<rusqlite::Result<Vec<(String, i64, String)>>>();
+        rows
+    }).await?;
+    let mut unique = std::collections::HashMap::<String, (bool, i64, String, String)>::new();
+    for (mailbox, date, json) in rows {
+        let detail: Value =
+            serde_json::from_str(&json).map_err(|_| "Could not read downloaded thread")?;
+        let key = detail["messageId"]
+            .as_str()
+            .or_else(|| detail["id"].as_str())
+            .unwrap_or(&json)
+            .to_owned();
+        let preferred = mailbox == preferred_mailbox.as_str();
+        match unique.get_mut(&key) {
+            Some((is_preferred, old_date, old_mailbox, old_json))
+                if preferred && !*is_preferred =>
+            {
+                *is_preferred = true;
+                *old_date = date;
+                *old_mailbox = mailbox;
+                *old_json = json;
+            }
+            None => {
+                unique.insert(key, (preferred, date, mailbox, json));
+            }
+            _ => {}
+        }
+    }
+    let mut messages: Vec<_> = unique
+        .into_values()
+        .map(|(_, date, mailbox, json)| (date, mailbox, json))
+        .collect();
+    messages.sort_by_key(|(date, _, _)| *date);
+    Ok(messages
+        .into_iter()
+        .map(|(_, mailbox, json)| (mailbox, json))
+        .collect())
+}
+
+pub(crate) async fn cached_thread_candidates(
+    database: &Database,
+    account_id: String,
+    message_id: String,
+) -> Result<Vec<(String, String, String)>, String> {
+    database.run(move |connection| {
+        let mut statement = connection.prepare(
+            "SELECT mailbox,email_id,detail_json FROM email_bodies WHERE account_id=?1 AND instr(detail_json,?2)>0",
+        )?;
+        let rows = statement.query_map(params![account_id, message_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?.collect();
+        rows
+    }).await
+}
+
+pub(crate) async fn thread_id_for(
+    database: &Database,
+    account_id: String,
+    mailbox: Mailbox,
+    email_id: String,
+) -> Result<Option<String>, String> {
+    database
+        .run(move |connection| {
+            connection.query_row(
+        "SELECT thread_id FROM email_threads WHERE account_id=?1 AND mailbox=?2 AND email_id=?3",
+        params![account_id, mailbox.as_str(), email_id], |row| row.get(0),
+    ).optional()
+        })
+        .await
+}
+
 pub(crate) async fn store_attachments<T: Serialize>(
     database: &Database,
     account_id: String,
@@ -174,6 +272,9 @@ async fn write_page<T: Serialize>(
             let subject = item["subject"].as_str().ok_or(rusqlite::Error::InvalidQuery)?;
             let recipients: Vec<_> = ["to", "cc", "bcc"].into_iter().flat_map(|key| strings(item, key)).collect();
             let metadata = serde_json::to_string(item).map_err(json_error)?;
+            if let Some(thread_id) = item["threadId"].as_str() {
+                tx.execute("INSERT OR IGNORE INTO email_threads VALUES (?1,?2,?3,?4)", params![account_id, mailbox.as_str(), id, thread_id])?;
+            }
             let changed = tx.execute("INSERT INTO emails(account_id,mailbox,email_id,created_at_ms,subject,sender,subject_sort,sender_sort,recipient_text,search_body,metadata_json,downloaded_at)
                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,COALESCE((SELECT search_text FROM email_bodies WHERE account_id=?1 AND mailbox=?2 AND email_id=?3),''),?10,unixepoch())
                 ON CONFLICT(account_id,mailbox,email_id) DO UPDATE SET created_at_ms=excluded.created_at_ms,subject=excluded.subject,sender=excluded.sender,subject_sort=excluded.subject_sort,sender_sort=excluded.sender_sort,recipient_text=excluded.recipient_text,metadata_json=excluded.metadata_json,downloaded_at=excluded.downloaded_at WHERE emails.metadata_json<>excluded.metadata_json",
@@ -362,7 +463,7 @@ pub(crate) async fn query(
         Sort::SenderAsc => ("sender_sort", false, false),
         Sort::SenderDesc => ("sender_sort", true, false),
     };
-    let mut sql = format!("SELECT e.metadata_json,CAST(e.{column} AS TEXT),e.email_id,substr(e.search_body,1,240),m.email_id IS NOT NULL FROM emails e LEFT JOIN read_markers m ON m.account_id=e.account_id AND m.mailbox=e.mailbox AND m.email_id=e.email_id WHERE e.account_id=? AND e.mailbox=?");
+    let mut sql = format!("SELECT CASE WHEN t.thread_id IS NULL THEN e.metadata_json ELSE json_set(e.metadata_json,'$.threadId',t.thread_id,'$.threadCount',(SELECT count(DISTINCT COALESCE(json_extract(b.detail_json,'$.messageId'),siblings.email_id)) FROM email_threads siblings LEFT JOIN email_bodies b ON b.account_id=siblings.account_id AND b.mailbox=siblings.mailbox AND b.email_id=siblings.email_id WHERE siblings.account_id=t.account_id AND siblings.thread_id=t.thread_id)) END,CAST(e.{column} AS TEXT),e.email_id,substr(e.search_body,1,240),m.email_id IS NOT NULL FROM emails e LEFT JOIN read_markers m ON m.account_id=e.account_id AND m.mailbox=e.mailbox AND m.email_id=e.email_id LEFT JOIN email_threads t ON t.account_id=e.account_id AND t.mailbox=e.mailbox AND t.email_id=e.email_id WHERE e.account_id=? AND e.mailbox=?");
     let mut values: Vec<SqlValue> = vec![
         account.clone().into(),
         query.mailbox.as_str().to_string().into(),

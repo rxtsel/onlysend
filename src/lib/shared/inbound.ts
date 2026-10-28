@@ -22,10 +22,14 @@ export interface InboundAttachment {
 }
 
 export interface InboundEmailDetail extends Omit<InboundEmail, "domain" | "domains"> {
-  /** Original HTML source; only display the document returned by prepareEmailDocument. */
+  /** Original HTML source; sanitize with the native command before rendering. */
   html: string | null;
   text: string | null;
   attachments: InboundAttachment[];
+  replyTo?: string[];
+  messageId?: string;
+  inReplyTo?: string | null;
+  references?: string | null;
 }
 
 export async function getInboundEmail(

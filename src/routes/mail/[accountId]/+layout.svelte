@@ -1,15 +1,17 @@
 <script lang="ts">
   import { page } from "$app/state";
-  import { untrack } from "svelte";
-  import { ArrowLeft, Send, LoaderCircle } from "@lucide/svelte";
+  import { setContext, untrack } from "svelte";
+  import { COMPOSER_STATUS, type ComposerStatus } from "$lib/features/sending/composer-context";
+  import { ArrowLeft, Reply, Send, LoaderCircle } from "@lucide/svelte";
   import AppSidebar from "$lib/components/app-sidebar.svelte";
   import MailList from "$lib/components/mail-list.svelte";
   import MailStatusFooter from "$lib/components/mail-status-footer.svelte";
   import { selectArchiveFooter, type ArchiveFooterData, type ArchiveFooterSnapshot } from "$lib/shared/archive-status";
-  import type { Mailbox } from "$lib/shared/local-mail";
+  import type { MailListItem, Mailbox } from "$lib/shared/local-mail";
   import * as Sidebar from "$lib/components/ui/sidebar";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
   import { Button, buttonVariants } from "$lib/components/ui/button";
+  import { Skeleton } from "$lib/components/ui/skeleton";
   import { accountSwitch } from "$lib/features/auth/account-switch.svelte";
   import { provideAccount } from "$lib/features/auth/account-context";
   import { mailUrl } from "$lib/features/auth/mail-routes";
@@ -20,6 +22,27 @@
   provideAccount(() => accountId);
   const mailbox = $derived<Mailbox>(page.url.pathname.startsWith(mailUrl(accountId, "inbox")) ? "inbox" : "sent");
   const isComposer = $derived(page.url.pathname === mailUrl(accountId, "composer"));
+  const replyId = $derived(page.url.searchParams.get("reply"));
+  const composerKey = $derived(replyId === null ? "composer" : `reply:${replyId}`);
+  const composerStatus = $state<ComposerStatus>({ ready: false, sending: false });
+  let detailSubject = $state("");
+  let selectedListMail = $state<{ accountId: string; mailbox: Mailbox; mail: MailListItem } | null>(null);
+  let detailIsThread = $state<boolean | null>(null);
+  setContext(COMPOSER_STATUS, composerStatus);
+  setContext("mail-subject", (subject: string) => { detailSubject = subject; });
+  setContext("mail-list-preview", () => selectedListMail);
+  setContext("mail-thread-status", (threaded: boolean) => { detailIsThread = threaded; });
+  $effect.pre(() => {
+    const id = page.params.id;
+    const owner = accountId;
+    const box = mailbox;
+    untrack(() => {
+      const selection = selectedListMail;
+      const matchesSelection = selection?.accountId === owner && selection.mailbox === box && selection.mail.id === id;
+      detailSubject = matchesSelection ? selection.mail.subject || "(No subject)" : "";
+      detailIsThread = matchesSelection ? (selection.mail.threadCount ?? 1) > 1 : null;
+    });
+  });
   const isDetail = $derived(Boolean(page.params.id));
   let domain = $state<string | null>(null);
   let domains = $state<string[]>([]);
@@ -28,8 +51,17 @@
     untrack(() => { domain = null; domains = []; });
   });
   let confirmSend = $state(false);
+  $effect.pre(() => {
+    accountId; isComposer; replyId;
+    untrack(() => { confirmSend = false; composerStatus.ready = false; composerStatus.sending = false; });
+  });
   let archiveFooter = $state<ArchiveFooterSnapshot | null>(null);
   const footerData = $derived(selectArchiveFooter(archiveFooter, accountId, mailbox));
+  function selectMail(mail: MailListItem, selectedMailbox: Mailbox) {
+    selectedListMail = { accountId, mailbox: selectedMailbox, mail };
+    detailSubject = mail.subject || "(No subject)";
+    detailIsThread = (mail.threadCount ?? 1) > 1;
+  }
   function updateArchiveStatus(owner: string, mailbox: Mailbox, data: ArchiveFooterData) {
     if (owner === accountId) archiveFooter = { accountId: owner, mailbox, data };
   }
@@ -51,15 +83,20 @@
         {mailbox} {domain} active={!isComposer}
         class={cn("w-full shrink-0 lg:w-[340px] xl:w-[360px]", isComposer ? "hidden" : isDetail ? "hidden lg:flex" : "flex")}
         onDomainsChange={(value) => { domains = value; }}
+        onSelectMail={selectMail}
         onArchiveStatusChange={updateArchiveStatus}
       />
       <main class={cn("min-h-0 min-w-0 flex-1 bg-background", isComposer || isDetail ? "flex flex-col" : "hidden lg:flex lg:flex-col")} aria-label={isComposer ? "Compose message" : "Message preview"}>
-        <header class="flex h-16 shrink-0 items-center gap-3 border-b px-5">
+        <header class={cn("flex shrink-0 gap-3 border-b px-5", isDetail ? "min-h-16 items-start py-3" : "h-16 items-center")}>
           {#if isComposer}
-            <Sidebar.Trigger aria-label="Toggle mailboxes" />
-            <h1 class="flex-1 text-base font-semibold tracking-tight">New message</h1>
+            {#if replyId !== null}
+              <Button href={mailUrl(accountId, "inbox", replyId)} variant="ghost" size="icon" aria-label="Back to original message"><ArrowLeft /></Button>
+            {:else}
+              <Sidebar.Trigger aria-label="Toggle mailboxes" />
+            {/if}
+            <h1 class="flex-1 text-base font-semibold tracking-tight">{replyId !== null ? "Reply" : "New message"}</h1>
             <AlertDialog.Root bind:open={confirmSend}>
-              <AlertDialog.Trigger class={buttonVariants({ variant: "default" })}><Send /> Send</AlertDialog.Trigger>
+              <AlertDialog.Trigger disabled={!composerStatus.ready || composerStatus.sending} class={buttonVariants({ variant: "default" })}><Send /> {composerStatus.sending ? "Sending…" : "Send"}</AlertDialog.Trigger>
               <AlertDialog.Content>
                 <AlertDialog.Header>
                   <AlertDialog.Title>Send this message?</AlertDialog.Title>
@@ -73,11 +110,20 @@
             </AlertDialog.Root>
           {:else}
             <Button href={mailUrl(accountId, mailbox)} variant="ghost" size="icon" class="lg:hidden" aria-label="Back to messages"><ArrowLeft /></Button>
-            <span class="text-sm font-medium text-muted-foreground">{isDetail ? "Message" : "Preview"}</span>
+            <h1 class="min-w-0 flex-1 break-words text-base font-semibold leading-tight tracking-tight" aria-busy={isDetail && !detailSubject}>
+              {#if isDetail && !detailSubject}
+                <span class="sr-only">Loading subject</span><Skeleton aria-hidden="true" class="h-5 w-36" />
+              {:else}
+                {isDetail ? detailSubject : "Preview"}
+              {/if}
+            </h1>
+            {#if isDetail && mailbox === "inbox" && detailIsThread === false}
+              <Button href={`${mailUrl(accountId, "composer")}?reply=${encodeURIComponent(page.params.id!)}`} variant="outline" size="sm" class="w-fit shrink-0 whitespace-nowrap" aria-label="Reply to this message"><Reply class="size-4" />Reply</Button>
+            {/if}
           {/if}
         </header>
         <div class={cn("min-h-0 flex-1", isComposer ? "overflow-y-auto p-5 md:p-8" : "overflow-hidden")}>
-          {#key page.params.id ?? (isComposer ? "composer" : mailbox)}
+          {#key page.params.id ?? (isComposer ? composerKey : mailbox)}
             {@render children()}
           {/key}
         </div>

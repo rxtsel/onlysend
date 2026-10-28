@@ -21,7 +21,8 @@ new MX records; review the DNS instructions before changing them.
 
 - Switch between accounts with separate mail and settings.
 - Manage multiple domains, sender addresses, and DNS configuration.
-- Compose formatted messages with attachments, CC, BCC, and Reply-To.
+- Compose formatted messages with attachments, CC and BCC.
+- Reply to received messages using the same composer.
 - Browse sent mail and an optional inbox with a dedicated reading pane.
 - Search saved mail and filter by domain, including messages outside loaded pages.
 - See previews of already downloaded messages without fetching each body again.
@@ -35,9 +36,24 @@ Their servers may detect when you open a message. Sender scripts and forms remai
 blocked, and links open in your system browser. Remote resources are not saved
 for offline reading.
 
+## Replies
+
+Use **Reply** at the right of the **Message** toolbar to open the existing composer.
+Recipients come from `Reply-To`, or the sender when it is absent. The matching
+saved sender address is selected when available, otherwise your default is used.
+The subject has a single **Re:** prefix and is read-only; Rust also enforces it
+and adds `In-Reply-To` and `References` when sending. Manual Reply-To and Message-ID
+controls have been removed from the composer. Original attachments are not copied
+into replies automatically.
+
+Older downloaded messages may need one online refresh to recover reply headers.
+If those details cannot be recovered, the original offline message remains intact
+and the reply cannot be sent without them. No Resend Inboxes subscription is needed.
+
 ## Attachments
 
-Received and sent messages show attachment cards. Click an image for a preview,
+Received and sent messages show attachment cards below the reading area, like
+in the composer, rather than inside the subject/sender header. Click an image for a preview,
 click a supported document to open it with the default application, or choose
 **Save as…**. Downloads show progress and can be cancelled. PNG, JPEG, GIF and WebP
 previews support files up to **5 MB**; downloads support **25 MB** per file.

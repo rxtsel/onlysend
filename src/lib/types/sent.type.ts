@@ -13,4 +13,6 @@ export interface SentEmail {
   bcc: string[];
   replyTo: string | null;
   lastEvent?: string | null;
+  threadId?: string | null;
+  messageId?: string | null;
 }

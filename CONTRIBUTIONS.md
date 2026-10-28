@@ -74,6 +74,16 @@ message contains only the visible files. Also test plain-text Sent messages with
 newlines and literal `<tags>`; they must not become HTML. Desktop/dialog acceptance
 is required on each OS; unit tests do not exercise native file dialogs.
 
+For replies, use a test account and verify Reply is aligned right in the Message
+toolbar, not beside the subject. Attachment cards belong below the reading area,
+with no empty footer for messages without attachments. Verify Reply opens the
+same composer, honors the received Reply-To over From, and selects a matching saved sender.
+Check the read-only Re: subject, body focus, attachments/CC/BCC, discard confirmation,
+and a normal new message afterward. Send a test reply and inspect its In-Reply-To
+and References headers and threading in another mail client. Test an older cached
+message online/offline: failed metadata recovery must preserve its downloaded body
+and block sending, not fall back to an unrelated new message.
+
 Build a local desktop executable without installers:
 
 ```sh

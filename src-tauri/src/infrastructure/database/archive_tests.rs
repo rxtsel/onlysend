@@ -88,6 +88,126 @@ fn query(mailbox: Mailbox) -> LocalQuery {
 }
 
 #[tokio::test]
+async fn thread_links_are_account_scoped_and_annotate_list_rows_with_counts() {
+    let temporary = TemporaryDatabase::new();
+    let database = temporary.database();
+    database.initialize().await.unwrap();
+    for (account, mailbox, id) in [
+        ("a", Mailbox::Inbox, "incoming"),
+        ("a", Mailbox::Sent, "reply"),
+        ("b", Mailbox::Inbox, "other-account"),
+    ] {
+        mail::store_page(
+            &database,
+            account.into(),
+            mailbox,
+            20,
+            None,
+            &page(vec![message(id, "Thread", "2026-01-01T00:00:00Z")]),
+        )
+        .await
+        .unwrap();
+        mail::store_thread_link(
+            &database,
+            account.into(),
+            mailbox,
+            id.into(),
+            "root@example.test".into(),
+        )
+        .await
+        .unwrap();
+    }
+    let inbox = mail::query(&database, "a".into(), query(Mailbox::Inbox))
+        .await
+        .unwrap();
+    assert_eq!(inbox.items[0]["threadId"], "root@example.test");
+    assert_eq!(inbox.items[0]["threadCount"], 2);
+    let isolated = mail::query(&database, "b".into(), query(Mailbox::Inbox))
+        .await
+        .unwrap();
+    assert_eq!(isolated.items[0]["threadCount"], 1);
+}
+
+#[tokio::test]
+async fn cached_thread_deduplicates_sent_and_received_copies_by_message_id() {
+    let temporary = TemporaryDatabase::new();
+    let database = temporary.database();
+    database.initialize().await.unwrap();
+    for (mailbox, id, message_id, date) in [
+        (
+            Mailbox::Inbox,
+            "root",
+            "<root@example.test>",
+            "2026-01-01T00:00:00Z",
+        ),
+        (
+            Mailbox::Sent,
+            "reply-sent",
+            "<reply@example.test>",
+            "2026-01-02T00:00:00Z",
+        ),
+        (
+            Mailbox::Inbox,
+            "reply-copy",
+            "<reply@example.test>",
+            "2026-01-02T00:00:00Z",
+        ),
+    ] {
+        mail::store_page(
+            &database,
+            "a".into(),
+            mailbox,
+            20,
+            None,
+            &page(vec![message(id, "Thread", date)]),
+        )
+        .await
+        .unwrap();
+        mail::store_thread_link(
+            &database,
+            "a".into(),
+            mailbox,
+            id.into(),
+            "root@example.test".into(),
+        )
+        .await
+        .unwrap();
+        mail::store_detail(
+            &database,
+            "a".into(),
+            mailbox,
+            id.into(),
+            &json!({
+                "id":id, "messageId":message_id, "from":"sender@example.test", "to":[],
+                "subject":"Thread", "createdAt":date, "html":null, "text":"body", "attachments":[]
+            }),
+            "body".into(),
+        )
+        .await
+        .unwrap();
+    }
+    let thread = mail::cached_thread(
+        &database,
+        "a".into(),
+        "root@example.test".into(),
+        Mailbox::Inbox,
+    )
+    .await
+    .unwrap();
+    assert_eq!(thread.len(), 2);
+    assert_eq!(thread[1].0, "inbox");
+    let thread = mail::cached_thread(
+        &database,
+        "a".into(),
+        "root@example.test".into(),
+        Mailbox::Sent,
+    )
+    .await
+    .unwrap();
+    assert_eq!(thread[1].0, "sent");
+}
+
+#[tokio::test]
 async fn upgrades_version_one_without_losing_user_state() {
     let temporary = TemporaryDatabase::new();
     std::fs::create_dir_all(temporary.path().parent().unwrap()).unwrap();

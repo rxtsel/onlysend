@@ -41,12 +41,103 @@ pub struct InboundEmailDetailDto {
     pub html_source_version: u8,
     pub text: Option<String>,
     pub attachments: Vec<InboundAttachmentDto>,
+    #[serde(default)]
+    pub message_id: Option<String>,
+    #[serde(default)]
+    pub reply_to: Vec<String>,
+    #[serde(default)]
+    pub references: Option<String>,
+    #[serde(default)]
+    pub in_reply_to: Option<String>,
+    #[serde(default)]
+    pub received_for: Vec<String>,
 }
 
 impl InboundEmailDetailDto {
     fn needs_html_upgrade(&self) -> bool {
         self.html.is_some() && self.html_source_version == 0
     }
+
+    fn can_reuse(&self, for_reply: bool) -> bool {
+        if for_reply {
+            self.message_id.is_some()
+        } else {
+            !self.needs_html_upgrade()
+        }
+    }
+}
+
+fn original_recipients(
+    headers: &std::collections::HashMap<String, String>,
+    fallback: &[String],
+) -> Vec<String> {
+    headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("to"))
+        .and_then(|(_, value)| mailparse::addrparse(value).ok())
+        .map(|addresses| {
+            addresses
+                .iter()
+                .flat_map(|address| match address {
+                    mailparse::MailAddr::Single(mailbox) => vec![mailbox.addr.clone()],
+                    mailparse::MailAddr::Group(group) => group
+                        .addrs
+                        .iter()
+                        .map(|mailbox| mailbox.addr.clone())
+                        .collect(),
+                })
+                .collect()
+        })
+        .filter(|addresses: &Vec<String>| !addresses.is_empty())
+        .unwrap_or_else(|| fallback.to_vec())
+}
+
+pub(crate) fn parsed_message_ids(value: &str) -> Option<Vec<String>> {
+    let values = serde_json::from_str::<Vec<String>>(value).ok();
+    let ids: Vec<String> = if let Some(values) = values {
+        values
+            .into_iter()
+            .flat_map(|value| {
+                mailparse::msgidparse(&value)
+                    .map(|ids| ids.iter().cloned().collect::<Vec<_>>())
+                    .unwrap_or_default()
+            })
+            .collect()
+    } else {
+        mailparse::msgidparse(value).ok()?.iter().cloned().collect()
+    };
+    Some(
+        ids.into_iter()
+            .filter(|id| {
+                !id.is_empty()
+                    && !id
+                        .chars()
+                        .any(|ch| ch.is_control() || ch.is_whitespace() || matches!(ch, '<' | '>'))
+            })
+            .collect(),
+    )
+}
+
+pub(crate) fn thread_id(detail: &InboundEmailDetailDto) -> Option<String> {
+    detail
+        .references
+        .as_deref()
+        .and_then(parsed_message_ids)
+        .and_then(|ids| ids.first().cloned())
+        .or_else(|| {
+            detail
+                .in_reply_to
+                .as_deref()
+                .and_then(parsed_message_ids)
+                .and_then(|ids| ids.first().cloned())
+        })
+        .or_else(|| {
+            detail
+                .message_id
+                .as_deref()
+                .and_then(parsed_message_ids)
+                .and_then(|ids| ids.first().cloned())
+        })
 }
 
 fn map_attachment(a: &InboundAttachment) -> InboundAttachmentDto {
@@ -126,7 +217,11 @@ pub(crate) async fn get_inbound_email(
     app: AppHandle<Wry>,
     account_id: String,
     email_id: String,
+    require_reply_metadata: bool,
 ) -> Result<InboundEmailDetailDto, String> {
+    if uuid::Uuid::parse_str(&email_id).is_err() {
+        return Err("Invalid received email ID".into());
+    }
     let database = local_state::for_account(&app, &account_id).await?;
     let cached = mail::cached_detail(
         &database,
@@ -142,8 +237,18 @@ pub(crate) async fn get_inbound_email(
     .transpose()?;
     if let Some(detail) = cached
         .as_ref()
-        .filter(|detail| !detail.needs_html_upgrade())
+        .filter(|detail| detail.can_reuse(require_reply_metadata))
     {
+        if let Some(thread_id) = thread_id(detail) {
+            mail::store_thread_link(
+                &database,
+                account_id.clone(),
+                Mailbox::Inbox,
+                email_id.clone(),
+                thread_id,
+            )
+            .await?;
+        }
         return Ok(detail.clone());
     }
     // Old cache entries lost their CSS; recover the source without deleting the offline copy.
@@ -166,13 +271,26 @@ pub(crate) async fn get_inbound_email(
         let detail = InboundEmailDetailDto {
             id: email.id.to_string(),
             from: email.from.clone(),
-            to: email.to.clone(),
+            to: original_recipients(&email.headers, &email.to),
             subject: email.subject.clone(),
             created_at: email.created_at.clone(),
             html: email.html.clone(),
             html_source_version: 1,
             text: email.text.clone(),
             attachments: email.attachments.iter().map(map_attachment).collect(),
+            message_id: Some(email.message_id.clone()),
+            reply_to: email.reply_to.clone(),
+            references: email
+                .headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("references"))
+                .map(|(_, value)| value.clone()),
+            in_reply_to: email
+                .headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("in-reply-to"))
+                .map(|(_, value)| value.clone()),
+            received_for: email.received_for.clone(),
         };
         crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
         mail::store_detail(
@@ -184,6 +302,16 @@ pub(crate) async fn get_inbound_email(
             search_text,
         )
         .await?;
+        if let Some(thread_id) = thread_id(&detail) {
+            mail::store_thread_link(
+                &database,
+                account_id.clone(),
+                Mailbox::Inbox,
+                email_id.clone(),
+                thread_id,
+            )
+            .await?;
+        }
         Ok::<_, String>(detail)
     }
     .await;
@@ -191,6 +319,9 @@ pub(crate) async fn get_inbound_email(
         Ok(detail) => Ok(detail),
         Err(error) => {
             if let Some(detail) = cached {
+                if require_reply_metadata && detail.message_id.is_none() {
+                    return Err(error);
+                }
                 crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
                 eprintln!(
                     "[WARN] Could not restore original email formatting; using downloaded copy"
@@ -209,7 +340,8 @@ pub async fn open_inbound_email(
     account_id: String,
     email_id: String,
 ) -> Result<InboundEmailDetailDto, String> {
-    let detail = get_inbound_email(app.clone(), account_id.clone(), email_id.clone()).await?;
+    let detail =
+        get_inbound_email(app.clone(), account_id.clone(), email_id.clone(), false).await?;
     if crate::infrastructure::settings_store::mark_inbound_read(
         app.clone(),
         account_id.clone(),
@@ -234,7 +366,7 @@ pub async fn open_inbound_email(
 #[cfg(test)]
 mod tests {
     use super::{fetch_inbound_page, recipient_domains, InboundEmailDetailDto};
-    use crate::email_document::sanitize_email_html;
+    use crate::email_html::sanitize_email_html;
     use crate::infrastructure::pagination_test_server::mock_history;
 
     #[tokio::test]
@@ -256,6 +388,42 @@ mod tests {
         server.join().unwrap();
         assert_eq!(ids, expected);
         assert!(after.is_none());
+    }
+
+    #[test]
+    fn thread_id_uses_first_reference_then_parent_then_message_id() {
+        let mut detail: InboundEmailDetailDto = serde_json::from_value(serde_json::json!({
+            "id":"email", "from":"sender@example.test", "to":["inbox@example.test"],
+            "subject":"Re: hello", "createdAt":"2026-01-01T00:00:00Z", "html":null,
+            "text":"reply", "attachments":[], "messageId":"<reply@example.test>",
+            "inReplyTo":"<parent@example.test>", "references":"[\"<root@example.test>\",\"<parent@example.test>\"]"
+        })).unwrap();
+        assert_eq!(
+            super::thread_id(&detail).as_deref(),
+            Some("root@example.test")
+        );
+        detail.references = None;
+        assert_eq!(
+            super::thread_id(&detail).as_deref(),
+            Some("parent@example.test")
+        );
+        detail.in_reply_to = None;
+        assert_eq!(
+            super::thread_id(&detail).as_deref(),
+            Some("reply@example.test")
+        );
+    }
+
+    #[test]
+    fn original_to_header_overrides_resend_envelope_alias() {
+        let headers = std::collections::HashMap::from([(
+            "To".to_string(),
+            "inbox@example.test, Other <other@example.com>".to_string(),
+        )]);
+        assert_eq!(
+            super::original_recipients(&headers, &["resend@resend.app".into()]),
+            vec!["inbox@example.test", "other@example.com"]
+        );
     }
 
     #[test]
@@ -294,6 +462,23 @@ mod tests {
         text_only["html"] = serde_json::Value::Null;
         let detail: InboundEmailDetailDto = serde_json::from_value(text_only).unwrap();
         assert!(!detail.needs_html_upgrade());
+    }
+
+    #[test]
+    fn legacy_downloads_remain_readable_but_reply_metadata_requires_a_refresh() {
+        let mut detail: InboundEmailDetailDto = serde_json::from_value(serde_json::json!({
+            "id":"email", "from":"sender@example.com", "to":["to@example.com"],
+            "subject":"Invoice", "createdAt":"2026-01-01T00:00:00Z", "html":null,
+            "text":"Offline body", "attachments":[]
+        }))
+        .unwrap();
+        assert!(detail.can_reuse(false));
+        assert!(!detail.can_reuse(true));
+        detail.message_id = Some("<parent@example.com>".into());
+        assert!(detail.can_reuse(true));
+        detail.html = Some("<p>Old formatting</p>".into());
+        assert!(!detail.can_reuse(false));
+        assert!(detail.can_reuse(true));
     }
 
     #[test]

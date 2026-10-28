@@ -29,8 +29,8 @@
 </script>
 
 {#if files.length}
-  <section class="mt-3 max-h-48 shrink-0 overflow-y-auto" aria-label="Selected attachments">
-    <ul class="grid grid-cols-1 gap-2 lg:grid-cols-2">
+  <section class="@container/attachments mt-3 max-h-48 shrink-0 overflow-y-auto" aria-label="Selected attachments">
+    <ul class="grid grid-cols-1 gap-2 @xl/attachments:grid-cols-2">
       {#each files as file (file)}
         <li class="min-w-0">
           <AttachmentCard name={file.name} contentType={file.type} size={file.size} src={images.get(file)}

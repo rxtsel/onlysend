@@ -14,7 +14,7 @@
   const issue = $derived(data.statusError ?? data.refreshError ?? status?.sync?.lastError);
 </script>
 
-<footer class="fixed inset-x-0 bottom-0 flex h-8 items-center gap-2 border-t bg-background px-3 text-xs text-muted-foreground" aria-label="Mail status">
+<footer class="fixed inset-x-0 bottom-0 flex h-8 mx-1 items-center gap-2 border-t bg-background px-3 text-xs text-muted-foreground" aria-label="Mail status">
   <Tooltip.Provider delayDuration={150}>
     <Tooltip.Root>
       <Tooltip.Trigger

@@ -2,7 +2,7 @@ mod attachments;
 mod config;
 mod domains;
 mod email;
-mod email_document;
+mod email_html;
 mod external;
 mod inbound;
 mod mailbox;
@@ -126,11 +126,12 @@ pub fn run() {
             oauth::disconnect_resend,
             permissions::probe_full_access,
             email::send_email,
+            email::prepare_reply,
             attachments::list_email_attachments,
             attachments::attachment_action,
             attachments::cancel_attachment_download,
             external::open_external_url,
-            email_document::prepare_email_document,
+            email_html::prepare_email_html,
             infrastructure::settings_store::get_domain_preferences,
             infrastructure::settings_store::save_domain_preferences,
             domains::list_domains,
@@ -145,6 +146,7 @@ pub fn run() {
             notifications::set_inbox_poll_minutes,
             inbound::open_inbound_email,
             mailbox::load_mail_list,
+            mailbox::get_mail_thread,
             config::list_from_emails,
             config::create_from_email,
             config::update_from_email,

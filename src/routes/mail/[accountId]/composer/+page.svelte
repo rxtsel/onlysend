@@ -1,9 +1,11 @@
 <script lang="ts">
   import { useAccountId } from "$lib/features/auth/account-context";
+  import { page } from "$app/state";
+  import { COMPOSER_STATUS, type ComposerStatus } from "$lib/features/sending/composer-context";
+  import { prepareReply, type ReplyContext } from "$lib/shared/reply";
   import { mailUrl } from "$lib/features/auth/mail-routes";
   import { registerDraftGuard, allowAccountNavigation } from "$lib/features/auth/draft-navigation";
   const accountId = useAccountId();
-  import * as Popover from "$lib/components/ui/popover";
   import { Input } from "@/lib/components/ui/input";
   import * as Select from "$lib/components/ui/select";
   import * as Field from "@/lib/components/ui/field";
@@ -11,9 +13,7 @@
   import type { Tag } from "@/lib/components/ui/input-tag/input-tag.svelte";
   import * as ToggleGroup from "$lib/components/ui/toggle-group";
   import { Editor } from "@/lib/components/editor";
-  import { ChevronsRight, X } from "@lucide/svelte";
-  import { toggleVariants } from "@/lib/components/ui/toggle";
-  import { buttonVariants } from "@/lib/components/ui/button";
+  import { LoaderCircle } from "@lucide/svelte";
   import Button from "@/lib/components/ui/button/button.svelte";
   import { emailComposerSchema } from "@/lib/schemas/email-composer.schema";
   import { toast } from "svelte-sonner";
@@ -23,9 +23,17 @@
   import { encodeAttachments } from "$lib/shared/attachments";
   import { errorMessage } from "$lib/shared/utils/errors";
   import ComposerAttachments from "$lib/components/composer-attachments.svelte";
-  import { onMount, onDestroy } from "svelte";
+  import { getContext, onMount, onDestroy, tick, untrack } from "svelte";
   import { listFromEmails, formatFromEmail } from "@/lib/shared/from-emails";
 
+  // The layout keys this page by reply ID, so each message owns a separate draft.
+  const replyEmailId = untrack(() => page.url.searchParams.get("reply"));
+  const isReply = replyEmailId !== null;
+  const composerStatus = getContext<ComposerStatus>(COMPOSER_STATUS);
+  let reply = $state<ReplyContext | null>(null);
+  let initializing = $state(true);
+  let initializationError = $state("");
+  let initialTo = "";
   let toEmails = $state<Tag[]>([]);
   let fromEmails = $state<FromEmail[]>([]);
   let from = $state<string>("");
@@ -38,51 +46,45 @@
 
   let isCcEnabled = $state<boolean>(false);
   let isBccEnabled = $state<boolean>(false);
-  let isReplyToEnabled = $state<boolean>(false);
   let ccEmails = $state<Tag[]>([]);
   let bccEmails = $state<Tag[]>([]);
-
-  let messageId = $state<string | null>(null);
-  let morePopoverOpen = $state(false);
-  let messageIdPopoverOpen = $state(false);
 
   let errors: Record<string, string> = $state({});
   let disposed = false;
   let sent = false;
   const unregisterGuard = registerDraftGuard(accountId, () =>
-    sent || !(subject || content || toEmails.length || ccEmails.length ||
-      bccEmails.length || files.length || isReplyToEnabled || messageId || from !== initialFrom) ||
+    sent || !((!isReply && subject) || content || toEmails.map((tag) => tag.text).join("\n") !== initialTo || ccEmails.length ||
+      bccEmails.length || files.length || from !== initialFrom) ||
     window.confirm("Leave this page and discard the current draft?"),
   );
-  onDestroy(() => { disposed = true; unregisterGuard(); });
+  $effect(() => {
+    composerStatus.ready = !initializing && !initializationError && !sent;
+    composerStatus.sending = isSending;
+  });
+  onDestroy(() => {
+    disposed = true;
+    unregisterGuard();
+    composerStatus.ready = false;
+    composerStatus.sending = false;
+  });
   beforeNavigate(({ cancel }) => {
     if (!allowAccountNavigation(accountId)) cancel();
   });
 
   async function handleSubmit(event: Event) {
     event.preventDefault();
-    if (isSending) return;
+    if (isSending || initializing || initializationError || sent || (isReply && !reply)) return;
 
     errors = {};
     const form = event.currentTarget as HTMLFormElement;
-    const formData = new FormData(form);
-
-    // Build payload from state, not direct FormData arrays
     const payload = {
       from, // already bound via Select
       to: toEmails.map((t) => t.text), // Tag[] -> string[]
-      subject: messageId
-        ? subject.startsWith("Re: ")
-          ? subject
-          : "Re: " + subject
-        : subject,
+      subject: isReply ? reply!.subject : subject,
       bcc: isBccEnabled ? bccEmails.map((t) => t.text) : [],
       cc: isCcEnabled ? ccEmails.map((t) => t.text) : [],
-      replyTo: isReplyToEnabled
-        ? (formData.get("replyTo") as string | null)
-        : null,
       content,
-      messageId,
+      replyEmailId,
     };
 
     const parsed = emailComposerSchema.safeParse(payload);
@@ -112,10 +114,8 @@
       files = [];
       isCcEnabled = false;
       isBccEnabled = false;
-      isReplyToEnabled = false;
       ccEmails = [];
       bccEmails = [];
-      messageId = null;
       form.reset();
 
       toast.success("Email send successfully!");
@@ -133,35 +133,74 @@
     }
   }
 
-  // Get From email options
-  onMount(async () => {
+  async function initialize() {
+    initializing = true;
+    initializationError = "";
     try {
-      const list = await listFromEmails(accountId);
+      const [list, context] = await Promise.all([
+        listFromEmails(accountId),
+        isReply ? prepareReply(accountId, replyEmailId!) : Promise.resolve(null),
+      ]);
       if (disposed) return;
       fromEmails = list;
-
-      const defaultFrom = list.find((f) => f.isDefault) ?? list[0];
-
-      if (defaultFrom) {
-        from = formatFromEmail(defaultFrom);
-        initialFrom = from;
+      reply = context;
+      if (context) {
+        subject = context.subject;
+        toEmails = context.to.map((text) => ({ id: crypto.randomUUID(), text }));
+        initialTo = context.to.join("\n");
       }
-    } catch (e) {
-      console.error("[fromEmails] load error", e);
+      const defaultFrom = list.find((sender) => context?.fromCandidates.some((recipient) => recipient.toLowerCase() === sender.address.toLowerCase()))
+        ?? list.find((sender) => sender.isDefault) ?? list[0];
+      if (defaultFrom) { from = formatFromEmail(defaultFrom); initialFrom = from; }
+    } catch (cause) {
+      if (!disposed) initializationError = errorMessage(cause, "Could not prepare this message");
+    } finally {
+      if (!disposed) initializing = false;
     }
-  });
+    await tick();
+    if (!disposed && isReply && !initializationError) composerEditor?.focus();
+  }
+  onMount(() => { void initialize(); });
 </script>
 
+{#if initializing}
+  <div class="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground" role="status"><LoaderCircle class="size-4 animate-spin motion-reduce:animate-none" />{isReply ? "Preparing reply…" : "Loading composer…"}</div>
+{:else if initializationError}
+  <div class="flex h-full flex-col items-center justify-center gap-4 text-center">
+    <p class="text-sm text-muted-foreground" role="alert">{initializationError}</p>
+    <Button type="button" variant="outline" onclick={initialize}>Try again</Button>
+  </div>
+{:else}
 <form
-  class="h-full w-full overflow-hidden px-1"
+  class="h-full w-full overflow-hidden"
   onsubmit={handleSubmit}
   id="compose-email-form"
   aria-busy={isSending}
 >
   <fieldset disabled={isSending} class="contents">
-  <Field.Group class="h-full">
+  <Field.Group class="h-full gap-0 overflow-hidden rounded-xl border bg-background">
+    <Field.Field class="shrink-0 border-b px-4 py-3">
+      <Field.Label for="subject">Subject</Field.Label>
+      <Input
+        id="subject"
+        type="text"
+        name="subject"
+        placeholder="Subject"
+        readonly={isReply}
+        class={isReply ? "bg-muted/40" : undefined}
+        bind:value={subject}
+        aria-invalid={!!errors.subject}
+        onkeydown={(event) => {
+          if (event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && composerEditor?.focus()) {
+            event.preventDefault();
+          }
+        }}
+      />
+      {#if errors.subject}<Field.Error>{errors.subject}</Field.Error>{/if}
+    </Field.Field>
+    <div class="shrink-0 space-y-3 border-b px-4 py-3">
     <!-- From and Group buttons -->
-    <div class="flex gap-1 items-end">
+    <div class="flex items-end gap-3">
       <Field.Field class="flex-1">
         <Field.Label for="from">From</Field.Label>
         <Select.Root type="single" name="from" bind:value={from}>
@@ -208,36 +247,12 @@
           >
             Bcc
           </ToggleGroup.Item>
-
-          <Popover.Root bind:open={morePopoverOpen}>
-            <Popover.Trigger
-              class={toggleVariants({
-                className: "border-l-0 rounded-l-none",
-                variant: "outline",
-                size: "default",
-              })}><ChevronsRight class="size-4" /></Popover.Trigger
-            >
-            <Popover.Content class="w-fit space-y-1">
-              <ToggleGroup.Item
-                value="replyTo"
-                class="px-5 rounded-md w-full"
-                onclick={() => {
-                  isReplyToEnabled = !isReplyToEnabled;
-                  morePopoverOpen = false;
-                  messageIdPopoverOpen = false;
-                }}
-              >
-                Reply To
-              </ToggleGroup.Item>
-              {@render headers()}
-            </Popover.Content>
-          </Popover.Root>
         </ToggleGroup.Root>
       </Field.Field>
     </div>
 
     <!-- To and cc -->
-    <div class="flex gap-1">
+    <div class="flex gap-3">
       <Field.Field class="flex-1">
         <Field.Label for="to">To</Field.Label>
         <InputTag
@@ -266,57 +281,24 @@
       {/if}
     </div>
 
-    <!-- Bcc and Reply-To -->
-    {#if isBccEnabled || isReplyToEnabled}
-      <div class="flex gap-1">
-        {#if isBccEnabled}
-          <Field.Field class="flex-1">
-            <Field.Label for="bcc">Bcc</Field.Label>
-            <InputTag
-              id="bcc"
-              type="email"
-              bind:value={bccEmails}
-              name="bcc"
-              placeholder="Add Bcc email"
-            />
-          </Field.Field>
-        {/if}
-        {#if isReplyToEnabled}
-          <Field.Field class="flex-1">
-            <Field.Label for="replyTo">Reply To</Field.Label>
-            <Input
-              id="replyTo"
-              type="email"
-              name="replyTo"
-              placeholder="Reply-To email"
-            />
-          </Field.Field>
-        {/if}
-      </div>
+    <!-- Bcc -->
+    {#if isBccEnabled}
+      <Field.Field>
+        <Field.Label for="bcc">Bcc</Field.Label>
+        <InputTag
+          id="bcc"
+          type="email"
+          bind:value={bccEmails}
+          name="bcc"
+          placeholder="Add Bcc email"
+        />
+      </Field.Field>
     {/if}
 
-    <Field.Field>
-      <Field.Label for="subject">Subject</Field.Label>
-      <Input
-        id="subject"
-        type="text"
-        name="subject"
-        placeholder="Subject"
-        bind:value={subject}
-        aria-invalid={!!errors.subject}
-        onkeydown={(event) => {
-          if (event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && composerEditor?.focus()) {
-            event.preventDefault();
-          }
-        }}
-      />
-      {#if errors.subject}
-        <Field.Error>{errors.subject}</Field.Error>
-      {/if}
-    </Field.Field>
-    <Field.Field class="h-full">
-      <Field.Label for="content">Content</Field.Label>
-      <div class="h-full flex flex-col">
+    </div>
+    <Field.Field class="min-h-0 flex-1 p-4">
+      <Field.Label for="content" class="sr-only">Content</Field.Label>
+      <div class="flex h-full min-h-0 flex-col gap-3">
         <Editor
           bind:this={composerEditor}
           bind:content
@@ -330,46 +312,4 @@
   </Field.Group>
   </fieldset>
 </form>
-
-{#snippet headers()}
-  <Popover.Root bind:open={messageIdPopoverOpen}>
-    <Popover.Trigger
-      class={buttonVariants({
-        className: "w-full block",
-        variant: "ghost",
-      })}
-    >
-      Add message ID to headers
-    </Popover.Trigger>
-    <Popover.Content>
-      <div class="relative">
-        <Input
-          placeholder="Message-ID"
-          class="w-full"
-          name="messageId"
-          bind:value={messageId}
-          onkeydown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              morePopoverOpen = false;
-              messageIdPopoverOpen = false;
-              subject = subject.startsWith("Re: ") ? subject : "Re: " + subject;
-            }
-          }}
-        />
-        <Button
-          class="absolute right-0 inset-y-0"
-          variant="ghost"
-          onclick={() => {
-            messageId = null;
-            morePopoverOpen = false;
-            messageIdPopoverOpen = false;
-            subject = subject.replace(/^Re:\s*/, "");
-          }}
-        >
-          <X class="size-4" />
-        </Button>
-      </div>
-    </Popover.Content>
-  </Popover.Root>
-{/snippet}
+{/if}
