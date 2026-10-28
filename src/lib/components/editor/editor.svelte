@@ -30,6 +30,13 @@
     "aria-invalid": ariaInvalid,
   } = $props();
 
+  export function focus(): boolean {
+    const writer = element?.querySelector<HTMLElement>('[contenteditable="true"]');
+    if (!writer) return false;
+    writer.focus();
+    return document.activeElement === writer;
+  }
+
   // States reactive for buttons
   let isBold = $state(false);
   let isItalic = $state(false);

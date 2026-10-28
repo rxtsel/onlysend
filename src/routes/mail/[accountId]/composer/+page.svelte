@@ -28,6 +28,7 @@
   let from = $state<string>("");
   let initialFrom = "";
   let subject = $state<string>("");
+  let composerEditor = $state<{ focus: () => boolean } | null>(null);
   let content = $state<string>("");
   let files = $state<File[]>([]);
   let attachments = $state<AttachmentPayload[]>([]);
@@ -293,6 +294,11 @@
         placeholder="Subject"
         bind:value={subject}
         aria-invalid={!!errors.subject}
+        onkeydown={(event) => {
+          if (event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && composerEditor?.focus()) {
+            event.preventDefault();
+          }
+        }}
       />
       {#if errors.subject}
         <Field.Error>{errors.subject}</Field.Error>
@@ -302,6 +308,7 @@
       <Field.Label for="content">Content</Field.Label>
       <div class="h-full flex flex-col">
         <Editor
+          bind:this={composerEditor}
           bind:content
           bind:files
           aria-invalid={!!errors.content}
