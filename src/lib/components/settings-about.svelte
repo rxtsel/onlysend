@@ -1,5 +1,7 @@
 <script lang="ts">
   import { LoaderCircle } from "@lucide/svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { toast } from "svelte-sonner";
   import { Button } from "$lib/components/ui/button";
   import * as Field from "$lib/components/ui/field";
   import * as Item from "$lib/components/ui/item";
@@ -17,7 +19,16 @@
         <h3 class="text-base font-medium">OnlySend</h3>
         <span class="rounded bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground">Version {appUpdate.state.currentVersion}</span>
       </div>
-      <Field.Description>A clean and minimal email composer powered by Resend.</Field.Description>
+      <Field.Description>
+        A clean and minimal email composer by <a
+          href="https://rxtsel.dev/?utm_source=onlysend&utm_medium=app&utm_campaign=about&ref=onlysend"
+          onclick={async (event) => {
+            event.preventDefault();
+            try { await openUrl(event.currentTarget.href); }
+            catch { toast.error("Could not open rxtsel.dev"); }
+          }}
+        >Rxtsel</a>.
+      </Field.Description>
     </div>
     <Item.Root variant="outline" size="sm">
       <Item.Content class="min-w-48">

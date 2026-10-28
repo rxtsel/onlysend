@@ -108,7 +108,7 @@
       editorProps: {
         attributes: {
           class:
-            "prose prose-sm max-h-full w-full h-full min-h-full sm:prose-base p-5 focus:outline-none",
+            "prose prose-neutral dark:prose-invert prose-sm max-h-full w-full h-full min-h-full sm:prose-base p-5 focus:outline-none",
         },
       },
       onTransaction: () => {
@@ -313,9 +313,8 @@
   :global(.ProseMirror p.is-editor-empty:first-child::before) {
     content: attr(data-placeholder);
     float: left;
-    color: hsl(var(--muted-foreground));
+    color: var(--muted-foreground);
     pointer-events: none;
     height: 0;
-    opacity: 0.5;
   }
 </style>

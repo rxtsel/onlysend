@@ -10,6 +10,7 @@
     "core:event:default",
     "opener:default",
     "store:default",
-    "deep-link:default"
+    "deep-link:default",
+    "notification:allow-is-permission-granted"
   ]
 }

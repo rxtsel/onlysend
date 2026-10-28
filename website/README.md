@@ -5,19 +5,19 @@ Independent from the Svelte/Tauri desktop app.
 
 ## Develop
 
-Use Node.js 24 and pnpm (version pinned in package.json).
+Use Node.js 24 and Bun (version pinned in package.json).
 
 ```sh
 cd website
-pnpm install
-pnpm dev
+bun install --frozen-lockfile
+bun run dev
 ```
 
 Open http://localhost:4321/onlysend/.
 
-- `pnpm test`: build both languages and check generated links/assets.
-- `pnpm preview`: serve the production build locally.
-- `pnpm build`: generate static files in `dist/`.
+- `bun run test`: build both languages and check generated links/assets.
+- `bun run preview`: serve the production build locally.
+- `bun run build`: generate static files in `dist/`.
 
 ## Content
 
@@ -25,12 +25,12 @@ Spanish (default): `/onlysend/`. English: `/onlysend/en/`.
 Edit both dictionaries in `src/content.ts`. Both routes share
 `src/components/Landing.astro`; Astro's i18n helper generates language links.
 
-The preview reuses the repository's `assets/preview.gif`. It only loads when
-the visitor presses play, and stop restores the still image. To update the still:
-
-```sh
-magick '../assets/preview.gif[0]' public/preview.webp
-```
+The full demo and its poster are hosted on Cloudflare at `https://static.xavel.app/`:
+`onlysend-demo.mp4`, `onlysend-demo.webm`, and `onlysend-preview.webp`.
+Only the poster loads initially. Video sources are activated on the first play
+click, then native controls allow pausing and seeking (`preload="none"`).
+Update the URLs in `src/components/Landing.astro` when replacing these files.
+The README's GIF stays separate in the repository's `assets/preview.gif`.
 
 Uses system fonts. No custom font files, external font requests, or backend.
 

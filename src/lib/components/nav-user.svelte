@@ -4,7 +4,7 @@
   import {
     CheckIcon,
     PlusIcon,
-    SparklesIcon,
+    HeartHandshakeIcon,
     SettingsIcon,
     UnplugIcon,
   } from "@lucide/svelte";
@@ -163,8 +163,8 @@
             Settings
           </DropdownMenu.Item>
           <DropdownMenu.Item onclick={() => openUrl("https://donate.stripe.com/00wdR8dOd0YF7Ipce0a7C04")}>
-            <SparklesIcon />
-            Support us
+            <HeartHandshakeIcon />
+            Support OnlySend
           </DropdownMenu.Item>
           {#if method}
             <DropdownMenu.Item variant="destructive" onclick={() => (showDisconnectConfirm = true)}>
