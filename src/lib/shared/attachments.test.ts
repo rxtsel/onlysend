@@ -2,7 +2,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
   attachmentAction, cancelAttachmentDownload, listEmailAttachments, canPreviewImage,
-  primaryAttachmentAction, formatAttachmentSize, contentId, encodeAttachments,
+  primaryAttachmentAction, attachmentStatus, formatAttachmentSize, contentId, encodeAttachments,
   validateAttachmentFiles, MAX_ATTACHMENT_BYTES,
 } from "./attachments";
 
@@ -73,6 +73,15 @@ test("CID normalization supports encoded and bracketed IDs without changing case
   expect(contentId("CID:%3CLogo%40example%3E")).toBe("Logo@example");
   expect(contentId("<Logo@example>")).toBe("Logo@example");
   expect(contentId("cid:bad%encoding")).toBe("bad%encoding");
+});
+
+test("card status describes the requested action without implying another download on a cache hit", () => {
+  expect(attachmentStatus("open", { downloaded: 0, total: 100 })).toBe("Opening…");
+  expect(attachmentStatus("preview", { downloaded: 0, total: null })).toBe("Loading preview…");
+  expect(attachmentStatus("save", { downloaded: 0, total: 100 })).toBe("Saving…");
+  expect(attachmentStatus("open", { downloaded: 50, total: 100 })).toBe("Opening · 50%");
+  expect(attachmentStatus("open", { downloaded: 100, total: 100 })).toBe("Opening…");
+  expect(attachmentStatus("save", { downloaded: 0, total: 0 })).toBe("Saving…");
 });
 
 test("file sizes handle empty files and unavailable metadata", () => {
