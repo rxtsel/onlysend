@@ -4,6 +4,7 @@ import * as domains from "./domains";
 import * as auth from "./auth";
 import * as senders from "../from-emails";
 import * as inbox from "../inbound";
+import { prepareReply } from "../reply";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 beforeEach(() => vi.mocked(invoke).mockReset().mockResolvedValue(undefined));
@@ -36,7 +37,13 @@ const cases: Array<[string, () => Promise<unknown>]> = [
   ["update_from_email", () => senders.updateFromEmail(accountId, { id: "sender", label: "Updated" })],
   ["delete_from_email", () => senders.deleteFromEmail(accountId, "sender")],
   ["open_inbound_email", () => inbox.getInboundEmail(accountId, "message")],
+  ["prepare_reply", () => prepareReply(accountId, "message")],
 ];
+
+test("reply preparation passes the internal email ID, not caller-supplied headers", async () => {
+  await prepareReply(accountId, "message");
+  expect(invoke).toHaveBeenCalledExactlyOnceWith("prepare_reply", { accountId, emailId: "message" });
+});
 
 test.each(cases)("%s includes explicit account ownership in IPC", async (command, call) => {
   await call();
