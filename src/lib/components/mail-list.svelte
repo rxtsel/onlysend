@@ -172,6 +172,12 @@
         void refreshStatus();
       }
     });
+    subscribe<{ accountId: string }>("mail-deletion-updated", (event) => {
+      if (event.accountId !== accountId || !active) return;
+      // A normal cached refresh preserves history, including removed rows.
+      list.clearItems();
+      void list.refreshCached().catch(report);
+    });
     subscribe<{ accountId: string; emailId: string }>("inbox-read", (event) => {
       if (event.accountId !== accountId || mailbox !== "inbox") return;
       const item = list.items.find((mail) => mail.id === event.emailId);

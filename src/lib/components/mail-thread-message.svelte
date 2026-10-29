@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { ChevronDown, LoaderCircle, Reply } from "@lucide/svelte";
+  import { ChevronDown, LoaderCircle, Reply, Trash2 } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
+  import * as Tooltip from "$lib/components/ui/tooltip";
+  import { deleteLocalMail } from "$lib/shared/services/delete-mail";
   import { mailUrl } from "$lib/features/auth/mail-routes";
   import * as Collapsible from "$lib/components/ui/collapsible";
   import { useAccountId } from "$lib/features/auth/account-context";
@@ -24,13 +26,22 @@
     html: string | null; text?: string | null; attachments?: EmailAttachment[];
     cc?: string[]; bcc?: string[]; replyTo?: string | string[] | null;
   };
-  let { message, selectedId, threaded, initialDetail = null }: {
+  let { message, selectedId, threaded, initialDetail = null, onDeleted }: {
     message: MailThreadMessage; selectedId: string; threaded: boolean; initialDetail?: Detail | null;
+    onDeleted: () => void;
   } = $props();
   const accountId = useAccountId();
   let open = $state(message.id === selectedId);
   let detail = $state<Detail | null>(initialDetail);
   let loading = $state(false);
+  let deleting = $state(false);
+  async function deleteMessage() {
+    if (deleting) return;
+    deleting = true;
+    try {
+      if (await deleteLocalMail(accountId, message.mailbox, message.id)) onDeleted();
+    } finally { deleting = false; }
+  }
   let loadError = $state(false);
   let htmlError = $state(false);
   let emailHtml = $state<string | null>(null);
@@ -131,18 +142,32 @@
 
 {#if threaded}
   <Collapsible.Root bind:open class="border-b last:border-b-0">
-    <Collapsible.Trigger class="group flex w-full items-center gap-3 px-5 py-4 text-left outline-none transition-colors hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-      <MailAvatar address={message.from} {name} />
-      <span class="min-w-0 flex-1">
-        <span class="flex items-baseline justify-between gap-3">
-          <span class="truncate text-sm font-semibold">{name}</span>
-          <time class="shrink-0 whitespace-nowrap text-xs text-muted-foreground" title={formatFullEmailDate(message.createdAt)}>{formatEmailDate(message.createdAt)}</time>
+    <div class="relative">
+      <Collapsible.Trigger class="group flex w-full items-center gap-3 px-5 py-4 pr-12 text-left outline-none transition-colors hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+        <MailAvatar address={message.from} {name} />
+        <span class="min-w-0 flex-1">
+          <span class="flex items-baseline justify-between gap-3">
+            <span class="truncate text-sm font-semibold">{name}</span>
+            <time class="shrink-0 whitespace-nowrap text-xs text-muted-foreground" title={formatFullEmailDate(message.createdAt)}>{formatEmailDate(message.createdAt)}</time>
+          </span>
+          <span class="mt-1 block truncate text-xs text-muted-foreground">To {message.to.join(", ") || "undisclosed recipients"}</span>
+          {#if message.preview}<p class="mt-1 line-clamp-1 text-xs leading-5 text-muted-foreground">{message.preview}</p>{/if}
         </span>
-        <span class="mt-1 block truncate text-xs text-muted-foreground">To {message.to.join(", ") || "undisclosed recipients"}</span>
-        {#if message.preview}<p class="mt-1 line-clamp-1 text-xs leading-5 text-muted-foreground">{message.preview}</p>{/if}
-      </span>
-      <ChevronDown class={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} aria-hidden="true" />
-    </Collapsible.Trigger>
+        <ChevronDown class={cn("absolute right-5 bottom-4 size-4 text-muted-foreground transition-transform", open && "rotate-180")} aria-hidden="true" />
+      </Collapsible.Trigger>
+      <Tooltip.Provider delayDuration={150}>
+        <Tooltip.Root>
+          <Tooltip.Trigger>
+            {#snippet child({ props })}
+              <Button {...props} variant="ghost" size="icon-xs" class="absolute right-4 top-4" disabled={deleting} onclick={(event) => { event.stopPropagation(); void deleteMessage(); }} aria-label="Delete from this device">
+                <Trash2 class="size-4" aria-hidden="true" />
+              </Button>
+            {/snippet}
+          </Tooltip.Trigger>
+          <Tooltip.Content side="bottom">Delete from this device</Tooltip.Content>
+        </Tooltip.Root>
+      </Tooltip.Provider>
+    </div>
     <Collapsible.Content>{@render messageBody()}</Collapsible.Content>
   </Collapsible.Root>
 {:else}

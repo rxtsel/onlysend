@@ -1,5 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy, getContext } from "svelte";
+  import { goto } from "$app/navigation";
+  import { listen } from "@tauri-apps/api/event";
+  import { mailUrl } from "$lib/features/auth/mail-routes";
+  import { toast } from "svelte-sonner";
   import { LoaderCircle } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
@@ -61,7 +65,20 @@
     }
     finally { if (!disposed) loading = false; }
   }
-  onMount(() => { void load(); });
+  onMount(() => {
+    void load();
+    let cleanup: (() => void) | undefined;
+    void listen<{ accountId: string; deleted: boolean }>("mail-deletion-updated", ({ payload }) => {
+      if (disposed || payload.accountId !== accountId || payload.deleted || !emailId) return;
+      void getMailThread(accountId, mailbox, emailId).then((messages) => {
+        if (!disposed && messages.length) {
+          thread = messages;
+          setMailThreadStatus?.(messages.length > 1);
+        }
+      }).catch(() => toast.error("Could not refresh the conversation"));
+    }).then((unlisten) => { if (disposed) unlisten(); else cleanup = unlisten; }).catch(console.error);
+    return () => cleanup?.();
+  });
   onDestroy(() => { disposed = true; });
 </script>
 
@@ -122,7 +139,14 @@
       <ol aria-label="Conversation messages" class="divide-y">
         {#each thread as message (message.mailbox + message.id)}
           <li>
-            <MailThreadMessage {message} selectedId={thread.at(-1)?.id ?? emailId} threaded={thread.length > 1} initialDetail={message.id === emailId && message.mailbox === mailbox ? email : null} />
+            <MailThreadMessage {message} onDeleted={() => {
+              if (disposed) return;
+              thread = thread.filter((item) => item.id !== message.id || item.mailbox !== message.mailbox);
+              setMailThreadStatus?.(thread.length > 1);
+              if (!thread.length || (message.id === emailId && message.mailbox === mailbox)) {
+                void goto(mailUrl(accountId, mailbox)).catch(() => toast.error("Could not return to the mail list"));
+              }
+            }} selectedId={thread.at(-1)?.id ?? emailId} threaded={thread.length > 1} initialDetail={message.id === emailId && message.mailbox === mailbox ? email : null} />
           </li>
         {/each}
       </ol>

@@ -1,8 +1,12 @@
 <script lang="ts">
   import { page } from "$app/state";
+  import { goto } from "$app/navigation";
+  import { toast } from "svelte-sonner";
+  import { deleteLocalMail } from "$lib/shared/services/delete-mail";
+  import * as Tooltip from "$lib/components/ui/tooltip";
   import { setContext, untrack } from "svelte";
   import { COMPOSER_STATUS, type ComposerStatus } from "$lib/features/sending/composer-context";
-  import { ArrowLeft, Reply, Send, LoaderCircle } from "@lucide/svelte";
+  import { ArrowLeft, Reply, Send, LoaderCircle, Trash2 } from "@lucide/svelte";
   import AppSidebar from "$lib/components/app-sidebar.svelte";
   import MailList from "$lib/components/mail-list.svelte";
   import MailStatusFooter from "$lib/components/mail-status-footer.svelte";
@@ -26,6 +30,21 @@
   const composerKey = $derived(replyId === null ? "composer" : `reply:${replyId}`);
   const composerStatus = $state<ComposerStatus>({ ready: false, sending: false });
   let detailSubject = $state("");
+  let deleting = $state(false);
+  async function deleteMessage() {
+    const owner = accountId;
+    const box = mailbox;
+    const id = page.params.id;
+    if (!id || deleting) return;
+    deleting = true;
+    try {
+      if (await deleteLocalMail(owner, box, id) && owner === accountId && box === mailbox && id === page.params.id) {
+        await goto(mailUrl(owner, box));
+      }
+    } catch {
+      toast.error("Could not return to the mail list");
+    } finally { deleting = false; }
+  }
   let selectedListMail = $state<{ accountId: string; mailbox: Mailbox; mail: MailListItem } | null>(null);
   let detailIsThread = $state<boolean | null>(null);
   setContext(COMPOSER_STATUS, composerStatus);
@@ -117,8 +136,24 @@
                 {isDetail ? detailSubject : "Preview"}
               {/if}
             </h1>
-            {#if isDetail && mailbox === "inbox" && detailIsThread === false}
-              <Button href={`${mailUrl(accountId, "composer")}?reply=${encodeURIComponent(page.params.id!)}`} variant="outline" size="sm" class="w-fit shrink-0 whitespace-nowrap" aria-label="Reply to this message"><Reply class="size-4" />Reply</Button>
+            {#if isDetail && detailIsThread === false}
+              <div class="flex shrink-0 items-center gap-1 self-start">
+                {#if mailbox === "inbox"}
+                  <Button href={`${mailUrl(accountId, "composer")}?reply=${encodeURIComponent(page.params.id!)}`} variant="outline" size="sm" aria-label="Reply to this message"><Reply class="size-4" />Reply</Button>
+                {/if}
+                <Tooltip.Provider delayDuration={150}>
+                  <Tooltip.Root>
+                    <Tooltip.Trigger>
+                      {#snippet child({ props })}
+                        <Button {...props} variant="ghost" size="icon-sm" disabled={deleting} onclick={deleteMessage} aria-label="Delete from this device">
+                          <Trash2 aria-hidden="true" />
+                        </Button>
+                      {/snippet}
+                    </Tooltip.Trigger>
+                    <Tooltip.Content side="bottom">Delete from this device</Tooltip.Content>
+                  </Tooltip.Root>
+                </Tooltip.Provider>
+              </div>
             {/if}
           {/if}
         </header>

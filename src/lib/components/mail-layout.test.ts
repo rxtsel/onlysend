@@ -3,12 +3,15 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
 import Layout from "./__tests__/mail-layout-harness.svelte";
 import { prepareReply, type ReplyContext } from "$lib/shared/reply";
+import { deleteLocalMail } from "$lib/shared/services/delete-mail";
+import { goto } from "$app/navigation";
 
 const { pageState } = vi.hoisted(() => ({ pageState: {
   url: new URL("https://app.test/mail/account-a/inbox/message"), params: { id: "message" as string | undefined },
 } }));
 vi.mock("$app/state", () => ({ page: pageState }));
-vi.mock("$app/navigation", () => ({ goto: vi.fn(), beforeNavigate: vi.fn() }));
+vi.mock("$app/navigation", () => ({ goto: vi.fn().mockResolvedValue(undefined), beforeNavigate: vi.fn() }));
+vi.mock("$lib/shared/services/delete-mail", () => ({ deleteLocalMail: vi.fn().mockResolvedValue(true) }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("$lib/features/auth/account-switch.svelte", () => ({ accountSwitch: { busy: false } }));
 vi.mock("$lib/components/app-sidebar.svelte", async () => ({ default: (await import("./__tests__/layout-frame-probe.svelte")).default }));
@@ -24,7 +27,7 @@ vi.mock("svelte-sonner", () => ({ toast: { loading: vi.fn(), dismiss: vi.fn(), s
 const emailId = "b3e2b2b6-3f0e-4c8e-9ad3-2f43a1e2c7f1";
 let target: HTMLElement;
 let instance: ReturnType<typeof mount>;
-beforeEach(() => { target = document.createElement("div"); document.body.append(target); });
+beforeEach(() => { vi.clearAllMocks(); target = document.createElement("div"); document.body.append(target); });
 afterEach(async () => { await unmount(instance); document.body.replaceChildren(); });
 
 test("keeps the subject full-width while thread status is unknown", () => {
@@ -39,6 +42,36 @@ test("keeps the subject full-width while thread status is unknown", () => {
   expect(subject.classList.contains("flex-1")).toBe(true);
   expect(header.querySelector('[aria-label="Reply to this message"]')).toBeNull();
   expect(header.classList.contains("items-start")).toBe(true);
+});
+
+test("single-message toolbar places icon-only delete after reply and persists before leaving", async () => {
+  pageState.url = new URL(`https://app.test/mail/account-a/inbox/${emailId}`);
+  pageState.params.id = emailId;
+  instance = mount(Layout, { target, props: { threaded: false } });
+  flushSync();
+  const header = target.querySelector("main > header")!;
+  const reply = header.querySelector('[aria-label="Reply to this message"]')!;
+  const remove = header.querySelector<HTMLButtonElement>('[aria-label="Delete from this device"]')!;
+  expect(remove.textContent?.trim()).toBe("");
+  expect(reply.compareDocumentPosition(remove) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(header.querySelector("h1")?.classList.contains("flex-1")).toBe(true);
+  expect(remove.tagName).toBe("BUTTON");
+  expect(reply.classList.contains("h-7")).toBe(true);
+  expect(remove.classList.contains("size-7")).toBe(true);
+  expect(remove.parentElement?.classList.contains("items-center")).toBe(true);
+  expect(remove.parentElement?.classList.contains("gap-1")).toBe(true);
+  expect(remove.parentElement?.classList.contains("self-start")).toBe(true);
+  remove.click();
+  await vi.waitFor(() => expect(deleteLocalMail).toHaveBeenCalledWith("account-a", "inbox", emailId));
+  await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/mail/account-a/inbox"));
+});
+
+test("thread toolbar leaves deletion to the individual message headers", () => {
+  pageState.url = new URL(`https://app.test/mail/account-a/inbox/${emailId}`);
+  pageState.params.id = emailId;
+  instance = mount(Layout, { target, props: { threaded: true } });
+  flushSync();
+  expect(target.querySelector('main > header [aria-label="Delete from this device"]')).toBeNull();
 });
 
 test("the Sent toolbar does not reply to the user's own address", () => {

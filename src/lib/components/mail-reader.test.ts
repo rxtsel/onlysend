@@ -6,7 +6,12 @@ import { getInboundEmail } from "$lib/shared/inbound";
 import { getSentEmail } from "$lib/shared/sent";
 import { listEmailAttachments } from "$lib/shared/attachments";
 import { getMailThread } from "$lib/shared/local-mail";
+import { deleteLocalMail } from "$lib/shared/services/delete-mail";
+import { goto } from "$app/navigation";
 
+vi.mock("$app/navigation", () => ({ goto: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => {}) }));
+vi.mock("$lib/shared/services/delete-mail", () => ({ deleteLocalMail: vi.fn().mockResolvedValue(true) }));
 vi.mock("$lib/shared/inbound", () => ({ getInboundEmail: vi.fn() }));
 vi.mock("$lib/shared/sent", () => ({ getSentEmail: vi.fn() }));
 vi.mock("$lib/shared/local-mail", () => ({ getMailThread: vi.fn().mockResolvedValue([]) }));
@@ -89,7 +94,7 @@ test("thread view keeps the subject above chronological, expandable message card
   instance = mount(Reader, { target });
   await vi.waitFor(() => expect(target.querySelector('[aria-label="Conversation messages"]')).not.toBeNull());
   expect(getMailThread).toHaveBeenCalledExactlyOnceWith("account-a", "inbox", "b3e2b2b6-3f0e-4c8e-9ad3-2f43a1e2c7f1");
-  const cards = target.querySelectorAll<HTMLButtonElement>('[aria-label="Conversation messages"] button');
+  const cards = target.querySelectorAll<HTMLButtonElement>('[data-slot="collapsible-trigger"]');
   expect(cards).toHaveLength(3);
   expect(cards[0].textContent).toContain("author");
   expect(cards[0].textContent).toContain("Original");
@@ -101,6 +106,20 @@ test("thread view keeps the subject above chronological, expandable message card
   expect(cards[1].getAttribute("aria-expanded")).toBe("false");
   expect(cards[2].getAttribute("aria-expanded")).toBe("true");
   expect(target.textContent).not.toContain("messages in this conversation");
+  const deletes = target.querySelectorAll<HTMLButtonElement>('[aria-label="Delete from this device"]');
+  expect(deletes).toHaveLength(3);
+  expect(cards[0].contains(deletes[0])).toBe(false);
+  expect(cards[0].classList.contains("w-full")).toBe(true);
+  expect(cards[0].querySelector("time")).not.toBeNull();
+  expect(deletes[0].tagName).toBe("BUTTON");
+  expect(deletes[0].classList.contains("right-4")).toBe(true);
+  expect(deletes[0].classList.contains("size-6")).toBe(true);
+  expect(cards[0].querySelector("svg.absolute")?.classList.contains("right-5")).toBe(true);
+  deletes[0].click();
+  expect(cards[0].getAttribute("aria-expanded")).toBe("false");
+  await vi.waitFor(() => expect(deleteLocalMail).toHaveBeenCalledWith("account-a", "inbox", "root"));
+  await vi.waitFor(() => expect(target.querySelectorAll('[data-slot="collapsible-trigger"]')).toHaveLength(2));
+  expect(goto).not.toHaveBeenCalled();
 });
 
 test("Sent shows mixed inbox/sent thread messages and never replies to the user's own From address", async () => {
@@ -114,7 +133,7 @@ test("Sent shows mixed inbox/sent thread messages and never replies to the user'
     { id: "b3e2b2b6-3f0e-4c8e-9ad3-2f43a1e2c7f1", mailbox: "sent", from: "me@example.test", to: ["recipient@example.test"], subject: "Re: Topic", createdAt: "2026-01-02T00:00:00Z", preview: "Reply" },
   ]);
   instance = mount(Reader, { target, props: { mailbox: "sent" } });
-  await vi.waitFor(() => expect(target.querySelectorAll('[aria-label="Conversation messages"] button')).toHaveLength(2));
+  await vi.waitFor(() => expect(target.querySelectorAll('[data-slot="collapsible-trigger"]')).toHaveLength(2));
   expect(getMailThread).toHaveBeenCalledExactlyOnceWith("account-a", "sent", "b3e2b2b6-3f0e-4c8e-9ad3-2f43a1e2c7f1");
   expect(target.querySelector("article")?.textContent).toContain("Sent body");
   expect(target.querySelector('[aria-label="Reply to this message"]')).toBeNull();
