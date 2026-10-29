@@ -38,6 +38,12 @@ pub struct SentEmail {
     pub message_id: Option<String>,
 }
 
+impl SentEmail {
+    fn can_reuse(&self) -> bool {
+        self.body_format_version > 0 && (self.thread_id.is_some() || self.body_format_version >= 2)
+    }
+}
+
 // Keep last_event as a string: the SDK's closed enum rejects suppressed.
 #[derive(Debug, Deserialize)]
 struct RemoteSentEmail {
@@ -114,7 +120,8 @@ impl From<RemoteSentEmail> for SentEmail {
             subject: email.subject,
             html: email.html,
             text: email.text,
-            body_format_version: 1,
+            // v2 distinguishes absent remote thread metadata from an old cache missing it.
+            body_format_version: 2,
             attachments: Vec::new(),
             created_at: email.created_at,
             cc: email.cc.unwrap_or_default(),
@@ -305,12 +312,20 @@ mod tests {
         let detail: SentEmail = remote.into();
         assert!(detail.html.is_none());
         assert_eq!(detail.text.as_deref(), Some(text));
-        assert_eq!(detail.body_format_version, 1);
+        assert_eq!(detail.body_format_version, 2);
+        assert!(detail.thread_id.is_none());
+        assert!(detail.can_reuse());
+        let mut older = detail.clone();
+        older.body_format_version = 1;
+        assert!(!older.can_reuse());
+        older.thread_id = Some("root@example.test".into());
+        assert!(older.can_reuse());
         let mut legacy = serde_json::to_value(&detail).unwrap();
         legacy.as_object_mut().unwrap().remove("bodyFormatVersion");
         legacy.as_object_mut().unwrap().remove("text");
         let cached: SentEmail = serde_json::from_value(legacy).unwrap();
         assert_eq!(cached.body_format_version, 0);
+        assert!(!cached.can_reuse());
     }
 
     #[test]
@@ -395,7 +410,7 @@ pub(crate) async fn download_sent_email(
     .transpose()?;
     if let Some(detail) = cached
         .as_ref()
-        .filter(|detail| detail.body_format_version > 0 && detail.thread_id.is_some())
+        .filter(|detail| detail.can_reuse())
     {
         if let Some(thread_id) = &detail.thread_id {
             if mail::thread_id_for(
