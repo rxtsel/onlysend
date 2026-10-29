@@ -7,7 +7,9 @@
 
 <img
   alt="logo"
-  src="/icon-512.png"
+  src="/icon-104.png"
+  width="52"
+  height="52"
   class={cn("size-13 rounded-xl", className)}
   {...rest}
 />
