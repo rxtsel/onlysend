@@ -88,6 +88,73 @@ fn query(mailbox: Mailbox) -> LocalQuery {
 }
 
 #[tokio::test]
+async fn thread_backfill_is_atomic_scoped_and_runs_only_on_upgrade() {
+    let temporary = TemporaryDatabase::new();
+    std::fs::create_dir_all(temporary.path().parent().unwrap()).unwrap();
+    let connection = Connection::open(temporary.path()).unwrap();
+    for migration in &MIGRATIONS[..7] { connection.execute_batch(migration).unwrap(); }
+    for account in ["a", "b"] { connection.execute("INSERT INTO account_state VALUES (?1)", [account]).unwrap(); }
+    let incoming = json!({
+        "id":"incoming", "from":"sender@example.test", "to":[], "subject":"Re",
+        "createdAt":"2026-01-01T00:00:00Z", "html":null, "text":"body", "attachments":[],
+        "references":"[\"<root@example.test>\",\"<parent@example.test>\"]"
+    }).to_string();
+    let sent = json!({"id":"sent", "threadId":"root@example.test"}).to_string();
+    for (account, mailbox, id, json) in [
+        ("a", "inbox", "incoming", &incoming), ("a", "sent", "sent", &sent),
+        ("a", "sent", "explicit", &sent), ("b", "inbox", "incoming", &incoming),
+    ] {
+        connection.execute("INSERT INTO email_bodies VALUES (?1,?2,?3,?4,'',0)", params![account,mailbox,id,json]).unwrap();
+    }
+    connection.execute("INSERT INTO email_threads VALUES ('a','sent','explicit','keep@example.test')", []).unwrap();
+    connection.execute_batch("CREATE TRIGGER fail_backfill BEFORE INSERT ON email_threads BEGIN SELECT RAISE(ABORT,'test failure'); END;").unwrap();
+    connection.pragma_update(None, "user_version", 7).unwrap();
+    drop(connection);
+    let database = temporary.database();
+    assert!(database.initialize().await.is_err());
+    let connection = Connection::open(temporary.path()).unwrap();
+    assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), 7);
+    assert_eq!(connection.query_row("SELECT count(*) FROM email_threads", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+    connection.execute_batch("DROP TRIGGER fail_backfill").unwrap();
+    drop(connection);
+    database.initialize().await.unwrap();
+    for (account, mailbox, id, expected) in [
+        ("a", Mailbox::Inbox, "incoming", "root@example.test"),
+        ("a", Mailbox::Sent, "sent", "root@example.test"),
+        ("a", Mailbox::Sent, "explicit", "keep@example.test"),
+        ("b", Mailbox::Inbox, "incoming", "root@example.test"),
+    ] {
+        assert_eq!(mail::thread_id_for(&database, account.into(), mailbox, id.into()).await.unwrap().as_deref(), Some(expected));
+    }
+    assert!(mail::thread_id_for(&database, "b".into(), Mailbox::Sent, "sent".into()).await.unwrap().is_none());
+    assert_eq!(mail::cached_detail(&database, "a".into(), "inbox".into(), "incoming".into()).await.unwrap().unwrap(), incoming);
+    database.run(|connection| { connection.execute("DELETE FROM email_threads WHERE account_id='a' AND mailbox='inbox' AND email_id='incoming'", [])?; Ok(()) }).await.unwrap();
+    drop(database);
+    let database = temporary.database();
+    database.initialize().await.unwrap();
+    assert!(mail::thread_id_for(&database, "a".into(), Mailbox::Inbox, "incoming".into()).await.unwrap().is_none());
+    mail::store_detail(&database, "a".into(), Mailbox::Sent, "new".into(), &json!({"threadId":"new@example.test"}), "body".into()).await.unwrap();
+    assert_eq!(mail::thread_id_for(&database, "a".into(), Mailbox::Sent, "new".into()).await.unwrap().as_deref(), Some("new@example.test"));
+    mail::store_detail(&database, "a".into(), Mailbox::Sent, "explicit".into(), &json!({"threadId":"fallback@example.test"}), "body".into()).await.unwrap();
+    assert_eq!(mail::thread_id_for(&database, "a".into(), Mailbox::Sent, "explicit".into()).await.unwrap().as_deref(), Some("keep@example.test"));
+    mail::store_detail(&database, "a".into(), Mailbox::Inbox, "incoming".into(), &serde_json::from_str::<Value>(&incoming).unwrap(), "body".into()).await.unwrap();
+    assert_eq!(mail::thread_id_for(&database, "a".into(), Mailbox::Inbox, "incoming".into()).await.unwrap().as_deref(), Some("root@example.test"));
+}
+
+#[tokio::test]
+async fn missing_details_are_batched_and_scoped_to_account_and_mailbox() {
+    let temporary = TemporaryDatabase::new();
+    let database = temporary.database();
+    mail::store_detail(&database, "a".into(), Mailbox::Inbox, "cached".into(), &json!({"text":"body"}), "body".into()).await.unwrap();
+    mail::store_detail(&database, "b".into(), Mailbox::Sent, "missing".into(), &json!({"text":"other account"}), "body".into()).await.unwrap();
+    let ids = vec!["cached".to_string(), "missing".to_string()];
+    assert_eq!(mail::missing_detail_ids(&database, "a".into(), Mailbox::Inbox, ids.clone()).await.unwrap(), vec!["missing"]);
+    assert_eq!(mail::missing_detail_ids(&database, "a".into(), Mailbox::Sent, ids.clone()).await.unwrap(), ids);
+    assert_eq!(mail::missing_detail_ids(&database, "b".into(), Mailbox::Sent, ids).await.unwrap(), vec!["cached"]);
+    assert!(mail::missing_detail_ids(&database, "a".into(), Mailbox::Inbox, vec![]).await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn local_deletion_survives_sync_and_reopen_and_filters_before_pagination() {
     let temporary = TemporaryDatabase::new();
     let database = temporary.database();
@@ -122,6 +189,36 @@ async fn local_deletion_survives_sync_and_reopen_and_filters_before_pagination()
     mail::set_deleted(&database, "a".into(), Mailbox::Inbox, "c".into(), false).await.unwrap();
     assert!(mail::ensure_visible(&database, "a".into(), Mailbox::Inbox, "c".into()).await.is_ok());
     assert_eq!(mail::query(&database, "a".into(), query(Mailbox::Inbox)).await.unwrap().items[0]["id"], "c");
+}
+
+#[tokio::test]
+async fn paginated_thread_counts_include_all_visible_siblings_not_just_the_page() {
+    let temporary = TemporaryDatabase::new();
+    let database = temporary.database();
+    let items = (0..100).map(|i| message(&format!("m{i:03}"), "Thread", "2026-01-01T00:00:00Z")).collect();
+    mail::store_page(&database, "a".into(), Mailbox::Inbox, 100, None, &page(items)).await.unwrap();
+    database.run(|connection| {
+        let tx = connection.transaction()?;
+        for i in 0..100 {
+            tx.execute("INSERT INTO email_threads VALUES ('a','inbox',?1,'root@example.test')", [format!("m{i:03}")])?;
+        }
+        tx.commit()
+    }).await.unwrap();
+    let mut request = query(Mailbox::Inbox);
+    request.limit = Some(50);
+    let first = mail::query(&database, "a".into(), request.clone()).await.unwrap();
+    assert_eq!(first.items.len(), 50);
+    assert!(first.items.iter().all(|item| item["threadCount"] == 100));
+    assert!(first.has_more);
+    request.after = first.next_cursor;
+    let second = mail::query(&database, "a".into(), request).await.unwrap();
+    assert_eq!(second.items.len(), 50);
+    assert!(!second.has_more);
+    assert!(second.items.iter().all(|item| item["threadCount"] == 100));
+    assert!(first.items.iter().all(|item| !second.items.iter().any(|other| item["id"] == other["id"])));
+    mail::set_deleted(&database, "a".into(), Mailbox::Inbox, "m099".into(), true).await.unwrap();
+    let visible = mail::query(&database, "a".into(), query(Mailbox::Inbox)).await.unwrap();
+    assert!(visible.items.iter().all(|item| item["threadCount"] == 99));
 }
 
 #[tokio::test]

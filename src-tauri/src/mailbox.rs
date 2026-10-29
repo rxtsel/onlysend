@@ -30,18 +30,6 @@ pub struct ListPage {
     domains: Vec<String>,
 }
 
-fn detail_thread_id(mailbox: &str, json: &str) -> Option<String> {
-    if mailbox == Mailbox::Inbox.as_str() {
-        serde_json::from_str::<crate::inbound::InboundEmailDetailDto>(json)
-            .ok()
-            .and_then(|detail| crate::inbound::thread_id(&detail))
-    } else {
-        serde_json::from_str::<Value>(json)
-            .ok()
-            .and_then(|detail| detail["threadId"].as_str().map(str::to_owned))
-    }
-}
-
 fn local_query(request: &ListRequest) -> Result<LocalQuery, String> {
     let after = request
         .after
@@ -133,27 +121,6 @@ pub async fn get_mail_thread(
     else {
         return Ok(Vec::new());
     };
-    let candidates =
-        mail::cached_thread_candidates(&database, account_id.clone(), format!("<{thread_id}>"))
-            .await?;
-    for (candidate_mailbox, candidate_id, json) in candidates {
-        let linked =
-            detail_thread_id(&candidate_mailbox, &json).as_deref() == Some(thread_id.as_str());
-        if linked {
-            mail::store_thread_link(
-                &database,
-                account_id.clone(),
-                if candidate_mailbox == Mailbox::Inbox.as_str() {
-                    Mailbox::Inbox
-                } else {
-                    Mailbox::Sent
-                },
-                candidate_id,
-                thread_id.clone(),
-            )
-            .await?;
-        }
-    }
     let messages = mail::cached_thread(&database, account_id.clone(), thread_id, mailbox).await?;
     crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
     messages
@@ -237,26 +204,6 @@ mod tests {
             is_partial: true,
             downloaded_at,
         }
-    }
-
-    #[test]
-    fn cached_thread_candidates_match_references_and_sent_thread_ids() {
-        let inbound = serde_json::json!({
-            "id":"message", "from":"sender@example.test", "to":[], "subject":"Re",
-            "createdAt":"2026-01-01T00:00:00Z", "html":null, "text":"body", "attachments":[],
-            "references":"[\"<root@example.test>\",\"<parent@example.test>\"]"
-        })
-        .to_string();
-        let sent = serde_json::json!({"id":"sent", "threadId":"root@example.test"}).to_string();
-        assert_eq!(
-            detail_thread_id("inbox", &inbound).as_deref(),
-            Some("root@example.test")
-        );
-        assert_eq!(
-            detail_thread_id("sent", &sent).as_deref(),
-            Some("root@example.test")
-        );
-        assert_eq!(detail_thread_id("sent", &inbound), None);
     }
 
     #[test]

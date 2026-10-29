@@ -412,26 +412,6 @@ pub(crate) async fn download_sent_email(
         .as_ref()
         .filter(|detail| detail.can_reuse())
     {
-        if let Some(thread_id) = &detail.thread_id {
-            if mail::thread_id_for(
-                &database,
-                account_id.clone(),
-                Mailbox::Sent,
-                email_id.clone(),
-            )
-            .await?
-            .is_none()
-            {
-                mail::store_thread_link(
-                    &database,
-                    account_id.clone(),
-                    Mailbox::Sent,
-                    email_id.clone(),
-                    thread_id.clone(),
-                )
-                .await?;
-            }
-        }
         return Ok(detail.clone());
     }
     // Legacy cache merged text into HTML. Recover the source without deleting offline mail.
@@ -456,7 +436,6 @@ pub(crate) async fn download_sent_email(
             .unwrap_or_else(|| mail::plain_html(email.html.as_deref().unwrap_or_default()));
         let reply_thread_id = sent_reply_thread_id(&email);
         let detail: SentEmail = email.into();
-        let thread_id = detail.thread_id.clone();
         crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
         mail::store_detail(
             &database,
@@ -476,25 +455,6 @@ pub(crate) async fn download_sent_email(
                 thread_id,
             )
             .await?;
-        } else if let Some(thread_id) = thread_id {
-            if mail::thread_id_for(
-                &database,
-                account_id.clone(),
-                Mailbox::Sent,
-                email_id.clone(),
-            )
-            .await?
-            .is_none()
-            {
-                mail::store_thread_link(
-                    &database,
-                    account_id.clone(),
-                    Mailbox::Sent,
-                    email_id.clone(),
-                    thread_id,
-                )
-                .await?;
-            }
         }
         Ok::<_, String>(detail)
     })

@@ -239,16 +239,6 @@ pub(crate) async fn get_inbound_email(
         .as_ref()
         .filter(|detail| detail.can_reuse(require_reply_metadata))
     {
-        if let Some(thread_id) = thread_id(detail) {
-            mail::store_thread_link(
-                &database,
-                account_id.clone(),
-                Mailbox::Inbox,
-                email_id.clone(),
-                thread_id,
-            )
-            .await?;
-        }
         return Ok(detail.clone());
     }
     // Old cache entries lost their CSS; recover the source without deleting the offline copy.

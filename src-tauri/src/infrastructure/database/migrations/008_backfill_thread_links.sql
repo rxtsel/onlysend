@@ -1,0 +1,2 @@
+-- Rust backfills cached thread headers with the same parser used on download.
+-- The schema version and backfill commit together, so this scan runs once.

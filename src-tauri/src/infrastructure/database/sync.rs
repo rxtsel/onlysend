@@ -189,7 +189,7 @@ async fn scan(
                 )
             }
         };
-        bodies.extend(ids);
+        bodies.extend(mail::missing_detail_ids(database, account.to_string(), mailbox, ids).await?);
         if last_progress.elapsed() >= Duration::from_secs(2) {
             publish_progress(app, account, mailbox);
             last_progress = Instant::now();
@@ -213,17 +213,6 @@ async fn scan(
     publish_progress(app, account, mailbox);
     for id in bodies {
         crate::infrastructure::credentials_store::account_credential(app, account)?;
-        if mail::cached_detail(
-            database,
-            account.to_string(),
-            mailbox.as_str().to_string(),
-            id.clone(),
-        )
-        .await?
-        .is_some()
-        {
-            continue;
-        }
         network_turn().await;
         let download = async {
             match mailbox {

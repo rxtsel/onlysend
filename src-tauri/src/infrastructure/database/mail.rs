@@ -101,6 +101,22 @@ pub(crate) async fn set_deleted(
     }).await
 }
 
+pub(crate) async fn missing_detail_ids(
+    database: &Database,
+    account_id: String,
+    mailbox: Mailbox,
+    ids: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let ids = serde_json::to_string(&ids).map_err(|_| "Could not encode email IDs")?;
+    database.run(move |connection| {
+        let mut statement = connection.prepare(
+            "SELECT value FROM json_each(?3) WHERE NOT EXISTS(SELECT 1 FROM email_bodies b WHERE b.account_id=?1 AND b.mailbox=?2 AND b.email_id=value)",
+        )?;
+        let rows = statement.query_map(params![account_id, mailbox.as_str(), ids], |row| row.get(0))?.collect();
+        rows
+    }).await
+}
+
 pub(crate) async fn cached_detail(
     database: &Database,
     account_id: String,
@@ -113,6 +129,48 @@ pub(crate) async fn cached_detail(
     ).optional()).await
 }
 
+fn detail_thread_id(mailbox: &str, json: &str) -> Option<String> {
+    if mailbox == Mailbox::Inbox.as_str() {
+        serde_json::from_str::<crate::inbound::InboundEmailDetailDto>(json)
+            .ok()
+            .and_then(|detail| crate::inbound::thread_id(&detail))
+    } else {
+        serde_json::from_str::<Value>(json)
+            .ok()
+            .and_then(|detail| detail["threadId"].as_str().map(str::to_owned))
+    }
+}
+
+fn write_thread_link(
+    connection: &rusqlite::Connection,
+    account: &str,
+    mailbox: &str,
+    email_id: &str,
+    thread_id: &str,
+    overwrite: bool,
+) -> rusqlite::Result<()> {
+    connection.execute(
+        "INSERT INTO email_threads VALUES (?1,?2,?3,?4) ON CONFLICT(account_id,mailbox,email_id) DO UPDATE SET thread_id=excluded.thread_id WHERE ?5 AND email_threads.thread_id<>excluded.thread_id",
+        params![account, mailbox, email_id, thread_id, overwrite],
+    )?;
+    Ok(())
+}
+
+pub(super) fn backfill_thread_links(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare("SELECT account_id,mailbox,email_id,detail_json FROM email_bodies")?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let account: String = row.get(0)?;
+        let mailbox: String = row.get(1)?;
+        let id: String = row.get(2)?;
+        let json: String = row.get(3)?;
+        if let Some(thread_id) = detail_thread_id(&mailbox, &json) {
+            write_thread_link(connection, &account, &mailbox, &id, &thread_id, false)?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn store_thread_link(
     database: &Database,
     account_id: String,
@@ -122,11 +180,7 @@ pub(crate) async fn store_thread_link(
 ) -> Result<(), String> {
     database.run(move |connection| {
         connection.execute("INSERT OR IGNORE INTO account_state VALUES (?1)", [&account_id])?;
-        connection.execute(
-            "INSERT INTO email_threads VALUES (?1,?2,?3,?4) ON CONFLICT(account_id,mailbox,email_id) DO UPDATE SET thread_id=excluded.thread_id",
-            params![account_id, mailbox.as_str(), email_id, thread_id],
-        )?;
-        Ok(())
+        write_thread_link(connection, &account_id, mailbox.as_str(), &email_id, &thread_id, true)
     }).await
 }
 
@@ -179,20 +233,6 @@ pub(crate) async fn cached_thread(
         .into_iter()
         .map(|(_, mailbox, json)| (mailbox, json))
         .collect())
-}
-
-pub(crate) async fn cached_thread_candidates(
-    database: &Database,
-    account_id: String,
-    message_id: String,
-) -> Result<Vec<(String, String, String)>, String> {
-    database.run(move |connection| {
-        let mut statement = connection.prepare(
-            "SELECT mailbox,email_id,detail_json FROM email_bodies WHERE account_id=?1 AND instr(detail_json,?2)>0",
-        )?;
-        let rows = statement.query_map(params![account_id, message_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?.collect();
-        rows
-    }).await
 }
 
 pub(crate) async fn thread_id_for(
@@ -376,6 +416,9 @@ pub(crate) async fn store_detail<T: Serialize>(
         tx.execute("INSERT OR IGNORE INTO account_state VALUES (?1)", [&account_id])?;
         tx.execute("INSERT INTO email_bodies VALUES (?1,?2,?3,?4,?5,unixepoch()) ON CONFLICT(account_id,mailbox,email_id) DO UPDATE SET detail_json=excluded.detail_json,search_text=excluded.search_text,downloaded_at=excluded.downloaded_at", params![account_id,mailbox.as_str(),email_id,json,search_text])?;
         tx.execute("UPDATE emails SET search_body=?4 WHERE account_id=?1 AND mailbox=?2 AND email_id=?3", params![account_id,mailbox.as_str(),email_id,search_text])?;
+        if let Some(thread_id) = detail_thread_id(mailbox.as_str(), &json) {
+            write_thread_link(&tx, &account_id, mailbox.as_str(), &email_id, &thread_id, false)?;
+        }
         tx.commit()
     }).await
 }
@@ -496,7 +539,7 @@ pub(crate) async fn query(
         Sort::SenderAsc => ("sender_sort", false, false),
         Sort::SenderDesc => ("sender_sort", true, false),
     };
-    let mut sql = format!("SELECT CASE WHEN t.thread_id IS NULL THEN e.metadata_json ELSE json_set(e.metadata_json,'$.threadId',t.thread_id,'$.threadCount',(SELECT count(DISTINCT COALESCE(json_extract(b.detail_json,'$.messageId'),siblings.email_id)) FROM email_threads siblings LEFT JOIN email_bodies b ON b.account_id=siblings.account_id AND b.mailbox=siblings.mailbox AND b.email_id=siblings.email_id WHERE siblings.account_id=t.account_id AND siblings.thread_id=t.thread_id AND NOT EXISTS(SELECT 1 FROM deleted_emails d WHERE d.account_id=siblings.account_id AND d.mailbox=siblings.mailbox AND d.email_id=siblings.email_id))) END,CAST(e.{column} AS TEXT),e.email_id,substr(e.search_body,1,240),m.email_id IS NOT NULL FROM emails e LEFT JOIN read_markers m ON m.account_id=e.account_id AND m.mailbox=e.mailbox AND m.email_id=e.email_id LEFT JOIN email_threads t ON t.account_id=e.account_id AND t.mailbox=e.mailbox AND t.email_id=e.email_id WHERE e.account_id=? AND e.mailbox=? AND NOT EXISTS(SELECT 1 FROM deleted_emails d WHERE d.account_id=e.account_id AND d.mailbox=e.mailbox AND d.email_id=e.email_id)");
+    let mut sql = format!("WITH page AS MATERIALIZED (SELECT e.metadata_json,e.{column} AS sort_key,CAST(e.{column} AS TEXT) AS sort_value,e.email_id,substr(e.search_body,1,240) AS preview,m.email_id IS NOT NULL AS is_read,t.thread_id FROM emails e LEFT JOIN read_markers m ON m.account_id=e.account_id AND m.mailbox=e.mailbox AND m.email_id=e.email_id LEFT JOIN email_threads t ON t.account_id=e.account_id AND t.mailbox=e.mailbox AND t.email_id=e.email_id WHERE e.account_id=? AND e.mailbox=? AND NOT EXISTS(SELECT 1 FROM deleted_emails d WHERE d.account_id=e.account_id AND d.mailbox=e.mailbox AND d.email_id=e.email_id)");
     let mut values: Vec<SqlValue> = vec![
         account.clone().into(),
         query.mailbox.as_str().to_string().into(),
@@ -537,6 +580,19 @@ pub(crate) async fn query(
         " ORDER BY e.{column} {direction},e.email_id {direction} LIMIT ?"
     ));
     values.push((limit as i64 + 1).into());
+    // Materialize one count per distinct page thread, not one per message.
+    sql.push_str(&format!(") , counts AS MATERIALIZED (
+        SELECT requested.thread_id,(
+            SELECT count(DISTINCT COALESCE(json_extract(b.detail_json,'$.messageId'),siblings.email_id))
+            FROM email_threads siblings
+            LEFT JOIN email_bodies b ON b.account_id=siblings.account_id AND b.mailbox=siblings.mailbox AND b.email_id=siblings.email_id
+            WHERE siblings.account_id=?1 AND siblings.thread_id=requested.thread_id
+                AND NOT EXISTS(SELECT 1 FROM deleted_emails d WHERE d.account_id=siblings.account_id AND d.mailbox=siblings.mailbox AND d.email_id=siblings.email_id)
+        ) AS total FROM (SELECT DISTINCT thread_id FROM page WHERE thread_id IS NOT NULL) requested
+    ) SELECT CASE WHEN p.thread_id IS NULL THEN p.metadata_json ELSE json_set(p.metadata_json,'$.threadId',p.thread_id,'$.threadCount',counts.total) END,
+        p.sort_value,p.email_id,p.preview,p.is_read
+        FROM page p LEFT JOIN counts ON counts.thread_id=p.thread_id
+        ORDER BY p.sort_key {direction},p.email_id {direction}"));
     database
         .run(move |connection| {
             let mut statement = connection.prepare(&sql)?;

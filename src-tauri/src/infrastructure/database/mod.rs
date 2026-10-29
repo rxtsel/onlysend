@@ -20,6 +20,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/005_mail_list_indexes.sql"),
     include_str!("migrations/006_email_threads.sql"),
     include_str!("migrations/007_deleted_emails.sql"),
+    include_str!("migrations/008_backfill_thread_links.sql"),
 ];
 pub(crate) const DATABASE_FILE: &str = "onlysend.sqlite3";
 
@@ -169,6 +170,9 @@ fn migrate(connection: &mut Connection, migrations: &[&str]) -> Result<(), Strin
     }
     for (index, sql) in migrations.iter().enumerate().skip(version as usize) {
         transaction.execute_batch(sql).map_err(sql_error)?;
+        if index + 1 == 8 {
+            mail::backfill_thread_links(&transaction).map_err(sql_error)?;
+        }
         transaction
             .pragma_update(None, "user_version", (index + 1) as i64)
             .map_err(sql_error)?;
