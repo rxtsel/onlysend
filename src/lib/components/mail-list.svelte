@@ -17,6 +17,7 @@
   import type { ArchiveFooterData } from "$lib/shared/archive-status";
   import { authErrorToast, isAuthError } from "$lib/shared/services/auth-toast.svelte";
   import { errorMessage } from "$lib/shared/utils/errors";
+  import { deleteLocalMail } from "$lib/shared/services/delete-mail";
   import { cn } from "$lib/utils";
 
   let { mailbox, domain, active = true, class: className, onDomainsChange, onSelectMail, onArchiveStatusChange }: {
@@ -142,6 +143,15 @@
     void goto(mailUrl(accountId, mailbox, id));
   }
 
+  function replyMail(id: string) {
+    void goto(`${mailUrl(accountId, "composer")}?reply=${encodeURIComponent(id)}`).catch(report);
+  }
+
+  async function deleteMail(id: string) {
+    try { await deleteLocalMail(accountId, mailbox, id); }
+    catch (error) { report(error); }
+  }
+
   async function refresh() {
     if (manualRefreshing || list.isRefreshing) return;
     const owner = mailbox;
@@ -229,7 +239,7 @@
     {:else}
       {#each threads as thread (thread.mail.threadId ?? thread.mail.id)}
         {@const mail = thread.mail}
-        <EmailListItem {mail} mode={mailbox} threadCount={mail.threadCount ?? thread.count} isActive={thread.ids.has(page.params.id ?? "")} isUnread={thread.unread} onclick={(id) => openMail(id, mail.threadCount ?? thread.count)} />
+        <EmailListItem {mail} mode={mailbox} threadCount={mail.threadCount ?? thread.count} isActive={thread.ids.has(page.params.id ?? "")} isUnread={thread.unread} onclick={(id) => openMail(id, mail.threadCount ?? thread.count)} onreply={replyMail} ondelete={deleteMail} />
       {/each}
       {#if list.hasMore}
         <div class="p-3"><Button class="w-full" variant="ghost" disabled={list.isLoadingMore || list.isRefreshing} onclick={() => { void list.loadMore().catch(report); }}>

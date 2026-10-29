@@ -34,6 +34,22 @@
   let loading = $state(true);
   let failed = $state(false);
   let disposed = false;
+  let navigatingAfterDelete = false;
+
+  function removeMessage(id: string, box: Mailbox) {
+    if (disposed || navigatingAfterDelete) return;
+    const selected = id === emailId && box === mailbox;
+    if (!selected && !thread.some((item) => item.id === id && item.mailbox === box)) return;
+    thread = thread.filter((item) => item.id !== id || item.mailbox !== box);
+    setMailThreadStatus?.(thread.length > 1);
+    if (selected || !thread.length) {
+      navigatingAfterDelete = true;
+      void goto(mailUrl(accountId, mailbox)).catch(() => {
+        navigatingAfterDelete = false;
+        toast.error("Could not return to the mail list");
+      });
+    }
+  }
 
   async function load() {
     loading = true;
@@ -52,7 +68,7 @@
       };
       if (!messages.some((message) => message.id === emailId && message.mailbox === mailbox)) messages.push(selected);
       messages.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.id.localeCompare(b.id));
-      if (!disposed) {
+      if (!disposed && !navigatingAfterDelete) {
         email = result;
         thread = messages;
         setMailThreadStatus?.(messages.length > 1);
@@ -68,8 +84,12 @@
   onMount(() => {
     void load();
     let cleanup: (() => void) | undefined;
-    void listen<{ accountId: string; deleted: boolean }>("mail-deletion-updated", ({ payload }) => {
-      if (disposed || payload.accountId !== accountId || payload.deleted || !emailId) return;
+    void listen<{ accountId: string; mailbox: Mailbox; emailId: string; deleted: boolean }>("mail-deletion-updated", ({ payload }) => {
+      if (disposed || payload.accountId !== accountId || !emailId) return;
+      if (payload.deleted) {
+        removeMessage(payload.emailId, payload.mailbox);
+        return;
+      }
       void getMailThread(accountId, mailbox, emailId).then((messages) => {
         if (!disposed && messages.length) {
           thread = messages;
@@ -139,14 +159,7 @@
       <ol aria-label="Conversation messages" class="divide-y">
         {#each thread as message (message.mailbox + message.id)}
           <li>
-            <MailThreadMessage {message} onDeleted={() => {
-              if (disposed) return;
-              thread = thread.filter((item) => item.id !== message.id || item.mailbox !== message.mailbox);
-              setMailThreadStatus?.(thread.length > 1);
-              if (!thread.length || (message.id === emailId && message.mailbox === mailbox)) {
-                void goto(mailUrl(accountId, mailbox)).catch(() => toast.error("Could not return to the mail list"));
-              }
-            }} selectedId={thread.at(-1)?.id ?? emailId} threaded={thread.length > 1} initialDetail={message.id === emailId && message.mailbox === mailbox ? email : null} />
+            <MailThreadMessage {message} onDeleted={() => removeMessage(message.id, message.mailbox)} selectedId={thread.at(-1)?.id ?? emailId} threaded={thread.length > 1} initialDetail={message.id === emailId && message.mailbox === mailbox ? email : null} />
           </li>
         {/each}
       </ol>

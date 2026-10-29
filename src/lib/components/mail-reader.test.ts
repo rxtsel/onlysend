@@ -8,6 +8,7 @@ import { listEmailAttachments } from "$lib/shared/attachments";
 import { getMailThread } from "$lib/shared/local-mail";
 import { deleteLocalMail } from "$lib/shared/services/delete-mail";
 import { goto } from "$app/navigation";
+import { listen } from "@tauri-apps/api/event";
 
 vi.mock("$app/navigation", () => ({ goto: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => {}) }));
@@ -21,6 +22,7 @@ vi.mock("svelte-sonner", () => ({ toast: { error: vi.fn() } }));
 let target: HTMLElement;
 let instance: ReturnType<typeof mount>;
 beforeEach(() => {
+  vi.clearAllMocks();
   vi.mocked(getMailThread).mockReset().mockResolvedValue([]);
   target = document.createElement("div");
   document.body.append(target);
@@ -123,6 +125,25 @@ test("thread view keeps the subject above chronological, expandable message card
   await vi.waitFor(() => expect(deleteLocalMail).toHaveBeenCalledWith("account-a", "inbox", "root"));
   await vi.waitFor(() => expect(target.querySelectorAll('[data-slot="collapsible-trigger"]')).toHaveLength(2));
   expect(goto).not.toHaveBeenCalled();
+});
+
+test("deleting the selected email from the list closes its reader only for the owning account and mailbox", async () => {
+  const emailId = "b3e2b2b6-3f0e-4c8e-9ad3-2f43a1e2c7f1";
+  vi.mocked(getInboundEmail).mockResolvedValue({
+    id: emailId, from: "sender@example.test", to: ["me@example.test"],
+    subject: "Subject", createdAt: "2026-01-01T00:00:00Z", html: null, text: "Body", attachments: [],
+  });
+  instance = mount(Reader, { target });
+  await vi.waitFor(() => expect(target.querySelector("pre")?.textContent).toBe("Body"));
+  const handler = vi.mocked(listen).mock.calls[0][1];
+  const event = { event: "mail-deletion-updated", id: 0, payload: { accountId: "other-account", mailbox: "inbox", emailId, deleted: true } };
+  handler(event);
+  handler({ ...event, payload: { ...event.payload, accountId: "account-a", mailbox: "sent" } });
+  expect(goto).not.toHaveBeenCalled();
+  const ownedEvent = { ...event, payload: { ...event.payload, accountId: "account-a" } };
+  handler(ownedEvent);
+  handler(ownedEvent);
+  expect(goto).toHaveBeenCalledExactlyOnceWith("/mail/account-a/inbox");
 });
 
 test("Sent shows mixed inbox/sent thread messages and never replies to the user's own From address", async () => {
