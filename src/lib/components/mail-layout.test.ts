@@ -62,6 +62,9 @@ test("single-message toolbar places icon-only delete after reply and persists be
   expect(remove.parentElement?.classList.contains("gap-1")).toBe(true);
   expect(remove.parentElement?.classList.contains("self-start")).toBe(true);
   remove.click();
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).not.toBeNull());
+  expect(deleteLocalMail).not.toHaveBeenCalled();
+  document.querySelector<HTMLButtonElement>('[data-slot="alert-dialog-action"]')!.click();
   await vi.waitFor(() => expect(deleteLocalMail).toHaveBeenCalledWith("account-a", "inbox", emailId));
   await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/mail/account-a/inbox"));
 });

@@ -117,6 +117,9 @@ test("thread view keeps the subject above chronological, expandable message card
   expect(cards[0].querySelector("svg.absolute")?.classList.contains("right-5")).toBe(true);
   deletes[0].click();
   expect(cards[0].getAttribute("aria-expanded")).toBe("false");
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).not.toBeNull());
+  expect(deleteLocalMail).not.toHaveBeenCalled();
+  document.querySelector<HTMLButtonElement>('[data-slot="alert-dialog-action"]')!.click();
   await vi.waitFor(() => expect(deleteLocalMail).toHaveBeenCalledWith("account-a", "inbox", "root"));
   await vi.waitFor(() => expect(target.querySelectorAll('[data-slot="collapsible-trigger"]')).toHaveLength(2));
   expect(goto).not.toHaveBeenCalled();

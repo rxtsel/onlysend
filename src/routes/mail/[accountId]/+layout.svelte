@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import { toast } from "svelte-sonner";
   import { deleteLocalMail } from "$lib/shared/services/delete-mail";
+  import ConfirmDeleteMail from "$lib/components/confirm-delete-mail.svelte";
   import * as Tooltip from "$lib/components/ui/tooltip";
   import { setContext, untrack } from "svelte";
   import { COMPOSER_STATUS, type ComposerStatus } from "$lib/features/sending/composer-context";
@@ -31,6 +32,7 @@
   const composerStatus = $state<ComposerStatus>({ ready: false, sending: false });
   let detailSubject = $state("");
   let deleting = $state(false);
+  let confirmDelete = $state(false);
   async function deleteMessage() {
     const owner = accountId;
     const box = mailbox;
@@ -56,6 +58,7 @@
     const owner = accountId;
     const box = mailbox;
     untrack(() => {
+      confirmDelete = false;
       const selection = selectedListMail;
       const matchesSelection = selection?.accountId === owner && selection.mailbox === box && selection.mail.id === id;
       detailSubject = matchesSelection ? selection.mail.subject || "(No subject)" : "";
@@ -145,7 +148,7 @@
                   <Tooltip.Root>
                     <Tooltip.Trigger>
                       {#snippet child({ props })}
-                        <Button {...props} variant="ghost" size="icon-sm" disabled={deleting} onclick={deleteMessage} aria-label="Delete from this device">
+                        <Button {...props} variant="ghost" size="icon-sm" disabled={deleting} onclick={() => { confirmDelete = true; }} aria-label="Delete from this device">
                           <Trash2 aria-hidden="true" />
                         </Button>
                       {/snippet}
@@ -165,5 +168,6 @@
       </main>
     </div>
   </Sidebar.Provider>
+  <ConfirmDeleteMail bind:open={confirmDelete} subject={detailSubject} onConfirm={() => { void deleteMessage(); }} />
   <MailStatusFooter data={footerData} mailbox={mailbox} />
 {/key}

@@ -3,6 +3,7 @@
   import { ChevronDown, LoaderCircle, Reply, Trash2 } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
   import * as Tooltip from "$lib/components/ui/tooltip";
+  import ConfirmDeleteMail from "./confirm-delete-mail.svelte";
   import { deleteLocalMail } from "$lib/shared/services/delete-mail";
   import { mailUrl } from "$lib/features/auth/mail-routes";
   import * as Collapsible from "$lib/components/ui/collapsible";
@@ -35,6 +36,7 @@
   let detail = $state<Detail | null>(initialDetail);
   let loading = $state(false);
   let deleting = $state(false);
+  let confirmDelete = $state(false);
   async function deleteMessage() {
     if (deleting) return;
     deleting = true;
@@ -159,7 +161,7 @@
         <Tooltip.Root>
           <Tooltip.Trigger>
             {#snippet child({ props })}
-              <Button {...props} variant="ghost" size="icon-xs" class="absolute right-4 top-4" disabled={deleting} onclick={(event) => { event.stopPropagation(); void deleteMessage(); }} aria-label="Delete from this device">
+              <Button {...props} variant="ghost" size="icon-xs" class="absolute right-4 top-4" disabled={deleting} onclick={(event) => { event.stopPropagation(); confirmDelete = true; }} aria-label="Delete from this device">
                 <Trash2 class="size-4" aria-hidden="true" />
               </Button>
             {/snippet}
@@ -185,3 +187,4 @@
     {@render messageBody()}
   </section>
 {/if}
+<ConfirmDeleteMail bind:open={confirmDelete} subject={message.subject} onConfirm={() => { void deleteMessage(); }} />
