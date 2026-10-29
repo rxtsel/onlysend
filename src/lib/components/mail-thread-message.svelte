@@ -11,7 +11,6 @@
   import { useAccountId } from "$lib/features/auth/account-context";
   import MailAvatar from "./mail-avatar.svelte";
   import EmailBody from "./email-body.svelte";
-  import MessageAttachments from "./message-attachments.svelte";
   import { getInboundEmail } from "$lib/shared/inbound";
   import { getSentEmail } from "$lib/shared/sent";
   import { prepareEmailHtml } from "$lib/shared/email-html";
@@ -143,7 +142,13 @@
         <p class="py-6 text-sm text-muted-foreground">No content available.</p>
       {/if}
       {#if detail.attachments?.length}
-        <MessageAttachments context={{ accountId, mailbox: message.mailbox, emailId: message.id }} initialItems={detail.attachments} html={detail.html} oninlineimages={displayInlineImages} />
+        {#await import("./message-attachments.svelte")}
+          <p class="mt-4 text-xs text-muted-foreground" role="status">Loading attachments…</p>
+        {:then { default: MessageAttachments }}
+          <MessageAttachments context={{ accountId, mailbox: message.mailbox, emailId: message.id }} initialItems={detail.attachments} html={detail.html} oninlineimages={displayInlineImages} />
+        {:catch}
+          <p class="mt-4 text-xs text-destructive" role="alert">Couldn't load attachment controls. Reopen this message to retry.</p>
+        {/await}
       {/if}
       {#if threaded && message.mailbox === "inbox"}
         <div class="mt-4 flex justify-end">
