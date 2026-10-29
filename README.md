@@ -33,6 +33,7 @@ changes and may redirect existing mail; review the instructions before changing 
 - [x] Sent mail, an optional inbox, and replies.
 - [x] Search saved mail and filter by domain.
 - [x] Read downloaded messages offline.
+- [x] Delete emails locally with undo.
 - [x] Preview images, open supported attachments, or save them.
 - [x] Configurable inbox checks and notifications while the app is running.
 - [x] Light, dark, and system themes, with customizable avatars.
