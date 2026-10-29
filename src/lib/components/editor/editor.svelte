@@ -3,7 +3,6 @@
   import { Editor } from "@tiptap/core";
   import StarterKit from "@tiptap/starter-kit";
   import Placeholder from "@tiptap/extension-placeholder";
-  import Link from "@tiptap/extension-link";
   import {
     Link as LinkIcon,
     Italic as ItalicIcon,
@@ -97,14 +96,13 @@
     const inst = new Editor({
       element,
       extensions: [
-        StarterKit,
-        Placeholder.configure({ placeholder }),
-        Link.configure({
-          openOnClick: false,
-          HTMLAttributes: {
-            class: "text-blue-400 underline cursor-pointer",
+        StarterKit.configure({
+          link: {
+            openOnClick: false,
+            HTMLAttributes: { class: "text-blue-400 underline cursor-pointer" },
           },
         }),
+        Placeholder.configure({ placeholder }),
       ],
       content,
       editable,
@@ -116,14 +114,9 @@
       },
       onTransaction: () => {
         updateActiveStates();
-        editor = editor;
       },
       onUpdate: ({ editor }) => {
         content = editor.getHTML();
-        updateActiveStates();
-      },
-      onSelectionUpdate: () => {
-        updateActiveStates();
       },
     });
 
