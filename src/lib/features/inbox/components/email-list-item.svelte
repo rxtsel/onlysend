@@ -17,6 +17,7 @@
   } = $props();
   const address = $derived(mode === "inbox" ? mail.from : mail.to.join(", "));
   const name = $derived(address.split("<")[0].replaceAll('"', "").trim() || address);
+  const senderName = $derived(mail.from.split("<")[0].replaceAll('"', "").trim() || mail.from);
   const failureLabel = $derived(mode === "sent" ? sentFailureLabel(mail.lastEvent) : null);
 </script>
 
@@ -25,7 +26,7 @@
   aria-current={isActive ? "true" : undefined}
   class={cn("group/mail flex w-full gap-3 border-b border-b-border/60 bg-[var(--mail-row-bg)] px-4 py-4 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring", isActive ? "[--mail-row-bg:var(--accent)]" : "[--mail-row-bg:var(--background)] hover:[--mail-row-bg:color-mix(in_oklab,var(--muted)_60%,var(--background))]")}
 >
-  <div class="mt-0.5 shrink-0"><MailAvatar address={mode === "inbox" ? mail.from : (mail.to[0] ?? "")} {name} /></div>
+  <div class="mt-0.5 shrink-0"><MailAvatar address={mail.from} name={senderName} /></div>
   <div class="min-w-0 flex-1">
     <div class="flex items-center gap-2">
       <span class={cn("min-w-0 flex-1 truncate text-sm", isUnread ? "font-semibold text-foreground" : "font-medium")}>{name || "Unknown sender"}</span>
