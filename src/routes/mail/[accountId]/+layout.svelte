@@ -129,7 +129,7 @@
             </AlertDialog.Root>
           {:else}
             <Button href={mailUrl(accountId, mailbox)} variant="ghost" size="icon" class="lg:hidden" aria-label="Back to messages"><ArrowLeft /></Button>
-            <h1 class="min-w-0 flex-1 break-words text-base font-semibold leading-tight tracking-tight" aria-busy={isDetail && !detailSubject}>
+            <h1 class="min-w-0 flex-1 break-words text-base font-semibold leading-7 tracking-tight" aria-busy={isDetail && !detailSubject}>
               {#if isDetail && !detailSubject}
                 <span class="sr-only">Loading subject</span><Skeleton aria-hidden="true" class="h-5 w-36" />
               {:else}

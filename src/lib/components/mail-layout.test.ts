@@ -66,6 +66,18 @@ test("single-message toolbar places icon-only delete after reply and persists be
   await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/mail/account-a/inbox"));
 });
 
+test.each(["inbox", "sent"])("%s aligns subject line height with the top-aligned actions", (mailbox) => {
+  pageState.url = new URL(`https://app.test/mail/account-a/${mailbox}/${emailId}`);
+  pageState.params.id = emailId;
+  instance = mount(Layout, { target, props: { threaded: false } });
+  flushSync();
+  const header = target.querySelector("main > header")!;
+  const remove = header.querySelector('[aria-label="Delete from this device"]')!;
+  expect(header.querySelector("h1")?.classList.contains("leading-7")).toBe(true);
+  expect(remove.classList.contains("size-7")).toBe(true);
+  expect(remove.parentElement?.classList.contains("self-start")).toBe(true);
+});
+
 test("thread toolbar leaves deletion to the individual message headers", () => {
   pageState.url = new URL(`https://app.test/mail/account-a/inbox/${emailId}`);
   pageState.params.id = emailId;
