@@ -25,4 +25,4 @@
 
 {@render children()}
 
-<Toaster theme={appearance.theme} richColors duration={6000} position="bottom-right" closeButton />
+<Toaster theme={appearance.theme} duration={6000} position="bottom-right" closeButton />
