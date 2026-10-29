@@ -41,8 +41,48 @@ test("shows the list item's cached preview while the full message is loading", a
   expect(target.textContent).toContain("Cached preview snippet");
   expect(target.textContent).toContain("sender");
   expect(target.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(3);
-  expect(target.querySelector('[aria-busy="true"] > div:first-child > span')?.getAttribute("style")).toContain("width: 32px");
+  expect(target.querySelector('[data-slot="collapsible-trigger"] > span')?.getAttribute("style")).toContain("width: 32px");
   expect(target.querySelector("time")?.classList.contains("whitespace-nowrap")).toBe(true);
+});
+
+test.each([
+  ["inbox", false], ["sent", false], ["inbox", true], ["sent", true],
+] as const)("%s loading preview shares the rendered message layout (threaded: %s)", async (mailbox, threaded) => {
+  const mail = {
+    id: "b3e2b2b6-3f0e-4c8e-9ad3-2f43a1e2c7f1", from: "Sender <sender@example.test>", to: ["me@example.test"],
+    subject: "Subject", createdAt: "2026-01-01T00:00:00Z", preview: "Cached snippet", isRead: true, threadCount: threaded ? 2 : 1,
+  };
+  const full = { ...mail, html: null, text: "First line\nSecond line\nThird line", cc: [], bcc: [], replyTo: [], attachments: [] };
+  let resolve!: (value: typeof full) => void;
+  const promise = new Promise<typeof full>((done) => { resolve = done; });
+  const fetchDetail = mailbox === "inbox" ? vi.mocked(getInboundEmail) : vi.mocked(getSentEmail);
+  if (mailbox === "inbox") vi.mocked(getInboundEmail).mockReturnValueOnce(promise);
+  else vi.mocked(getSentEmail).mockReturnValueOnce(promise.then((value) => ({ ...value, replyTo: null })));
+  vi.mocked(getMailThread).mockResolvedValue(threaded ? [
+    { ...mail, mailbox, id: "older", createdAt: "2025-12-31T00:00:00Z" },
+    { ...mail, mailbox },
+  ] : []);
+  instance = mount(Reader, { target, props: { mailbox, preview: { accountId: "account-a", mailbox, mail } } });
+  await vi.waitFor(() => expect(target.querySelector('[aria-label="Loading full message"]')).not.toBeNull());
+  expect(fetchDetail).toHaveBeenCalledExactlyOnceWith("account-a", mail.id);
+  expect(target.textContent?.split("Cached snippet").length).toBe(threaded ? 2 : 1);
+  const headerSelector = threaded ? '[data-slot="collapsible-trigger"]' : "header";
+  const layout = () => {
+    const header = Array.from(target.querySelectorAll<HTMLElement>(headerSelector)).at(-1)!;
+    return [header.className, header.parentElement?.className, header.firstElementChild?.getAttribute("style"), header.querySelector("time")?.className, header.querySelector("summary")?.className];
+  };
+  const loadingLayout = layout();
+  const skeleton = target.querySelector('[aria-label="Loading full message"]')!;
+  const bodyClass = skeleton.parentElement!.className;
+  for (const name of ["py-4", "text-sm", "leading-7"]) expect(skeleton.classList.contains(name)).toBe(true);
+  expect(Array.from(skeleton.children).every((line) => line.classList.contains("h-7"))).toBe(true);
+  resolve(full);
+  await vi.waitFor(() => expect(target.querySelector("pre")?.textContent).toBe(full.text));
+  expect(layout()).toEqual(loadingLayout);
+  const body = target.querySelector("pre")!;
+  expect(body.parentElement!.className).toBe(bodyClass);
+  for (const name of ["py-4", "text-sm", "leading-7"]) expect(body.classList.contains(name)).toBe(true);
+  expect(target.querySelector('[aria-label="Loading full message"]')).toBeNull();
 });
 
 test("received attachments sit below the content and leave the subject at full width", async () => {

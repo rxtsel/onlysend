@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { ChevronDown, LoaderCircle, Reply, Trash2 } from "@lucide/svelte";
+  import { ChevronDown, Reply, Trash2 } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
+  import { Skeleton } from "$lib/components/ui/skeleton";
   import * as Tooltip from "$lib/components/ui/tooltip";
   import ConfirmDeleteMail from "./confirm-delete-mail.svelte";
   import { deleteLocalMail } from "$lib/shared/services/delete-mail";
@@ -27,8 +28,9 @@
     html: string | null; text?: string | null; attachments?: EmailAttachment[];
     cc?: string[]; bcc?: string[]; replyTo?: string | string[] | null;
   };
-  let { message, selectedId, threaded, initialDetail = null, onDeleted }: {
+  let { message, selectedId, threaded, initialDetail = null, previewLoading = false, onDeleted }: {
     message: MailThreadMessage; selectedId: string; threaded: boolean; initialDetail?: Detail | null;
+    previewLoading?: boolean;
     onDeleted: () => void;
   } = $props();
   const accountId = useAccountId();
@@ -64,7 +66,7 @@
     } finally { if (!disposed) loading = false; }
   }
   $effect(() => {
-    if (open && !detail && !loading && !loadError) void load();
+    if (!previewLoading && open && !detail && !loading && !loadError) void load();
   });
   $effect(() => {
     const html = detail?.html;
@@ -97,9 +99,10 @@
 </script>
 
 {#snippet recipientDetails()}
-  {#if detail}
+  {#if detail || previewLoading}
     <details class="mb-2 text-xs text-muted-foreground">
-      <summary class="cursor-pointer leading-5">To {detail.to.join(", ") || "undisclosed recipients"}</summary>
+      <summary class="cursor-pointer leading-5">To {(detail?.to ?? message.to).join(", ") || "undisclosed recipients"}</summary>
+      {#if detail}
       <dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 leading-5">
         <dt>From</dt><dd class="break-all text-foreground">{detail.from}</dd>
         <dt>To</dt><dd class="break-all text-foreground">{detail.to.join(", ")}</dd>
@@ -108,13 +111,22 @@
         {#if detail.replyTo?.length}<dt>Reply to</dt><dd class="break-all text-foreground">{Array.isArray(detail.replyTo) ? detail.replyTo.join(", ") : detail.replyTo}</dd>{/if}
         <dt>Date</dt><dd class="text-foreground">{formatFullEmailDate(detail.createdAt)}</dd>
       </dl>
+      {/if}
     </details>
   {/if}
 {/snippet}
 
+{#snippet bodySkeleton()}
+  <div class="py-4 text-sm leading-7" role="status" aria-label="Loading full message">
+    <div class="flex h-7 items-center"><Skeleton class="h-3.5 w-full" /></div>
+    <div class="flex h-7 items-center"><Skeleton class="h-3.5 w-5/6" /></div>
+    <div class="flex h-7 items-center"><Skeleton class="h-3.5 w-2/3" /></div>
+  </div>
+{/snippet}
+
 {#snippet messageBody()}
-  {#if loading}
-    <div class="flex items-center gap-2 px-5 py-8 text-sm text-muted-foreground" role="status"><LoaderCircle class="size-4 animate-spin motion-reduce:animate-none" />Loading message…</div>
+  {#if previewLoading || loading}
+    <div class="px-5 pb-5">{@render bodySkeleton()}</div>
   {:else if loadError}
     <div class="flex items-center gap-3 px-5 py-6"><p class="text-sm text-muted-foreground">Couldn't load this message.</p><button type="button" class="text-sm font-medium text-primary underline-offset-4 hover:underline" onclick={load}>Try again</button></div>
   {:else if detail}
@@ -126,7 +138,7 @@
       {:else if htmlError}
         <p class="py-6 text-sm text-muted-foreground" role="alert">Couldn't display this message.</p>
       {:else if detail.html}
-        <p class="py-6 text-sm text-muted-foreground" role="status">Preparing message…</p>
+        {@render bodySkeleton()}
       {:else}
         <p class="py-6 text-sm text-muted-foreground">No content available.</p>
       {/if}
@@ -145,7 +157,7 @@
 {#if threaded}
   <Collapsible.Root bind:open class="border-b last:border-b-0">
     <div class="relative">
-      <Collapsible.Trigger class="group flex w-full items-center gap-3 px-5 py-4 pr-12 text-left outline-none transition-colors hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+      <Collapsible.Trigger disabled={previewLoading} class="group flex w-full items-center gap-3 px-5 py-4 pr-12 text-left outline-none transition-colors hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
         <MailAvatar address={message.from} {name} />
         <span class="min-w-0 flex-1">
           <span class="flex items-baseline justify-between gap-3">
@@ -161,7 +173,7 @@
         <Tooltip.Root>
           <Tooltip.Trigger>
             {#snippet child({ props })}
-              <Button {...props} variant="ghost" size="icon-xs" class="absolute right-4 top-4" disabled={deleting} onclick={(event) => { event.stopPropagation(); confirmDelete = true; }} aria-label="Delete from this device">
+              <Button {...props} variant="ghost" size="icon-xs" class="absolute right-4 top-4" disabled={deleting || previewLoading} onclick={(event) => { event.stopPropagation(); confirmDelete = true; }} aria-label="Delete from this device">
                 <Trash2 class="size-4" aria-hidden="true" />
               </Button>
             {/snippet}
