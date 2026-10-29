@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.1.8 - 2026-10-29
+
+### Features
+- Persist account-scoped local email deletion (2c2adc8)
+- Add delete controls with five-second undo (354cd8a)
+- Confirm email deletion with a destructive alert dialog (85c7f44)
+- Add dropdown and context actions to email rows (741088c)
+
+
+### Fixes
+- Use consistent sender avatars in list and preview (6a80ee2)
+- Align subject line height with toolbar actions (20a400a)
+- Match preview skeleton spacing to rendered messages (8bb51b2)
+- Preserve authored email styles without overrides (bf7d333)
+- Reuse sent cache without remote thread metadata (d22c693)
+- Isolate refresh queues by account (439e122)
+
+
+### Maintenance
+- Use default toast colors (46f52e3)
+- List local email deletion with undo (cb213f7)
+
+
+### Performance
+- Batch archive reads and index thread relationships (61bd942)
+- Remove duplicate toolbar updates and link registration (66f5929)
+- Lazy load attachment controls (a8dae04)
+- Resize app logo for its rendered dimensions (bcc22b8)
+
 ## v0.1.7 - 2026-10-28
 
 ### Features
