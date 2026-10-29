@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::Mutex;
+use crate::infrastructure::account_locks::AccountLocks;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -30,21 +30,7 @@ struct PendingFlow {
 pub struct OAuthState {
     pending: Mutex<Option<PendingFlow>>,
     /// Independent single-flight queues; one slow account cannot block another.
-    refresh_locks: Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>,
-}
-
-impl OAuthState {
-    fn refresh_lock(&self, account_id: &str) -> Result<Arc<tokio::sync::Mutex<()>>, String> {
-        let mut locks = self.refresh_locks.lock()
-            .map_err(|_| "[ERROR] Refresh lock poisoned".to_string())?;
-        locks.retain(|_, lock| lock.strong_count() > 0);
-        if let Some(lock) = locks.get(account_id).and_then(Weak::upgrade) {
-            return Ok(lock);
-        }
-        let lock = Arc::new(tokio::sync::Mutex::new(()));
-        locks.insert(account_id.to_owned(), Arc::downgrade(&lock));
-        Ok(lock)
-    }
+    refresh_locks: AccountLocks,
 }
 
 #[derive(Serialize)]
@@ -349,7 +335,7 @@ pub(crate) async fn get_account_credential(
     // Single-flight: N concurrent callers produce exactly ONE refresh
     // request. Latecomers re-read the rotated tokens from the store.
     let state: State<OAuthState> = app.state();
-    let refresh_lock = state.refresh_lock(account_id)?;
+    let refresh_lock = state.refresh_locks.get(account_id)?;
     let _guard = refresh_lock.lock().await;
 
     let record = match store::account_credential(app, account_id)? {
@@ -521,24 +507,14 @@ mod tests {
     #[tokio::test]
     async fn refresh_queues_are_shared_only_within_one_account() {
         let state = OAuthState::default();
-        let a = state.refresh_lock("a").unwrap();
-        let another_a = state.refresh_lock("a").unwrap();
-        let b = state.refresh_lock("b").unwrap();
+        let a = state.refresh_locks.get("a").unwrap();
+        let another_a = state.refresh_locks.get("a").unwrap();
+        let b = state.refresh_locks.get("b").unwrap();
         assert!(Arc::ptr_eq(&a, &another_a));
         assert!(!Arc::ptr_eq(&a, &b));
         let _guard = a.lock().await;
         assert!(another_a.try_lock().is_err());
         assert!(b.try_lock().is_ok());
-    }
-
-    #[test]
-    fn unused_refresh_queues_are_reclaimed() {
-        let state = OAuthState::default();
-        drop(state.refresh_lock("a").unwrap());
-        let _b = state.refresh_lock("b").unwrap();
-        let locks = state.refresh_locks.lock().unwrap();
-        assert!(!locks.contains_key("a"));
-        assert!(locks.contains_key("b"));
     }
 
     #[test]

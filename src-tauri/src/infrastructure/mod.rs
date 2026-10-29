@@ -5,6 +5,7 @@
 //! - `auth.json` — credentials, DO NOT SHARE (via credentials_store)
 //! - `onlysend.sqlite3` — local-state schema; no production JSON import yet
 
+pub(crate) mod account_locks;
 pub mod credentials_store;
 pub(crate) mod database;
 pub mod http;

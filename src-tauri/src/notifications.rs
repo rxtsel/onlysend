@@ -10,6 +10,7 @@ use tokio::sync::{Mutex, Notify};
 
 use crate::inbound::InboundEmailDto;
 use crate::infrastructure::{
+    account_locks::AccountLocks,
     credentials_store,
     database::{
         local_state,
@@ -24,8 +25,7 @@ const PAGE_SIZE: usize = 100;
 
 #[derive(Default)]
 pub(crate) struct InboxService {
-    // One flight across accounts also bounds concurrent requests and avoids
-    // manual refresh racing the poller's persistent notification checkpoint.
+    refresh_locks: AccountLocks,
     last_success: Mutex<HashMap<String, Instant>>,
     changed: Notify,
 }
@@ -163,10 +163,12 @@ pub(crate) async fn refresh_inbox(
 ) -> Result<(), String> {
     let requested = Instant::now();
     let service = app.state::<InboxService>();
-    let mut last_success = service.last_success.lock().await;
+    let flight = service.refresh_locks.get(&account_id)?;
+    let _guard = flight.lock().await;
     credentials_store::account_credential(&app, &account_id)?;
+    let last_success = service.last_success.lock().await.get(&account_id).copied();
     if !should_refresh(
-        last_success.get(&account_id).copied(),
+        last_success,
         requested,
         get_inbox_poll_minutes(app.clone())?,
         force,
@@ -232,7 +234,7 @@ pub(crate) async fn refresh_inbox(
         .run(move |connection| save_checkpoint(connection, &id, &checkpoint))
         .await?;
     credentials_store::account_credential(&app, &account_id)?;
-    last_success.insert(account_id.clone(), Instant::now());
+    service.last_success.lock().await.insert(account_id.clone(), Instant::now());
     // Native notification failures must not invalidate a successful refresh or
     // repeatedly alert on the same messages. No private mail in lock-screen text.
     if count > 0 && get_inbox_poll_minutes(app.clone()).unwrap_or(0) != 0 {
@@ -345,6 +347,19 @@ pub(crate) fn start(app: AppHandle<Wry>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_slow_account_does_not_block_another_accounts_refresh() {
+        let service = InboxService::default();
+        let a = service.refresh_locks.get("a").unwrap();
+        let same_a = service.refresh_locks.get("a").unwrap();
+        let b = service.refresh_locks.get("b").unwrap();
+        let _a_guard = a.lock().await;
+        assert!(same_a.try_lock().is_err());
+        let _b_guard = tokio::time::timeout(Duration::from_secs(1), b.lock()).await.unwrap();
+        service.last_success.lock().await.insert("b".into(), Instant::now());
+        assert!(service.last_success.lock().await.contains_key("b"));
+    }
 
     #[test]
     fn refresh_obeys_ttl_off_manual_override_and_coalesces_waiters() {
