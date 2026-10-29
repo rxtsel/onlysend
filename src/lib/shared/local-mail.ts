@@ -45,6 +45,11 @@ export function getMailThread(accountId: string, mailbox: Mailbox, emailId: stri
   return invoke("get_mail_thread", { accountId, mailbox, emailId });
 }
 
+/** Hides mail on this device only; never deletes it from Resend. */
+export function setMailDeleted(accountId: string, mailbox: Mailbox, emailId: string, deleted: boolean): Promise<void> {
+  return invoke("set_mail_deleted", { accountId, mailbox, emailId, deleted });
+}
+
 export interface MailArchiveStatus {
   downloadedMessages: number;
   downloadedBodies: number;

@@ -88,6 +88,43 @@ fn query(mailbox: Mailbox) -> LocalQuery {
 }
 
 #[tokio::test]
+async fn local_deletion_survives_sync_and_reopen_and_filters_before_pagination() {
+    let temporary = TemporaryDatabase::new();
+    let database = temporary.database();
+    let messages = page(vec![
+        message("a", "Invoice", "2026-01-01T00:00:00Z"),
+        message("b", "Invoice", "2026-01-02T00:00:00Z"),
+        message("c", "Invoice", "2026-01-03T00:00:00Z"),
+    ]);
+    for (account, mailbox) in [("a", Mailbox::Inbox), ("b", Mailbox::Inbox), ("a", Mailbox::Sent)] {
+        mail::store_page(&database, account.into(), mailbox, 20, None, &messages).await.unwrap();
+    }
+    mail::set_deleted(&database, "a".into(), Mailbox::Inbox, "c".into(), true).await.unwrap();
+    mail::store_page(&database, "a".into(), Mailbox::Inbox, 20, None, &messages).await.unwrap();
+    drop(database);
+    let database = temporary.database();
+    let mut request = query(Mailbox::Inbox);
+    request.limit = Some(1);
+    request.search = Some("Invoice".into());
+    request.unread_only = true;
+    let first = mail::query(&database, "a".into(), request.clone()).await.unwrap();
+    assert_eq!(first.items[0]["id"], "b");
+    assert!(first.has_more);
+    request.after = first.next_cursor;
+    let second = mail::query(&database, "a".into(), request).await.unwrap();
+    assert_eq!(second.items[0]["id"], "a");
+    assert!(!second.has_more);
+    assert!(mail::ensure_visible(&database, "a".into(), Mailbox::Inbox, "c".into()).await.is_err());
+    for (account, mailbox) in [("b", Mailbox::Inbox), ("a", Mailbox::Sent)] {
+        assert!(mail::ensure_visible(&database, account.into(), mailbox, "c".into()).await.is_ok());
+        assert_eq!(mail::query(&database, account.into(), query(mailbox)).await.unwrap().items[0]["id"], "c");
+    }
+    mail::set_deleted(&database, "a".into(), Mailbox::Inbox, "c".into(), false).await.unwrap();
+    assert!(mail::ensure_visible(&database, "a".into(), Mailbox::Inbox, "c".into()).await.is_ok());
+    assert_eq!(mail::query(&database, "a".into(), query(Mailbox::Inbox)).await.unwrap().items[0]["id"], "c");
+}
+
+#[tokio::test]
 async fn thread_links_are_account_scoped_and_annotate_list_rows_with_counts() {
     let temporary = TemporaryDatabase::new();
     let database = temporary.database();
@@ -205,6 +242,16 @@ async fn cached_thread_deduplicates_sent_and_received_copies_by_message_id() {
     .await
     .unwrap();
     assert_eq!(thread[1].0, "sent");
+    for (mailbox, id) in [(Mailbox::Sent, "reply-sent"), (Mailbox::Inbox, "reply-copy")] {
+        mail::set_deleted(&database, "a".into(), mailbox, id.into(), true).await.unwrap();
+    }
+    let visible = mail::cached_thread(&database, "a".into(), "root@example.test".into(), Mailbox::Inbox).await.unwrap();
+    assert_eq!(visible.len(), 1);
+    let inbox = mail::query(&database, "a".into(), query(Mailbox::Inbox)).await.unwrap();
+    assert_eq!(inbox.items.len(), 1);
+    assert_eq!(inbox.items[0]["threadCount"], 1);
+    mail::set_deleted(&database, "a".into(), Mailbox::Sent, "reply-sent".into(), false).await.unwrap();
+    assert_eq!(mail::cached_thread(&database, "a".into(), "root@example.test".into(), Mailbox::Inbox).await.unwrap().len(), 2);
 }
 
 #[tokio::test]

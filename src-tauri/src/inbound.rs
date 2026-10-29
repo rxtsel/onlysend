@@ -340,6 +340,8 @@ pub async fn open_inbound_email(
     account_id: String,
     email_id: String,
 ) -> Result<InboundEmailDetailDto, String> {
+    let database = local_state::for_account(&app, &account_id).await?;
+    mail::ensure_visible(&database, account_id.clone(), Mailbox::Inbox, email_id.clone()).await?;
     let detail =
         get_inbound_email(app.clone(), account_id.clone(), email_id.clone(), false).await?;
     if crate::infrastructure::settings_store::mark_inbound_read(

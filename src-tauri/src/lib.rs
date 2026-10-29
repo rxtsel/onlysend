@@ -147,6 +147,7 @@ pub fn run() {
             inbound::open_inbound_email,
             mailbox::load_mail_list,
             mailbox::get_mail_thread,
+            mailbox::set_mail_deleted,
             config::list_from_emails,
             config::create_from_email,
             config::update_from_email,

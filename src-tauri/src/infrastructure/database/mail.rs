@@ -68,6 +68,39 @@ fn strings(value: &Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+pub(crate) async fn ensure_visible(
+    database: &Database,
+    account_id: String,
+    mailbox: Mailbox,
+    email_id: String,
+) -> Result<(), String> {
+    let deleted: bool = database.run(move |connection| connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM deleted_emails WHERE account_id=?1 AND mailbox=?2 AND email_id=?3)",
+        params![account_id, mailbox.as_str(), email_id], |row| row.get(0),
+    )).await?;
+    if deleted { return Err("This email was deleted from this device".into()); }
+    Ok(())
+}
+
+pub(crate) async fn set_deleted(
+    database: &Database,
+    account_id: String,
+    mailbox: Mailbox,
+    email_id: String,
+    deleted: bool,
+) -> Result<(), String> {
+    database.run(move |connection| {
+        let tx = connection.transaction()?;
+        tx.execute("INSERT OR IGNORE INTO account_state VALUES (?1)", [&account_id])?;
+        if deleted {
+            tx.execute("INSERT OR IGNORE INTO deleted_emails VALUES (?1,?2,?3)", params![account_id, mailbox.as_str(), email_id])?;
+        } else {
+            tx.execute("DELETE FROM deleted_emails WHERE account_id=?1 AND mailbox=?2 AND email_id=?3", params![account_id, mailbox.as_str(), email_id])?;
+        }
+        tx.commit()
+    }).await
+}
+
 pub(crate) async fn cached_detail(
     database: &Database,
     account_id: String,
@@ -105,7 +138,7 @@ pub(crate) async fn cached_thread(
 ) -> Result<Vec<(String, String)>, String> {
     let rows = database.run(move |connection| {
         let mut statement = connection.prepare(
-            "SELECT e.mailbox,e.created_at_ms,b.detail_json FROM email_threads t JOIN emails e USING(account_id,mailbox,email_id) JOIN email_bodies b USING(account_id,mailbox,email_id) WHERE t.account_id=?1 AND t.thread_id=?2 ORDER BY e.created_at_ms,e.email_id",
+            "SELECT e.mailbox,e.created_at_ms,b.detail_json FROM email_threads t JOIN emails e USING(account_id,mailbox,email_id) JOIN email_bodies b USING(account_id,mailbox,email_id) WHERE t.account_id=?1 AND t.thread_id=?2 AND NOT EXISTS(SELECT 1 FROM deleted_emails d WHERE d.account_id=e.account_id AND d.mailbox=e.mailbox AND d.email_id=e.email_id) ORDER BY e.created_at_ms,e.email_id",
         )?;
         let rows = statement.query_map(params![account_id, thread_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?))
@@ -463,7 +496,7 @@ pub(crate) async fn query(
         Sort::SenderAsc => ("sender_sort", false, false),
         Sort::SenderDesc => ("sender_sort", true, false),
     };
-    let mut sql = format!("SELECT CASE WHEN t.thread_id IS NULL THEN e.metadata_json ELSE json_set(e.metadata_json,'$.threadId',t.thread_id,'$.threadCount',(SELECT count(DISTINCT COALESCE(json_extract(b.detail_json,'$.messageId'),siblings.email_id)) FROM email_threads siblings LEFT JOIN email_bodies b ON b.account_id=siblings.account_id AND b.mailbox=siblings.mailbox AND b.email_id=siblings.email_id WHERE siblings.account_id=t.account_id AND siblings.thread_id=t.thread_id)) END,CAST(e.{column} AS TEXT),e.email_id,substr(e.search_body,1,240),m.email_id IS NOT NULL FROM emails e LEFT JOIN read_markers m ON m.account_id=e.account_id AND m.mailbox=e.mailbox AND m.email_id=e.email_id LEFT JOIN email_threads t ON t.account_id=e.account_id AND t.mailbox=e.mailbox AND t.email_id=e.email_id WHERE e.account_id=? AND e.mailbox=?");
+    let mut sql = format!("SELECT CASE WHEN t.thread_id IS NULL THEN e.metadata_json ELSE json_set(e.metadata_json,'$.threadId',t.thread_id,'$.threadCount',(SELECT count(DISTINCT COALESCE(json_extract(b.detail_json,'$.messageId'),siblings.email_id)) FROM email_threads siblings LEFT JOIN email_bodies b ON b.account_id=siblings.account_id AND b.mailbox=siblings.mailbox AND b.email_id=siblings.email_id WHERE siblings.account_id=t.account_id AND siblings.thread_id=t.thread_id AND NOT EXISTS(SELECT 1 FROM deleted_emails d WHERE d.account_id=siblings.account_id AND d.mailbox=siblings.mailbox AND d.email_id=siblings.email_id))) END,CAST(e.{column} AS TEXT),e.email_id,substr(e.search_body,1,240),m.email_id IS NOT NULL FROM emails e LEFT JOIN read_markers m ON m.account_id=e.account_id AND m.mailbox=e.mailbox AND m.email_id=e.email_id LEFT JOIN email_threads t ON t.account_id=e.account_id AND t.mailbox=e.mailbox AND t.email_id=e.email_id WHERE e.account_id=? AND e.mailbox=? AND NOT EXISTS(SELECT 1 FROM deleted_emails d WHERE d.account_id=e.account_id AND d.mailbox=e.mailbox AND d.email_id=e.email_id)");
     let mut values: Vec<SqlValue> = vec![
         account.clone().into(),
         query.mailbox.as_str().to_string().into(),

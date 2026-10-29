@@ -1,7 +1,7 @@
 //! Account-owned list reads: local filtering, previews and offline fallback.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Wry};
+use tauri::{AppHandle, Emitter, Wry};
 
 use crate::infrastructure::{
     database::{
@@ -94,6 +94,27 @@ fn list_page(
         },
         domains,
     })
+}
+
+#[tauri::command]
+pub async fn set_mail_deleted(
+    app: AppHandle<Wry>,
+    account_id: String,
+    mailbox: Mailbox,
+    email_id: String,
+    deleted: bool,
+) -> Result<(), String> {
+    if uuid::Uuid::parse_str(&email_id).is_err() {
+        return Err("Invalid email ID".into());
+    }
+    let database = local_state::for_account(&app, &account_id).await?;
+    mail::set_deleted(&database, account_id.clone(), mailbox, email_id.clone(), deleted).await?;
+    if app.emit("mail-deletion-updated", serde_json::json!({
+        "accountId": account_id, "mailbox": mailbox, "emailId": email_id, "deleted": deleted,
+    })).is_err() {
+        eprintln!("[WARN] Could not publish local mail deletion state");
+    }
+    Ok(())
 }
 
 #[tauri::command]

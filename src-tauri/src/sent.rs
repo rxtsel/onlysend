@@ -371,6 +371,16 @@ pub async fn get_sent_email(
     email_id: String,
 ) -> Result<SentEmail, String> {
     let database = local_state::for_account(&app, &account_id).await?;
+    mail::ensure_visible(&database, account_id.clone(), Mailbox::Sent, email_id.clone()).await?;
+    download_sent_email(app, account_id, email_id).await
+}
+
+pub(crate) async fn download_sent_email(
+    app: AppHandle<Wry>,
+    account_id: String,
+    email_id: String,
+) -> Result<SentEmail, String> {
+    let database = local_state::for_account(&app, &account_id).await?;
     let cached = mail::cached_detail(
         &database,
         account_id.clone(),
