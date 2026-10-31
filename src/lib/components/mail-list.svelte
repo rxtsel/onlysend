@@ -3,7 +3,7 @@
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { listen } from "@tauri-apps/api/event";
-  import { RefreshCw, Search, Inbox, LoaderCircle } from "@lucide/svelte";
+  import { RefreshCw, Search, Inbox, LoaderCircle, Trash2 } from "@lucide/svelte";
   import { toast } from "svelte-sonner";
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
@@ -17,8 +17,10 @@
   import type { ArchiveFooterData } from "$lib/shared/archive-status";
   import { authErrorToast, isAuthError } from "$lib/shared/services/auth-toast.svelte";
   import { errorMessage } from "$lib/shared/utils/errors";
-  import { deleteLocalMail } from "$lib/shared/services/delete-mail";
+  import { deleteLocalMail, deleteLocalMails } from "$lib/shared/services/delete-mail";
   import { cn } from "$lib/utils";
+  import { createMailSelection } from "$lib/shared/mail-selection.svelte";
+  import ConfirmDeleteMail from "$lib/components/confirm-delete-mail.svelte";
 
   let { mailbox, domain, active = true, class: className, onDomainsChange, onSelectMail, onArchiveStatusChange }: {
     mailbox: Mailbox;
@@ -39,6 +41,11 @@
   let lastKey = "";
   let lastMailbox: Mailbox | null = null;
   let catalogKey = "";
+  const selection = createMailSelection();
+  let bulkDeleting = $state(false);
+  let confirmBulkDelete = $state(false);
+  let pendingDelete = $state<{ ids: string[]; mailbox: Mailbox; key: string } | null>(null);
+  let listElement: HTMLElement;
 
   async function fetchPage(limit: number, after: string | null, refresh: boolean) {
     const owner = mailbox;
@@ -74,6 +81,71 @@
     }
     return [...grouped.values()];
   });
+
+  const rowIds = $derived(threads.map((thread) => thread.mail.id));
+  const activeRowId = $derived(threads.find((thread) => thread.ids.has(page.params.id ?? ""))?.mail.id);
+
+  $effect(() => {
+    const ids = rowIds;
+    if (!list.isLoading) untrack(() => selection.reconcile(ids));
+  });
+
+  function selectRow(id: string, event: MouseEvent) {
+    if (bulkDeleting || confirmBulkDelete) return;
+    const modified = event.shiftKey || event.ctrlKey || event.metaKey;
+    selection.click(id, rowIds, event.shiftKey, event.ctrlKey || event.metaKey, activeRowId);
+    const previewId = !modified || selection.ids.includes(id) ? id : selection.ids.at(-1);
+    if (previewId) openMail(previewId);
+  }
+
+  function selectionKeydown(event: KeyboardEvent) {
+    if (!active || bulkDeleting || confirmBulkDelete || event.defaultPrevented) return;
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || target.isContentEditable || target.closest('[role="dialog"], [role="alertdialog"], [role="menu"], [contenteditable]:not([contenteditable="false"]), [role="textbox"], input, textarea, select')) return;
+    if (selection.ids.length && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && ["Delete", "Backspace"].includes(event.key)) {
+      event.preventDefault();
+      if (!event.repeat) requestBulkDelete();
+      return;
+    }
+    const row = target.closest<HTMLElement>("[data-mail-id]");
+    // Do not hijack arrows in the reader, sidebar or row action menus.
+    if (event.key === "Escape" && (listElement?.contains(target) || target === document.body)) {
+      selection.clear();
+      return;
+    }
+    if (!row && target !== document.body) return;
+    if (row && !listElement?.contains(row)) return;
+    if (!event.shiftKey || event.altKey || event.ctrlKey || event.metaKey || !["ArrowDown", "ArrowUp"].includes(event.key)) return;
+    event.preventDefault();
+    const id = selection.move(rowIds, event.key === "ArrowDown" ? 1 : -1, row?.dataset.mailId ?? activeRowId);
+    const button = Array.from(listElement.querySelectorAll<HTMLButtonElement>("[data-mail-id]")).find((item) => item.dataset.mailId === id);
+    button?.focus({ preventScroll: true });
+    button?.scrollIntoView?.({ block: "nearest" });
+    if (id) openMail(id);
+  }
+
+  function requestBulkDelete() {
+    if (!selection.ids.length || bulkDeleting) return;
+    pendingDelete = { ids: [...selection.ids], mailbox, key: lastKey };
+    confirmBulkDelete = true;
+  }
+
+  async function deleteSelected() {
+    const request = pendingDelete;
+    if (!request || bulkDeleting || request.key !== lastKey || !active) return;
+    bulkDeleting = true;
+    try {
+      const deleted = await deleteLocalMails(accountId, request.mailbox, request.ids);
+      if (!deleted || disposed || request.key !== lastKey || !active) return;
+      selection.clear();
+      // The deletion event also refreshes other views; refresh here even if it was missed.
+      list.clearItems();
+      await list.refreshCached();
+      if (disposed || request.key !== lastKey || !active) return;
+      if (request.ids.includes(page.params.id ?? "")) await goto(mailUrl(accountId, request.mailbox));
+    } catch (error) { report(error); }
+    finally { bulkDeleting = false; }
+  }
 
   function report(error: unknown) {
     if (disposed) return;
@@ -112,7 +184,11 @@
   $effect(() => {
     const key = JSON.stringify([mailbox, domain, searchTerm]);
     const owner = mailbox;
-    if (!active) { lastKey = ""; return; }
+    if (!active) {
+      lastKey = "";
+      untrack(() => { selection.clear(); confirmBulkDelete = false; pendingDelete = null; });
+      return;
+    }
     untrack(() => {
       if (lastKey === key) return;
       const revalidate = lastMailbox !== owner || lastKey === "";
@@ -121,6 +197,9 @@
         statusError = null;
         void refreshStatus();
       }
+      selection.clear();
+      confirmBulkDelete = false;
+      pendingDelete = null;
       lastMailbox = owner;
       lastKey = key;
       list.clearItems();
@@ -137,10 +216,11 @@
     untrack(() => onArchiveStatusChange(accountId, owner, data));
   });
 
-  function openMail(id: string, threadCount: number) {
-    const mail = list.items.find((item) => item.id === id);
-    if (mail) onSelectMail({ ...mail, threadCount }, mailbox);
-    void goto(mailUrl(accountId, mailbox, id));
+  function openMail(id: string) {
+    const thread = threads.find((thread) => thread.mail.id === id);
+    if (!thread) return;
+    onSelectMail({ ...thread.mail, threadCount: thread.mail.threadCount ?? thread.count }, mailbox);
+    void goto(mailUrl(accountId, mailbox, id), { keepFocus: true, noScroll: true }).catch(report);
   }
 
   function replyMail(id: string) {
@@ -201,16 +281,25 @@
   onDestroy(() => { disposed = true; list.clearItems(); });
 </script>
 
-<section class={cn("flex min-h-0 min-w-0 flex-col border-e bg-background", className)} aria-label={`${mailbox === "inbox" ? "Inbox" : "Sent"} messages`}>
+<svelte:window onkeydown={selectionKeydown} />
+
+<section bind:this={listElement} class={cn("flex min-h-0 min-w-0 flex-col border-e bg-background", className)} aria-label={`${mailbox === "inbox" ? "Inbox" : "Sent"} messages`}>
   <header class="flex h-16 shrink-0 items-center gap-2 border-b px-4">
     <Sidebar.Trigger aria-label="Toggle mailboxes" />
     <div class="min-w-0 flex-1">
       <h1 class="text-base font-semibold tracking-tight">{mailbox === "inbox" ? "Inbox" : "Sent"}</h1>
       {#if domain}<p class="truncate text-xs text-muted-foreground">{domain}</p>{/if}
     </div>
-    <Button variant="ghost" size="icon" onclick={refresh} disabled={list.isRefreshing || manualRefreshing} aria-label="Refresh mail" title="Refresh mail">
-      <RefreshCw class={cn((list.isRefreshing || manualRefreshing) && "animate-spin motion-reduce:animate-none")} />
-    </Button>
+    {#if selection.ids.length || bulkDeleting}
+      <span class="shrink-0 text-xs text-muted-foreground" role="status">{bulkDeleting ? "Deleting…" : `${selection.ids.length} Selected`}</span>
+      <Button variant="ghost" size="icon" onclick={requestBulkDelete} disabled={bulkDeleting} aria-label="Delete selected emails" title="Delete selected emails">
+        {#if bulkDeleting}<LoaderCircle class="animate-spin motion-reduce:animate-none" />{:else}<Trash2 />{/if}
+      </Button>
+    {:else}
+      <Button variant="ghost" size="icon" onclick={refresh} disabled={list.isRefreshing || manualRefreshing} aria-label="Refresh mail" title="Refresh mail">
+        <RefreshCw class={cn((list.isRefreshing || manualRefreshing) && "animate-spin motion-reduce:animate-none")} />
+      </Button>
+    {/if}
   </header>
   <div class="shrink-0 border-b px-4 py-3">
     <InputGroup.Root>
@@ -239,7 +328,7 @@
     {:else}
       {#each threads as thread (thread.mail.threadId ?? thread.mail.id)}
         {@const mail = thread.mail}
-        <EmailListItem {mail} mode={mailbox} threadCount={mail.threadCount ?? thread.count} isActive={thread.ids.has(page.params.id ?? "")} isUnread={thread.unread} onclick={(id) => openMail(id, mail.threadCount ?? thread.count)} onreply={replyMail} ondelete={deleteMail} />
+        <EmailListItem {mail} mode={mailbox} threadCount={mail.threadCount ?? thread.count} isActive={thread.ids.has(page.params.id ?? "")} isUnread={thread.unread} isSelected={selection.ids.includes(mail.id)} disabled={bulkDeleting} onclick={selectRow} onreply={replyMail} ondelete={deleteMail} />
       {/each}
       {#if list.hasMore}
         <div class="p-3"><Button class="w-full" variant="ghost" disabled={list.isLoadingMore || list.isRefreshing} onclick={() => { void list.loadMore().catch(report); }}>
@@ -249,3 +338,4 @@
     {/if}
   </div>
 </section>
+<ConfirmDeleteMail bind:open={confirmBulkDelete} count={pendingDelete?.ids.length ?? 0} onConfirm={() => { void deleteSelected(); }} />

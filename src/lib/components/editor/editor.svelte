@@ -109,7 +109,7 @@
       editorProps: {
         attributes: {
           class:
-            "prose prose-neutral dark:prose-invert prose-sm max-h-full w-full h-full min-h-full sm:prose-base p-5 focus:outline-none",
+            "prose prose-neutral dark:prose-invert prose-sm max-w-none min-h-full w-full sm:prose-base px-2.5 py-3 focus:outline-none",
         },
       },
       onTransaction: () => {
@@ -131,14 +131,14 @@
 <div
   inert={disabled}
   aria-disabled={disabled || undefined}
-  class={cn("border rounded-md h-full shrink", {
-    "border-red-500": ariaInvalid,
+  class={cn("flex h-full min-h-0 flex-col", {
+    "ring-1 ring-destructive": ariaInvalid,
     "border-0 -ml-4 max-w-full w-full": !editable,
   })}
 >
   {#if editor && editable}
     <!-- Toolbar -->
-    <div class="border-b p-2 flex gap-1">
+    <div class="flex shrink-0 flex-wrap items-center gap-1 py-2">
       <Button
         type="button"
         variant="ghost"
@@ -279,7 +279,7 @@
   {/if}
 
   <!-- Editor -->
-  <div class="h-full min-h-full max-h-full shrink" bind:this={element}></div>
+  <div class="min-h-0 flex-1 overflow-y-auto" bind:this={element}></div>
 </div>
 
 <style>

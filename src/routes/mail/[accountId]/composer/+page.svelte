@@ -22,6 +22,7 @@
   import type { FromEmail } from "@/lib/types";
   import { encodeAttachments } from "$lib/shared/attachments";
   import { errorMessage } from "$lib/shared/utils/errors";
+  import { cn } from "$lib/utils";
   import ComposerAttachments from "$lib/components/composer-attachments.svelte";
   import { getContext, onMount, onDestroy, tick, untrack } from "svelte";
   import { listFromEmails, formatFromEmail } from "@/lib/shared/from-emails";
@@ -44,6 +45,8 @@
   let files = $state<File[]>([]);
   let isSending = $state(false);
 
+  let isReplyToEnabled = $state(false);
+  let replyTo = $state("");
   let isCcEnabled = $state<boolean>(false);
   let isBccEnabled = $state<boolean>(false);
   let ccEmails = $state<Tag[]>([]);
@@ -54,7 +57,7 @@
   let sent = false;
   const unregisterGuard = registerDraftGuard(accountId, () =>
     sent || !((!isReply && subject) || content || toEmails.map((tag) => tag.text).join("\n") !== initialTo || ccEmails.length ||
-      bccEmails.length || files.length || from !== initialFrom) ||
+      bccEmails.length || replyTo.trim() || files.length || from !== initialFrom) ||
     window.confirm("Leave this page and discard the current draft?"),
   );
   $effect(() => {
@@ -83,6 +86,7 @@
       subject: isReply ? reply!.subject : subject,
       bcc: isBccEnabled ? bccEmails.map((t) => t.text) : [],
       cc: isCcEnabled ? ccEmails.map((t) => t.text) : [],
+      ...(isReplyToEnabled && replyTo.trim() ? { replyTo: replyTo.trim() } : {}),
       content,
       replyEmailId,
     };
@@ -112,6 +116,8 @@
       subject = "";
       content = "";
       files = [];
+      isReplyToEnabled = false;
+      replyTo = "";
       isCcEnabled = false;
       isBccEnabled = false;
       ccEmails = [];
@@ -172,131 +178,98 @@
   </div>
 {:else}
 <form
-  class="h-full w-full overflow-hidden"
+  class="h-full w-full"
   onsubmit={handleSubmit}
   id="compose-email-form"
   aria-busy={isSending}
 >
   <fieldset disabled={isSending} class="contents">
-  <Field.Group class="h-full gap-0 overflow-hidden rounded-xl border bg-background">
-    <Field.Field class="shrink-0 border-b px-4 py-3">
-      <Field.Label for="subject">Subject</Field.Label>
-      <Input
-        id="subject"
-        type="text"
-        name="subject"
-        placeholder="Subject"
-        readonly={isReply}
-        class={isReply ? "bg-muted/40" : undefined}
-        bind:value={subject}
-        aria-invalid={!!errors.subject}
-        onkeydown={(event) => {
-          if (event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && composerEditor?.focus()) {
-            event.preventDefault();
-          }
-        }}
-      />
-      {#if errors.subject}<Field.Error>{errors.subject}</Field.Error>{/if}
-    </Field.Field>
-    <div class="shrink-0 space-y-3 border-b px-4 py-3">
-    <!-- From and Group buttons -->
-    <div class="flex items-end gap-3">
-      <Field.Field class="flex-1">
-        <Field.Label for="from">From</Field.Label>
-        <Select.Root type="single" name="from" bind:value={from}>
-          <Select.Trigger
-            class="w-[180px]"
-            id="from"
-            aria-invalid={!!errors.from}
-          >
-            {#if from}
-              {from}
-            {:else}
-              Select an email
-            {/if}
-          </Select.Trigger>
-          <Select.Content>
-            {#if fromEmails.length === 0}
-              <span class="w-full text-center text-sm inline-block py-1">
-                Create email address in: Settings > Email sender options
-              </span>
-            {:else}
-              {#each fromEmails as option}
-                <Select.Item value={formatFromEmail(option)}
-                  >{formatFromEmail(option)}</Select.Item
-                >
-              {/each}
-            {/if}
-          </Select.Content>
-        </Select.Root>
-        {#if errors.from}
-          <Field.Error>{errors.from}</Field.Error>
-        {/if}
-      </Field.Field>
-      <Field.Field class="shrink-0 w-fit">
-        <ToggleGroup.Root type="multiple" variant="outline">
-          <ToggleGroup.Item
-            value="cc"
-            onclick={() => (isCcEnabled = !isCcEnabled)}
-          >
-            Cc
-          </ToggleGroup.Item>
-          <ToggleGroup.Item
-            value="bcc"
-            onclick={() => (isBccEnabled = !isBccEnabled)}
-          >
-            Bcc
-          </ToggleGroup.Item>
-        </ToggleGroup.Root>
-      </Field.Field>
-    </div>
-
-    <!-- To and cc -->
-    <div class="flex gap-3">
-      <Field.Field class="flex-1">
-        <Field.Label for="to">To</Field.Label>
-        <InputTag
-          id="to"
-          type="email"
-          bind:value={toEmails}
-          name="to"
-          placeholder="Add recipient email"
-          aria-invalid={!!errors.to}
-        />
-        {#if errors.to}
-          <Field.Error>{errors.to}</Field.Error>
-        {/if}
-      </Field.Field>
-      {#if isCcEnabled}
-        <Field.Field class="flex-1">
-          <Field.Label for="cc">Cc</Field.Label>
-          <InputTag
-            id="cc"
-            type="email"
-            bind:value={ccEmails}
-            name="cc"
-            placeholder="Add Cc email"
-          />
+  <Field.Group class="h-full min-h-0 gap-0">
+    <div class="flex shrink-0 flex-col gap-3 pb-4">
+      <div class="flex items-end gap-3">
+        <Field.Field data-invalid={!!errors.from} class="flex-1">
+          <Field.Label for="from">From</Field.Label>
+          <Select.Root type="single" name="from" bind:value={from}>
+            <Select.Trigger class="w-[180px]" id="from" aria-invalid={!!errors.from}>
+              {from || "Select an email"}
+            </Select.Trigger>
+            <Select.Content>
+              {#if fromEmails.length === 0}
+                <span class="inline-block w-full py-1 text-center text-sm">
+                  Create email address in: Settings > Email sender options
+                </span>
+              {:else}
+                <Select.Group>
+                  {#each fromEmails as option}
+                    <Select.Item value={formatFromEmail(option)}>{formatFromEmail(option)}</Select.Item>
+                  {/each}
+                </Select.Group>
+              {/if}
+            </Select.Content>
+          </Select.Root>
+          {#if errors.from}<Field.Error>{errors.from}</Field.Error>{/if}
         </Field.Field>
+        <Field.Field class="w-fit shrink-0">
+          <ToggleGroup.Root type="multiple" variant="outline" class="*:flex-none">
+            <ToggleGroup.Item value="replyTo" onclick={() => (isReplyToEnabled = !isReplyToEnabled)}>Reply to</ToggleGroup.Item>
+            <ToggleGroup.Item value="cc" onclick={() => (isCcEnabled = !isCcEnabled)}>Cc</ToggleGroup.Item>
+            <ToggleGroup.Item value="bcc" onclick={() => (isBccEnabled = !isBccEnabled)}>Bcc</ToggleGroup.Item>
+          </ToggleGroup.Root>
+        </Field.Field>
+      </div>
+      <div class="flex gap-3">
+        <Field.Field data-invalid={!!errors.to} class="flex-1">
+          <Field.Label for="to">To</Field.Label>
+          <InputTag id="to" type="email" bind:value={toEmails} name="to" placeholder="Add recipient email" aria-invalid={!!errors.to} />
+          {#if errors.to}<Field.Error>{errors.to}</Field.Error>{/if}
+        </Field.Field>
+        {#if isReplyToEnabled}
+          <Field.Field data-invalid={!!errors.replyTo} class="min-w-0 flex-1">
+            <Field.Label for="replyTo">Reply to</Field.Label>
+            <Input id="replyTo" type="email" name="replyTo" placeholder="Add reply-to email" class="h-9" bind:value={replyTo} aria-invalid={!!errors.replyTo} />
+            {#if errors.replyTo}<Field.Error>{errors.replyTo}</Field.Error>{/if}
+          </Field.Field>
+        {/if}
+      </div>
+      {#if isCcEnabled || isBccEnabled}
+        <div class={cn("grid grid-cols-1 gap-3", isCcEnabled && isBccEnabled && "sm:grid-cols-2")}>
+          {#if isCcEnabled}
+            <Field.Field data-invalid={!!errors.cc} class="min-w-0">
+              <Field.Label for="cc">Cc</Field.Label>
+              <InputTag id="cc" type="email" bind:value={ccEmails} name="cc" placeholder="Add Cc email" aria-invalid={!!errors.cc} />
+              {#if errors.cc}<Field.Error>{errors.cc}</Field.Error>{/if}
+            </Field.Field>
+          {/if}
+          {#if isBccEnabled}
+            <Field.Field data-invalid={!!errors.bcc} class="min-w-0">
+              <Field.Label for="bcc">Bcc</Field.Label>
+              <InputTag id="bcc" type="email" bind:value={bccEmails} name="bcc" placeholder="Add Bcc email" aria-invalid={!!errors.bcc} />
+              {#if errors.bcc}<Field.Error>{errors.bcc}</Field.Error>{/if}
+            </Field.Field>
+          {/if}
+        </div>
       {/if}
-    </div>
-
-    <!-- Bcc -->
-    {#if isBccEnabled}
-      <Field.Field>
-        <Field.Label for="bcc">Bcc</Field.Label>
-        <InputTag
-          id="bcc"
-          type="email"
-          bind:value={bccEmails}
-          name="bcc"
-          placeholder="Add Bcc email"
-        />
+      <Field.Field data-invalid={!!errors.subject}>
+        <Field.Label for="subject">Subject</Field.Label>
+          <Input
+            id="subject"
+            type="text"
+            name="subject"
+            placeholder="Subject"
+            readonly={isReply}
+            class={cn("h-9", isReply && "bg-muted/40")}
+            bind:value={subject}
+            aria-invalid={!!errors.subject}
+            onkeydown={(event) => {
+              if (event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && composerEditor?.focus()) {
+                event.preventDefault();
+              }
+            }}
+          />
+          {#if errors.subject}<Field.Error>{errors.subject}</Field.Error>{/if}
       </Field.Field>
-    {/if}
-
     </div>
-    <Field.Field class="min-h-0 flex-1 p-4">
+    <Field.Field data-invalid={!!errors.content} class="min-h-0 flex-1 gap-0 border-t pt-2">
       <Field.Label for="content" class="sr-only">Content</Field.Label>
       <div class="flex h-full min-h-0 flex-col gap-3">
         <Editor
@@ -306,6 +279,7 @@
           disabled={isSending}
           aria-invalid={!!errors.content}
         />
+        {#if errors.content}<Field.Error>{errors.content}</Field.Error>{/if}
         <ComposerAttachments bind:files />
       </div>
     </Field.Field>

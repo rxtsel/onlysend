@@ -155,6 +155,30 @@ async fn missing_details_are_batched_and_scoped_to_account_and_mailbox() {
 }
 
 #[tokio::test]
+async fn bulk_deletion_is_atomic_scoped_and_restorable() {
+    let temporary = TemporaryDatabase::new();
+    let database = temporary.database();
+    database.run(|connection| {
+        connection.execute_batch("CREATE TRIGGER fail_bulk_delete BEFORE INSERT ON deleted_emails WHEN NEW.email_id='fail' BEGIN SELECT RAISE(ABORT, 'disk failure'); END;")
+    }).await.unwrap();
+    assert!(mail::set_deleted_many(&database, "a".into(), Mailbox::Inbox, vec!["first".into(), "fail".into()], true).await.is_err());
+    assert!(mail::ensure_visible(&database, "a".into(), Mailbox::Inbox, "first".into()).await.is_ok());
+    let ids = vec!["first".into(), "second".into()];
+    mail::set_deleted_many(&database, "a".into(), Mailbox::Inbox, ids.clone(), true).await.unwrap();
+    drop(database);
+    let database = temporary.database();
+    for id in &ids {
+        assert!(mail::ensure_visible(&database, "a".into(), Mailbox::Inbox, id.clone()).await.is_err());
+        assert!(mail::ensure_visible(&database, "b".into(), Mailbox::Inbox, id.clone()).await.is_ok());
+        assert!(mail::ensure_visible(&database, "a".into(), Mailbox::Sent, id.clone()).await.is_ok());
+    }
+    mail::set_deleted_many(&database, "a".into(), Mailbox::Inbox, ids.clone(), false).await.unwrap();
+    for id in ids {
+        assert!(mail::ensure_visible(&database, "a".into(), Mailbox::Inbox, id).await.is_ok());
+    }
+}
+
+#[tokio::test]
 async fn local_deletion_survives_sync_and_reopen_and_filters_before_pagination() {
     let temporary = TemporaryDatabase::new();
     let database = temporary.database();

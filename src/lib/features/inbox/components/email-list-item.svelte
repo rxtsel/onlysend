@@ -12,13 +12,15 @@
   import * as ContextMenu from "$lib/components/ui/context-menu";
   import ConfirmDeleteMail from "$lib/components/confirm-delete-mail.svelte";
 
-  let { mail, mode, threadCount = 1, isActive = false, isUnread = false, onclick, onreply, ondelete }: {
+  let { mail, mode, threadCount = 1, isActive = false, isUnread = false, isSelected = false, disabled = false, onclick, onreply, ondelete }: {
     mail: MailListItem;
     mode: Mailbox;
     threadCount?: number;
     isActive?: boolean;
     isUnread?: boolean;
-    onclick: (id: string) => void;
+    isSelected?: boolean;
+    disabled?: boolean;
+    onclick: (id: string, event: MouseEvent) => void;
     onreply: (id: string) => void;
     ondelete: (id: string) => Promise<void>;
   } = $props();
@@ -45,15 +47,23 @@
 <ContextMenu.Root>
 <ContextMenu.Trigger class="relative block">
 <button
-  onclick={() => onclick(mail.id)}
+  onclick={(event) => onclick(mail.id, event)}
+  onmousedown={(event) => { if (event.shiftKey) event.preventDefault(); }}
+  data-mail-id={mail.id}
+  aria-pressed={isSelected}
+  {disabled}
   aria-current={isActive ? "true" : undefined}
-  class={cn("group/mail flex w-full gap-3 border-b border-b-border/60 bg-[var(--mail-row-bg)] px-4 py-4 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring", isActive ? "[--mail-row-bg:var(--accent)]" : "[--mail-row-bg:var(--background)] hover:[--mail-row-bg:color-mix(in_oklab,var(--muted)_60%,var(--background))]")}
+  class={cn("group/mail flex w-full select-none gap-3 border-b border-b-border/60 bg-[var(--mail-row-bg)] px-4 py-4 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring", isSelected ? "[--mail-row-bg:var(--primary)] text-primary-foreground [&_p]:text-primary-foreground [&_span]:text-primary-foreground [&_time]:text-primary-foreground/80" : isActive ? "[--mail-row-bg:var(--accent)]" : "[--mail-row-bg:var(--background)] hover:[--mail-row-bg:color-mix(in_oklab,var(--muted)_60%,var(--background))]")}
 >
-  <div class="mt-0.5 shrink-0"><MailAvatar address={mail.from} name={senderName} /></div>
+  <div class="relative mt-0.5 shrink-0">
+    <MailAvatar address={mail.from} name={senderName} />
+    {#if mode === "inbox" && isUnread}
+      <span class="absolute -left-0.5 -top-0.5 size-2.5 rounded-full bg-mail-unread ring-2 ring-[var(--mail-row-bg)]" title="Unread"><span class="sr-only">Unread</span></span>
+    {/if}
+  </div>
   <div class="min-w-0 flex-1">
     <div class="flex items-center gap-2 pr-7">
       <span class={cn("min-w-0 flex-1 truncate text-sm", isUnread ? "font-semibold text-foreground" : "font-medium")}>{name || "Unknown sender"}</span>
-      {#if isUnread}<span class="size-1.5 shrink-0 rounded-full bg-primary" title="Unread"><span class="sr-only">Unread</span></span>{/if}
       <time class="shrink-0 text-[11px] tabular-nums text-muted-foreground" title={formatFullEmailDate(mail.createdAt)}>{formatEmailDate(mail.createdAt)}</time>
     </div>
     <div class="mt-1 flex min-w-0 items-center gap-2">
@@ -87,24 +97,24 @@
 <DropdownMenu.Root>
   <DropdownMenu.Trigger>
     {#snippet child({ props })}
-      <Button {...props} variant="ghost" size="icon-xs" class="absolute right-4 top-4" aria-label={`Actions for ${mail.subject || "(No subject)"}`}>
+      <Button {...props} {disabled} variant="ghost" size="icon-xs" class="absolute right-4 top-4" aria-label={`Actions for ${mail.subject || "(No subject)"}`}>
         <EllipsisVertical aria-hidden="true" />
       </Button>
     {/snippet}
   </DropdownMenu.Trigger>
   <DropdownMenu.Content align="end">
     {#if mode === "inbox"}
-      <DropdownMenu.Item disabled={deleting} onSelect={() => onreply(mail.id)}><Reply />Reply</DropdownMenu.Item>
+      <DropdownMenu.Item disabled={deleting || disabled} onSelect={() => onreply(mail.id)}><Reply />Reply</DropdownMenu.Item>
     {/if}
-    <DropdownMenu.Item variant="destructive" disabled={deleting} onSelect={() => { confirmDelete = true; }}><Trash2 />{deleteLabel}</DropdownMenu.Item>
+    <DropdownMenu.Item variant="destructive" disabled={deleting || disabled} onSelect={() => { confirmDelete = true; }}><Trash2 />{deleteLabel}</DropdownMenu.Item>
   </DropdownMenu.Content>
 </DropdownMenu.Root>
 </ContextMenu.Trigger>
 <ContextMenu.Content>
   {#if mode === "inbox"}
-    <ContextMenu.Item disabled={deleting} onSelect={() => onreply(mail.id)}><Reply />Reply</ContextMenu.Item>
+    <ContextMenu.Item disabled={deleting || disabled} onSelect={() => onreply(mail.id)}><Reply />Reply</ContextMenu.Item>
   {/if}
-  <ContextMenu.Item variant="destructive" disabled={deleting} onSelect={() => { confirmDelete = true; }}><Trash2 />{deleteLabel}</ContextMenu.Item>
+  <ContextMenu.Item variant="destructive" disabled={deleting || disabled} onSelect={() => { confirmDelete = true; }}><Trash2 />{deleteLabel}</ContextMenu.Item>
 </ContextMenu.Content>
 </ContextMenu.Root>
 <ConfirmDeleteMail bind:open={confirmDelete} subject={mail.subject} onConfirm={() => { void deleteMessage(); }} />

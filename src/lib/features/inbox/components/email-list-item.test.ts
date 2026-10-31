@@ -4,10 +4,56 @@ import { flushSync, mount, unmount } from "svelte";
 import EmailListItem from "./email-list-item.svelte";
 import MailAvatar from "$lib/components/mail-avatar.svelte";
 
+const { avatarPreferences } = vi.hoisted(() => ({ avatarPreferences: { emailAvatars: "blobavatars" } }));
+vi.mock("$lib/shared/appearance.svelte", () => ({ appearance: avatarPreferences }));
+
 const instances: ReturnType<typeof mount>[] = [];
 afterEach(async () => {
   await Promise.all(instances.splice(0).map((instance) => unmount(instance)));
   document.body.replaceChildren();
+  avatarPreferences.emailAvatars = "blobavatars";
+});
+
+test.each([
+  ["blobavatars", "inbox", true], ["minimal", "inbox", true],
+  ["blobavatars", "inbox", false], ["minimal", "inbox", false],
+  ["blobavatars", "sent", true], ["minimal", "sent", true],
+] as const)("%s %s unread=%s shows the badge only on unread inbox avatars", async (style, mode, unread) => {
+  avatarPreferences.emailAvatars = style;
+  const target = document.createElement("div");
+  document.body.append(target);
+  instances.push(mount(EmailListItem, { target, props: {
+    mode, isUnread: unread, onclick: () => {}, onreply: () => {}, ondelete: async () => {},
+    mail: {
+      id: "message", from: "sender@example.com", to: ["recipient@example.com"],
+      subject: "Subject", createdAt: "2026-01-01T00:00:00Z", preview: "Body", isRead: !unread,
+    },
+  } }));
+  flushSync();
+  const row = target.querySelector<HTMLButtonElement>("[data-mail-id]")!;
+  const wrapper = row.firstElementChild!;
+  const avatar = wrapper.firstElementChild!;
+  expect(avatar.classList.contains("rounded-lg")).toBe(true);
+  expect(avatar.classList.contains("rounded-full")).toBe(false);
+  expect(avatar.classList.contains("overflow-hidden")).toBe(true);
+  expect(avatar.getAttribute("aria-hidden")).toBe("true");
+  expect((avatar as HTMLElement).style.width).toBe("32px");
+  if (style === "blobavatars") await vi.waitFor(() => expect(avatar.querySelector("img")).not.toBeNull());
+  else expect(avatar.textContent?.trim()).toBe("S");
+  const badges = row.querySelectorAll('[title="Unread"]');
+  expect(badges).toHaveLength(mode === "inbox" && unread ? 1 : 0);
+  if (badges.length) {
+    const badge = badges[0];
+    expect(badge.parentElement).toBe(wrapper);
+    expect(avatar.contains(badge)).toBe(false);
+    expect(badge.classList.contains("absolute")).toBe(true);
+    expect(badge.classList.contains("-left-0.5")).toBe(true);
+    expect(badge.classList.contains("-top-0.5")).toBe(true);
+    expect(badge.classList.contains("bg-mail-unread")).toBe(true);
+    expect(badge.classList.contains("ring-[var(--mail-row-bg)]")).toBe(true);
+    expect(badge.querySelector(".sr-only")?.textContent).toBe("Unread");
+    expect(wrapper.classList.contains("overflow-hidden")).toBe(false);
+  }
 });
 
 test.each([

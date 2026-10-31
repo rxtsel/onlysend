@@ -24,6 +24,9 @@ pub struct EmailComposerData {
     #[serde(default)]
     pub bcc: Vec<String>,
 
+    #[serde(rename = "replyTo")]
+    pub reply_to: Option<String>,
+
     pub content: String,
 
     #[serde(rename = "replyEmailId")]
@@ -232,6 +235,9 @@ fn compose_email(
     for bcc in &data.bcc {
         email = email.with_bcc(bcc.as_str());
     }
+    if let Some(reply_to) = &data.reply_to {
+        email = email.with_reply(&address(reply_to)?);
+    }
     if let Some(reply) = reply {
         email = email
             .with_header("In-Reply-To", &reply.message_id)
@@ -308,7 +314,7 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "from":"Support <support@example.com>", "to":["sender@example.com"], "subject":"Untrusted subject",
             "content":"<p>My reply</p>", "cc":["copy@example.com"], "bcc":["hidden@example.com"],
-            "replyTo":"ignored@example.com", "messageId":"<ignored@example.com>", "attachments":[{"filename":"reply.txt", "content":"eA=="}]
+            "messageId":"<ignored@example.com>", "attachments":[{"filename":"reply.txt", "content":"eA=="}]
         })).unwrap()
     }
 
@@ -404,6 +410,28 @@ mod tests {
         assert!(ordinary.get("headers").is_none());
         data.subject = "Bad\r\nBcc: injected@example.com".into();
         assert!(compose_email(&data, None).is_err());
+    }
+
+    #[test]
+    fn outgoing_reply_to_is_optional_validated_and_independent_of_thread_headers() {
+        let mut data = draft();
+        let ordinary = serde_json::to_value(compose_email(&data, None).unwrap()).unwrap();
+        assert!(ordinary.get("reply_to").is_none());
+        data.reply_to = Some("replies@example.com".into());
+        let reply = reply_context(&original("Invoice")).unwrap();
+        for context in [None, Some(&reply)] {
+            let email = serde_json::to_value(compose_email(&data, context).unwrap()).unwrap();
+            assert_eq!(email["reply_to"], serde_json::json!(["replies@example.com"]));
+            if context.is_some() {
+                assert_eq!(email["headers"]["In-Reply-To"], "<parent@example.com>");
+            } else {
+                assert!(email.get("headers").is_none());
+            }
+        }
+        for invalid in ["", "not-an-email", "a@example.com, b@example.com", "valid@example.com\r\nBcc: injected@example.com"] {
+            data.reply_to = Some(invalid.into());
+            assert!(compose_email(&data, None).is_err());
+        }
     }
 
     #[test]

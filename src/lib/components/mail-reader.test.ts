@@ -186,6 +186,27 @@ test("deleting the selected email from the list closes its reader only for the o
   expect(goto).toHaveBeenCalledExactlyOnceWith("/mail/account-a/inbox");
 });
 
+test("bulk deletion removes matching thread messages and closes the selected reader only once", async () => {
+  const emailId = "b3e2b2b6-3f0e-4c8e-9ad3-2f43a1e2c7f1";
+  const message = { id: emailId, mailbox: "inbox" as const, from: "sender@example.test", to: ["me@example.test"], subject: "Topic", createdAt: "2026-01-01T00:00:00Z", preview: "Body" };
+  vi.mocked(getInboundEmail).mockResolvedValue({ ...message, html: null, text: "Body", attachments: [] });
+  vi.mocked(getMailThread).mockResolvedValue([
+    { ...message, id: "older" }, { ...message, id: "other" }, message,
+  ]);
+  instance = mount(Reader, { target });
+  await vi.waitFor(() => expect(target.querySelectorAll('[data-slot="collapsible-trigger"]')).toHaveLength(3));
+  const handler = vi.mocked(listen).mock.calls[0][1];
+  const event = { event: "mail-deletion-updated", id: 0, payload: { accountId: "account-a", mailbox: "inbox", emailIds: ["older", "unrelated"], deleted: true } };
+  handler({ ...event, payload: { ...event.payload, accountId: "other-account" } });
+  expect(goto).not.toHaveBeenCalled();
+  handler(event);
+  await vi.waitFor(() => expect(target.querySelectorAll('[data-slot="collapsible-trigger"]')).toHaveLength(2));
+  expect(goto).not.toHaveBeenCalled();
+  handler({ ...event, payload: { ...event.payload, emailIds: [emailId, "other"] } });
+  handler({ ...event, payload: { ...event.payload, emailIds: [emailId] } });
+  expect(goto).toHaveBeenCalledExactlyOnceWith("/mail/account-a/inbox");
+});
+
 test("Sent shows mixed inbox/sent thread messages and never replies to the user's own From address", async () => {
   vi.mocked(getSentEmail).mockResolvedValue({
     id: "message", from: "me@example.com", to: ["recipient@example.com"],
