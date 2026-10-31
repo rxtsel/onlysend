@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.1.9 - 2026-10-31
+
+### Features
+- Add bulk email selection and deletion (8820a5a)
+- Improve composer layout (8b0b6ee)
+- Add configurable reply-to address (d4efc7f)
+- Show unread badges on inbox avatars (0da71be)
+
+
+### Fixes
+- Improve list selection and delete shortcuts (827a9fc)
+
 ## v0.1.8 - 2026-10-29
 
 ### Features
