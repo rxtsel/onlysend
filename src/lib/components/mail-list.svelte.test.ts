@@ -256,6 +256,16 @@ test("confirmation snapshots IDs even if new rows arrive before confirmation", a
   await vi.waitFor(() => expect(deleteLocalMails).toHaveBeenCalledExactlyOnceWith("account-a", "inbox", ["m1", "m6"]));
 });
 
+test("marking an inbox message read removes only its avatar badge", async () => {
+  expect(rows().every((row) => row.querySelector('[title="Unread"]'))).toBe(true);
+  handlers.get("inbox-read")!({ payload: { accountId: "other-account", emailId: "m0" } });
+  flushSync();
+  expect(rows()[0].querySelector('[title="Unread"]')).not.toBeNull();
+  handlers.get("inbox-read")!({ payload: { accountId: "account-a", emailId: "m0" } });
+  await vi.waitFor(() => expect(rows()[0].querySelector('[title="Unread"]')).toBeNull());
+  expect(rows()[1].querySelector('[title="Unread"]')).not.toBeNull();
+});
+
 test("search clears selection and background updates prune vanished IDs", async () => {
   click(1, { ctrlKey: true });
   click(6, { ctrlKey: true });
