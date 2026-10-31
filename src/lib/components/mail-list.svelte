@@ -90,16 +90,23 @@
     if (!list.isLoading) untrack(() => selection.reconcile(ids));
   });
 
-  function selectRow(id: string, event: MouseEvent, threadCount: number) {
+  function selectRow(id: string, event: MouseEvent) {
     if (bulkDeleting || confirmBulkDelete) return;
+    const modified = event.shiftKey || event.ctrlKey || event.metaKey;
     selection.click(id, rowIds, event.shiftKey, event.ctrlKey || event.metaKey, activeRowId);
-    if (!event.shiftKey && !event.ctrlKey && !event.metaKey) openMail(id, threadCount);
+    const previewId = !modified || selection.ids.includes(id) ? id : selection.ids.at(-1);
+    if (previewId) openMail(previewId);
   }
 
   function selectionKeydown(event: KeyboardEvent) {
     if (!active || bulkDeleting || confirmBulkDelete || event.defaultPrevented) return;
     const target = event.target;
-    if (!(target instanceof HTMLElement) || target.closest('[role="dialog"], [role="alertdialog"], [role="menu"], [contenteditable="true"], input, textarea, select')) return;
+    if (!(target instanceof HTMLElement) || target.isContentEditable || target.closest('[role="dialog"], [role="alertdialog"], [role="menu"], [contenteditable]:not([contenteditable="false"]), [role="textbox"], input, textarea, select')) return;
+    if (selection.ids.length && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && ["Delete", "Backspace"].includes(event.key)) {
+      event.preventDefault();
+      if (!event.repeat) requestBulkDelete();
+      return;
+    }
     const row = target.closest<HTMLElement>("[data-mail-id]");
     // Do not hijack arrows in the reader, sidebar or row action menus.
     if (event.key === "Escape" && (listElement?.contains(target) || target === document.body)) {
@@ -114,6 +121,7 @@
     const button = Array.from(listElement.querySelectorAll<HTMLButtonElement>("[data-mail-id]")).find((item) => item.dataset.mailId === id);
     button?.focus({ preventScroll: true });
     button?.scrollIntoView?.({ block: "nearest" });
+    if (id) openMail(id);
   }
 
   function requestBulkDelete() {
@@ -208,10 +216,11 @@
     untrack(() => onArchiveStatusChange(accountId, owner, data));
   });
 
-  function openMail(id: string, threadCount: number) {
-    const mail = list.items.find((item) => item.id === id);
-    if (mail) onSelectMail({ ...mail, threadCount }, mailbox);
-    void goto(mailUrl(accountId, mailbox, id));
+  function openMail(id: string) {
+    const thread = threads.find((thread) => thread.mail.id === id);
+    if (!thread) return;
+    onSelectMail({ ...thread.mail, threadCount: thread.mail.threadCount ?? thread.count }, mailbox);
+    void goto(mailUrl(accountId, mailbox, id), { keepFocus: true, noScroll: true }).catch(report);
   }
 
   function replyMail(id: string) {
@@ -319,7 +328,7 @@
     {:else}
       {#each threads as thread (thread.mail.threadId ?? thread.mail.id)}
         {@const mail = thread.mail}
-        <EmailListItem {mail} mode={mailbox} threadCount={mail.threadCount ?? thread.count} isActive={thread.ids.has(page.params.id ?? "")} isUnread={thread.unread} isSelected={selection.ids.includes(mail.id)} disabled={bulkDeleting} onclick={(id, event) => selectRow(id, event, mail.threadCount ?? thread.count)} onreply={replyMail} ondelete={deleteMail} />
+        <EmailListItem {mail} mode={mailbox} threadCount={mail.threadCount ?? thread.count} isActive={thread.ids.has(page.params.id ?? "")} isUnread={thread.unread} isSelected={selection.ids.includes(mail.id)} disabled={bulkDeleting} onclick={selectRow} onreply={replyMail} ondelete={deleteMail} />
       {/each}
       {#if list.hasMore}
         <div class="p-3"><Button class="w-full" variant="ghost" disabled={list.isLoadingMore || list.isRefreshing} onclick={() => { void list.loadMore().catch(report); }}>

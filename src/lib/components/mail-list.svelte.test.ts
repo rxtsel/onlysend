@@ -58,7 +58,7 @@ beforeEach(async () => {
 });
 afterEach(async () => { await unmount(instance); document.body.replaceChildren(); });
 
-test("shift and ctrl/cmd clicks select rows without opening or marking mail read", () => {
+test("shift and ctrl/cmd clicks preserve selection and preview the latest selected row", () => {
   click(1, { shiftKey: true });
   click(8, { shiftKey: true });
   expect(selected()).toEqual(items.slice(1).map((mail) => mail.id));
@@ -70,16 +70,15 @@ test("shift and ctrl/cmd clicks select rows without opening or marking mail read
   expect(selected()).toEqual(["m0", "m6"]);
   click(0, { ctrlKey: true });
   expect(selected()).toEqual(["m6"]);
-  expect(goto).not.toHaveBeenCalled();
-  expect(onSelectMail).not.toHaveBeenCalled();
-  expect(items.every((item) => !item.isRead)).toBe(true);
+  expect(goto).toHaveBeenLastCalledWith("/mail/account-a/inbox/m6", { keepFocus: true, noScroll: true });
+  expect(onSelectMail).toHaveBeenLastCalledWith(expect.objectContaining({ id: "m6" }), "inbox");
   expect(target.textContent).toContain("1 Selected");
   expect(target.querySelector('[aria-label="Refresh mail"]')).toBeNull();
 });
 
 test("a normal click opens the preview and anchors shift arrows with focus and contraction", () => {
   click(2);
-  expect(goto).toHaveBeenCalledExactlyOnceWith("/mail/account-a/inbox/m2");
+  expect(goto).toHaveBeenCalledExactlyOnceWith("/mail/account-a/inbox/m2", { keepFocus: true, noScroll: true });
   expect(onSelectMail).toHaveBeenCalledTimes(1);
   expect(key(rows()[2], "ArrowDown").defaultPrevented).toBe(true);
   expect(selected()).toEqual(["m2", "m3"]);
@@ -91,7 +90,9 @@ test("a normal click opens the preview and anchors shift arrows with focus and c
   key(rows()[3], "Escape", false);
   expect(selected()).toEqual([]);
   expect(target.querySelector('[aria-label="Refresh mail"]')).not.toBeNull();
-  expect(goto).toHaveBeenCalledTimes(1);
+  expect(goto).toHaveBeenCalledTimes(4);
+  expect(goto).toHaveBeenLastCalledWith("/mail/account-a/inbox/m3", { keepFocus: true, noScroll: true });
+  expect(onSelectMail).toHaveBeenLastCalledWith(expect.objectContaining({ id: "m3" }), "inbox");
 });
 
 test("keyboard selection does not steal keys from search, menus or the preview", () => {
@@ -103,6 +104,80 @@ test("keyboard selection does not steal keys from search, menus or the preview",
   const actions = target.querySelector<HTMLButtonElement>('[aria-label="Actions for Subject 0"]')!;
   key(actions, "ArrowUp");
   expect(selected()).toEqual([]);
+});
+
+test.each(["Delete", "Backspace"])("%s opens bulk confirmation without deleting until confirmed", async (deleteKey) => {
+  click(0, { ctrlKey: true });
+  click(6, { metaKey: true });
+  const event = key(document.body, deleteKey, false);
+  expect(event.defaultPrevented).toBe(true);
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).not.toBeNull());
+  expect(deleteLocalMails).not.toHaveBeenCalled();
+  key(document.body, deleteKey, false);
+  expect(document.querySelectorAll('[role="alertdialog"]')).toHaveLength(1);
+  document.querySelector<HTMLButtonElement>('[data-slot="alert-dialog-cancel"]')!.click();
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).toBeNull());
+  expect(selected()).toEqual(["m0", "m6"]);
+  key(rows()[6], deleteKey, false);
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).not.toBeNull());
+  confirm();
+  await vi.waitFor(() => expect(deleteLocalMails).toHaveBeenCalledExactlyOnceWith("account-a", "inbox", ["m0", "m6"]));
+});
+
+test("delete shortcuts leave text editing, dialogs, menus and modified keys alone", () => {
+  click(0, { ctrlKey: true });
+  const input = target.querySelector<HTMLInputElement>("input")!;
+  const editable = document.createElement("div");
+  editable.setAttribute("contenteditable", "");
+  const nested = document.createElement("span");
+  editable.append(nested);
+  document.body.append(editable);
+  const menu = document.createElement("div");
+  menu.setAttribute("role", "menu");
+  document.body.append(menu);
+  const dialog = document.createElement("div");
+  dialog.setAttribute("role", "dialog");
+  document.body.append(dialog);
+  for (const element of [input, nested, menu, dialog]) {
+    for (const deleteKey of ["Delete", "Backspace"]) expect(key(element, deleteKey, false).defaultPrevented).toBe(false);
+  }
+  for (const modifiers of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }, { shiftKey: true }, { repeat: true }]) {
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true, ...modifiers }));
+  }
+  flushSync();
+  expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  expect(deleteLocalMails).not.toHaveBeenCalled();
+  expect(selected()).toEqual(["m0"]);
+});
+
+test("Delete does nothing without selection or while the list is inactive", () => {
+  expect(key(document.body, "Delete", false).defaultPrevented).toBe(false);
+  click(0, { ctrlKey: true });
+  flushSync(() => { controls.active = false; });
+  expect(key(document.body, "Delete", false).defaultPrevented).toBe(false);
+  expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+});
+
+test.each(["ctrlKey", "metaKey"] as const)("%s click previews only selected messages when toggling off", (modifier) => {
+  click(1, { [modifier]: true });
+  click(6, { [modifier]: true });
+  expect(onSelectMail).toHaveBeenLastCalledWith(expect.objectContaining({ id: "m6" }), "inbox");
+  click(6, { [modifier]: true });
+  expect(selected()).toEqual(["m1"]);
+  expect(onSelectMail).toHaveBeenLastCalledWith(expect.objectContaining({ id: "m1" }), "inbox");
+  const previews = onSelectMail.mock.calls.length;
+  click(1, { [modifier]: true });
+  expect(selected()).toEqual([]);
+  expect(onSelectMail).toHaveBeenCalledTimes(previews);
+});
+
+test("rapid shift arrows update the preview in order while keeping the list focus", () => {
+  click(2);
+  for (let i = 2; i < 7; i++) key(rows()[i], "ArrowDown");
+  expect(selected()).toEqual(["m2", "m3", "m4", "m5", "m6", "m7"]);
+  expect(onSelectMail.mock.calls.map(([mail]) => mail.id)).toEqual(["m2", "m3", "m4", "m5", "m6", "m7"]);
+  expect(document.activeElement).toBe(rows()[7]);
+  expect(vi.mocked(goto).mock.calls.every(([, options]) => options?.keepFocus && options?.noScroll)).toBe(true);
 });
 
 test("cancel keeps selection; confirmation deletes only the selected representatives", async () => {
@@ -165,7 +240,7 @@ test("an in-flight deletion stays scoped to its original mailbox after navigatio
   resolve(true);
   await vi.waitFor(() => expect(rows()[0].disabled).toBe(false));
   expect(deleteLocalMails).toHaveBeenCalledExactlyOnceWith("account-a", "inbox", ["m1"]);
-  expect(goto).not.toHaveBeenCalled();
+  expect(goto).toHaveBeenCalledExactlyOnceWith("/mail/account-a/inbox/m1", { keepFocus: true, noScroll: true });
   expect(selected()).toEqual([]);
 });
 
