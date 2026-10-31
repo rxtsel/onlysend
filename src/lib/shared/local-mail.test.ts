@@ -1,9 +1,16 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { loadMailList, getMailArchiveStatus, refreshMailbox, getMailThread } from "./local-mail";
+import { loadMailList, getMailArchiveStatus, refreshMailbox, getMailThread, setMailsDeleted } from "./local-mail";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 beforeEach(() => { vi.mocked(invoke).mockReset().mockResolvedValue(null); });
+
+test("bulk deletion passes explicit ownership and message IDs to one native call", async () => {
+  await setMailsDeleted("a", "inbox", ["first", "second"], true);
+  expect(invoke).toHaveBeenCalledExactlyOnceWith("set_mail_deleted_many", {
+    accountId: "a", mailbox: "inbox", emailIds: ["first", "second"], deleted: true,
+  });
+});
 
 test("thread lookup passes explicit account, mailbox and email ownership", async () => {
   await getMailThread("a", "inbox", "message-id");

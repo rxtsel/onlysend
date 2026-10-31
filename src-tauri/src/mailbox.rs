@@ -106,6 +106,27 @@ pub async fn set_mail_deleted(
 }
 
 #[tauri::command]
+pub async fn set_mail_deleted_many(
+    app: AppHandle<Wry>,
+    account_id: String,
+    mailbox: Mailbox,
+    email_ids: Vec<String>,
+    deleted: bool,
+) -> Result<(), String> {
+    if email_ids.is_empty() || email_ids.iter().any(|id| uuid::Uuid::parse_str(id).is_err()) {
+        return Err("Invalid email IDs".into());
+    }
+    let database = local_state::for_account(&app, &account_id).await?;
+    mail::set_deleted_many(&database, account_id.clone(), mailbox, email_ids.clone(), deleted).await?;
+    if app.emit("mail-deletion-updated", serde_json::json!({
+        "accountId": account_id, "mailbox": mailbox, "emailIds": email_ids, "deleted": deleted,
+    })).is_err() {
+        eprintln!("[WARN] Could not publish local mail deletion state");
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn get_mail_thread(
     app: AppHandle<Wry>,
     account_id: String,

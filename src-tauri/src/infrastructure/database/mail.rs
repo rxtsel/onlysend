@@ -89,13 +89,25 @@ pub(crate) async fn set_deleted(
     email_id: String,
     deleted: bool,
 ) -> Result<(), String> {
+    set_deleted_many(database, account_id, mailbox, vec![email_id], deleted).await
+}
+
+pub(crate) async fn set_deleted_many(
+    database: &Database,
+    account_id: String,
+    mailbox: Mailbox,
+    email_ids: Vec<String>,
+    deleted: bool,
+) -> Result<(), String> {
     database.run(move |connection| {
         let tx = connection.transaction()?;
         tx.execute("INSERT OR IGNORE INTO account_state VALUES (?1)", [&account_id])?;
-        if deleted {
-            tx.execute("INSERT OR IGNORE INTO deleted_emails VALUES (?1,?2,?3)", params![account_id, mailbox.as_str(), email_id])?;
-        } else {
-            tx.execute("DELETE FROM deleted_emails WHERE account_id=?1 AND mailbox=?2 AND email_id=?3", params![account_id, mailbox.as_str(), email_id])?;
+        for email_id in email_ids {
+            if deleted {
+                tx.execute("INSERT OR IGNORE INTO deleted_emails VALUES (?1,?2,?3)", params![account_id, mailbox.as_str(), email_id])?;
+            } else {
+                tx.execute("DELETE FROM deleted_emails WHERE account_id=?1 AND mailbox=?2 AND email_id=?3", params![account_id, mailbox.as_str(), email_id])?;
+            }
         }
         tx.commit()
     }).await

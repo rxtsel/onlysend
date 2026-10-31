@@ -50,6 +50,10 @@ export function setMailDeleted(accountId: string, mailbox: Mailbox, emailId: str
   return invoke("set_mail_deleted", { accountId, mailbox, emailId, deleted });
 }
 
+export function setMailsDeleted(accountId: string, mailbox: Mailbox, emailIds: string[], deleted: boolean): Promise<void> {
+  return invoke("set_mail_deleted_many", { accountId, mailbox, emailIds, deleted });
+}
+
 export interface MailArchiveStatus {
   downloadedMessages: number;
   downloadedBodies: number;

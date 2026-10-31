@@ -2,15 +2,16 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { toast, type ExternalToast } from "svelte-sonner";
 type ToastAction = Extract<NonNullable<ExternalToast["action"]>, { onClick: unknown }>;
-import { setMailDeleted } from "../local-mail";
-import { deleteLocalMail } from "./delete-mail";
+import { setMailDeleted, setMailsDeleted } from "../local-mail";
+import { deleteLocalMail, deleteLocalMails } from "./delete-mail";
 
-vi.mock("../local-mail", () => ({ setMailDeleted: vi.fn() }));
+vi.mock("../local-mail", () => ({ setMailDeleted: vi.fn(), setMailsDeleted: vi.fn() }));
 vi.mock("svelte-sonner", () => ({ toast: { promise: vi.fn(), success: vi.fn(), info: vi.fn() } }));
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(setMailDeleted).mockResolvedValue(undefined);
+  vi.mocked(setMailsDeleted).mockResolvedValue(undefined);
 });
 afterEach(() => vi.useRealTimers());
 
@@ -22,6 +23,33 @@ function undo() {
   button.addEventListener("click", (event) => action.onClick(event as Parameters<ToastAction["onClick"]>[0]));
   button.click();
 }
+
+test("bulk deletion is one native operation, deduplicates and snapshots IDs for undo", async () => {
+  const ids = ["first", "second", "first"];
+  expect(await deleteLocalMails("account-a", "sent", ids)).toBe(true);
+  ids.push("unselected");
+  expect(setMailsDeleted).toHaveBeenNthCalledWith(1, "account-a", "sent", ["first", "second"], true);
+  expect(setMailDeleted).not.toHaveBeenCalled();
+  undo();
+  expect(setMailsDeleted).toHaveBeenNthCalledWith(2, "account-a", "sent", ["first", "second"], false);
+});
+
+test("empty or failed bulk deletion does not offer undo", async () => {
+  expect(await deleteLocalMails("account-a", "inbox", [])).toBe(false);
+  expect(setMailsDeleted).not.toHaveBeenCalled();
+  vi.mocked(setMailsDeleted).mockRejectedValueOnce(new Error("disk full"));
+  expect(await deleteLocalMails("account-a", "inbox", ["first", "second"])).toBe(false);
+  expect(toast.success).not.toHaveBeenCalled();
+});
+
+test("bulk undo expires after five seconds", async () => {
+  vi.useFakeTimers();
+  await deleteLocalMails("account-a", "inbox", ["first", "second"]);
+  vi.advanceTimersByTime(5000);
+  undo();
+  expect(setMailsDeleted).toHaveBeenCalledTimes(1);
+  expect(toast.info).toHaveBeenCalledWith("The undo window has expired");
+});
 
 test("persists deletion and undo for the original account, mailbox and message", async () => {
   expect(await deleteLocalMail("account-a", "sent", "message")).toBe(true);

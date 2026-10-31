@@ -148,6 +148,7 @@ pub fn run() {
             mailbox::load_mail_list,
             mailbox::get_mail_thread,
             mailbox::set_mail_deleted,
+            mailbox::set_mail_deleted_many,
             config::list_from_emails,
             config::create_from_email,
             config::update_from_email,

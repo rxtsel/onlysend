@@ -79,10 +79,10 @@
   onMount(() => {
     void load();
     let cleanup: (() => void) | undefined;
-    void listen<{ accountId: string; mailbox: Mailbox; emailId: string; deleted: boolean }>("mail-deletion-updated", ({ payload }) => {
+    void listen<{ accountId: string; mailbox: Mailbox; emailId?: string; emailIds?: string[]; deleted: boolean }>("mail-deletion-updated", ({ payload }) => {
       if (disposed || payload.accountId !== accountId || !emailId) return;
       if (payload.deleted) {
-        removeMessage(payload.emailId, payload.mailbox);
+        for (const id of payload.emailIds ?? (payload.emailId ? [payload.emailId] : [])) removeMessage(id, payload.mailbox);
         return;
       }
       void getMailThread(accountId, mailbox, emailId).then((messages) => {
