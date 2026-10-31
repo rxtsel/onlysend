@@ -6,6 +6,7 @@ export const emailComposerSchema = z.object({
   subject: z.string().nonempty("Subject is required"),
   cc: z.array(z.email()).optional(),
   bcc: z.array(z.email()).optional(),
+  replyTo: z.email().optional(),
   content: z.string().nonempty("Content is required"),
   files: z.any().optional(), // Only ui
   replyEmailId: z.uuid().optional().nullable(),

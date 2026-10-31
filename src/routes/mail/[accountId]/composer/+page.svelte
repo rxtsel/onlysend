@@ -45,6 +45,8 @@
   let files = $state<File[]>([]);
   let isSending = $state(false);
 
+  let isReplyToEnabled = $state(false);
+  let replyTo = $state("");
   let isCcEnabled = $state<boolean>(false);
   let isBccEnabled = $state<boolean>(false);
   let ccEmails = $state<Tag[]>([]);
@@ -55,7 +57,7 @@
   let sent = false;
   const unregisterGuard = registerDraftGuard(accountId, () =>
     sent || !((!isReply && subject) || content || toEmails.map((tag) => tag.text).join("\n") !== initialTo || ccEmails.length ||
-      bccEmails.length || files.length || from !== initialFrom) ||
+      bccEmails.length || replyTo.trim() || files.length || from !== initialFrom) ||
     window.confirm("Leave this page and discard the current draft?"),
   );
   $effect(() => {
@@ -84,6 +86,7 @@
       subject: isReply ? reply!.subject : subject,
       bcc: isBccEnabled ? bccEmails.map((t) => t.text) : [],
       cc: isCcEnabled ? ccEmails.map((t) => t.text) : [],
+      ...(isReplyToEnabled && replyTo.trim() ? { replyTo: replyTo.trim() } : {}),
       content,
       replyEmailId,
     };
@@ -113,6 +116,8 @@
       subject = "";
       content = "";
       files = [];
+      isReplyToEnabled = false;
+      replyTo = "";
       isCcEnabled = false;
       isBccEnabled = false;
       ccEmails = [];
@@ -205,7 +210,8 @@
           {#if errors.from}<Field.Error>{errors.from}</Field.Error>{/if}
         </Field.Field>
         <Field.Field class="w-fit shrink-0">
-          <ToggleGroup.Root type="multiple" variant="outline">
+          <ToggleGroup.Root type="multiple" variant="outline" class="*:flex-none">
+            <ToggleGroup.Item value="replyTo" onclick={() => (isReplyToEnabled = !isReplyToEnabled)}>Reply to</ToggleGroup.Item>
             <ToggleGroup.Item value="cc" onclick={() => (isCcEnabled = !isCcEnabled)}>Cc</ToggleGroup.Item>
             <ToggleGroup.Item value="bcc" onclick={() => (isBccEnabled = !isBccEnabled)}>Bcc</ToggleGroup.Item>
           </ToggleGroup.Root>
@@ -217,20 +223,31 @@
           <InputTag id="to" type="email" bind:value={toEmails} name="to" placeholder="Add recipient email" aria-invalid={!!errors.to} />
           {#if errors.to}<Field.Error>{errors.to}</Field.Error>{/if}
         </Field.Field>
-        {#if isCcEnabled}
-          <Field.Field data-invalid={!!errors.cc} class="flex-1">
-            <Field.Label for="cc">Cc</Field.Label>
-            <InputTag id="cc" type="email" bind:value={ccEmails} name="cc" placeholder="Add Cc email" aria-invalid={!!errors.cc} />
-            {#if errors.cc}<Field.Error>{errors.cc}</Field.Error>{/if}
+        {#if isReplyToEnabled}
+          <Field.Field data-invalid={!!errors.replyTo} class="min-w-0 flex-1">
+            <Field.Label for="replyTo">Reply to</Field.Label>
+            <Input id="replyTo" type="email" name="replyTo" placeholder="Add reply-to email" class="h-9" bind:value={replyTo} aria-invalid={!!errors.replyTo} />
+            {#if errors.replyTo}<Field.Error>{errors.replyTo}</Field.Error>{/if}
           </Field.Field>
         {/if}
       </div>
-      {#if isBccEnabled}
-        <Field.Field data-invalid={!!errors.bcc}>
-          <Field.Label for="bcc">Bcc</Field.Label>
-          <InputTag id="bcc" type="email" bind:value={bccEmails} name="bcc" placeholder="Add Bcc email" aria-invalid={!!errors.bcc} />
-          {#if errors.bcc}<Field.Error>{errors.bcc}</Field.Error>{/if}
-        </Field.Field>
+      {#if isCcEnabled || isBccEnabled}
+        <div class={cn("grid grid-cols-1 gap-3", isCcEnabled && isBccEnabled && "sm:grid-cols-2")}>
+          {#if isCcEnabled}
+            <Field.Field data-invalid={!!errors.cc} class="min-w-0">
+              <Field.Label for="cc">Cc</Field.Label>
+              <InputTag id="cc" type="email" bind:value={ccEmails} name="cc" placeholder="Add Cc email" aria-invalid={!!errors.cc} />
+              {#if errors.cc}<Field.Error>{errors.cc}</Field.Error>{/if}
+            </Field.Field>
+          {/if}
+          {#if isBccEnabled}
+            <Field.Field data-invalid={!!errors.bcc} class="min-w-0">
+              <Field.Label for="bcc">Bcc</Field.Label>
+              <InputTag id="bcc" type="email" bind:value={bccEmails} name="bcc" placeholder="Add Bcc email" aria-invalid={!!errors.bcc} />
+              {#if errors.bcc}<Field.Error>{errors.bcc}</Field.Error>{/if}
+            </Field.Field>
+          {/if}
+        </div>
       {/if}
       <Field.Field data-invalid={!!errors.subject}>
         <Field.Label for="subject">Subject</Field.Label>

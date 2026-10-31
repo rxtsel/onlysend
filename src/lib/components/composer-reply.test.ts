@@ -104,6 +104,7 @@ test.each([false, true])("composer fields follow From, To, Subject without neste
   expect(from.closest('[data-slot="field"]')?.getAttribute("data-orientation")).toBe("vertical");
   const toggleGroup = target.querySelector('[data-slot="toggle-group"]')!;
   expect(toggleGroup.getAttribute("data-variant")).toBe("outline");
+  expect(toggleGroup.classList.contains("*:flex-none")).toBe(true);
   expect(from.closest('[data-slot="field"]')?.parentElement?.contains(toggleGroup)).toBe(true);
   expect(input("#subject").classList.contains("border")).toBe(true);
   expect(input("#subject").classList.contains("h-9")).toBe(true);
@@ -111,11 +112,97 @@ test.each([false, true])("composer fields follow From, To, Subject without neste
   const to = input("#to");
   expect(to.parentElement?.classList.contains("border")).toBe(true);
   const toggles = Array.from(target.querySelectorAll<HTMLButtonElement>('[data-slot="toggle-group-item"]'));
-  flushSync(() => { toggles[0].click(); toggles[1].click(); });
-  expect(labels()).toEqual(["From", "To", "Cc", "Bcc", "Subject", "Content"]);
+  expect(toggles.map((button) => button.textContent)).toEqual(["Reply to", "Cc", "Bcc"]);
+  flushSync(() => { toggles.forEach((button) => button.click()); });
+  expect(labels()).toEqual(["From", "To", "Reply to", "Cc", "Bcc", "Subject", "Content"]);
   expect(input("#cc").parentElement?.classList.contains("border")).toBe(true);
   expect(input("#bcc").parentElement?.classList.contains("border")).toBe(true);
-  expect(to.closest('[data-slot="field"]')?.parentElement).toBe(input("#cc").closest('[data-slot="field"]')?.parentElement);
+  expect(to.closest('[data-slot="field"]')?.parentElement).toBe(input("#replyTo").closest('[data-slot="field"]')?.parentElement);
+  const copyRow = input("#cc").closest('[data-slot="field"]')?.parentElement;
+  expect(copyRow).toBe(input("#bcc").closest('[data-slot="field"]')?.parentElement);
+  expect(copyRow?.classList.contains("sm:grid-cols-2")).toBe(true);
+  expect(copyRow).not.toBe(to.closest('[data-slot="field"]')?.parentElement);
+});
+
+test.each([
+  [false, false, false], [true, false, false], [false, true, false], [false, false, true],
+  [true, true, false], [true, false, true], [false, true, true], [true, true, true],
+])("optional layout: Reply to=%s, Cc=%s, Bcc=%s", async (replyTo, cc, bcc) => {
+  open();
+  await ready();
+  const buttons = Array.from(target.querySelectorAll<HTMLButtonElement>('[data-slot="toggle-group-item"]'));
+  flushSync(() => { [replyTo, cc, bcc].forEach((enabled, index) => { if (enabled) buttons[index].click(); }); });
+  expect(!!target.querySelector("#replyTo")).toBe(replyTo);
+  expect(!!target.querySelector("#cc")).toBe(cc);
+  expect(!!target.querySelector("#bcc")).toBe(bcc);
+  const toRow = input("#to").closest('[data-slot="field"]')!.parentElement!;
+  expect(toRow.querySelector("#replyTo") !== null).toBe(replyTo);
+  for (const id of ["cc", "bcc"]) expect(toRow.querySelector(`#${id}`)).toBeNull();
+  const copyInput = target.querySelector("#cc, #bcc");
+  if (copyInput) {
+    const copyRow = copyInput.closest('[data-slot="field"]')!.parentElement!;
+    expect(copyRow.classList.contains("grid")).toBe(true);
+    expect(copyRow.classList.contains("sm:grid-cols-2")).toBe(cc && bcc);
+  }
+});
+
+test("Reply to is saved in the outgoing payload and protected by the draft guard", async () => {
+  open();
+  await ready();
+  const toggle = target.querySelector<HTMLButtonElement>('[data-slot="toggle-group-item"]')!;
+  flushSync(() => toggle.click());
+  const guard = vi.mocked(registerDraftGuard).mock.calls[0][1];
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  expect(guard()).toBe(true);
+  flushSync(() => {
+    input("#replyTo").value = "  replies@example.com  ";
+    input("#replyTo").dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(guard()).toBe(false);
+  expect(confirm).toHaveBeenCalledTimes(1);
+  body("<p>Reply body</p>");
+  flushSync(() => target.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", {
+    accountId: "account-a", data: expect.objectContaining({ replyTo: "replies@example.com", replyEmailId: emailId }),
+  }));
+  await vi.waitFor(() => expect(goto).toHaveBeenCalled());
+  expect(target.querySelector("#replyTo")).toBeNull();
+  expect(guard()).toBe(true);
+});
+
+test("invalid Reply to blocks sending; hiding it excludes the preserved value", async () => {
+  open();
+  await ready();
+  const toggle = target.querySelector<HTMLButtonElement>('[data-slot="toggle-group-item"]')!;
+  flushSync(() => toggle.click());
+  flushSync(() => {
+    input("#replyTo").value = "not-an-email";
+    input("#replyTo").dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  body("<p>Reply body</p>");
+  const submit = () => target.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  flushSync(submit);
+  expect(invoke).not.toHaveBeenCalled();
+  expect(input("#replyTo").getAttribute("aria-invalid")).toBe("true");
+  flushSync(() => { toggle.click(); });
+  flushSync(() => { toggle.click(); });
+  expect(input("#replyTo").value).toBe("not-an-email");
+  flushSync(() => { toggle.click(); });
+  flushSync(submit);
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalled());
+  const outgoing = vi.mocked(invoke).mock.calls[0][1] as { data: Record<string, unknown> };
+  expect(outgoing.data).not.toHaveProperty("replyTo");
+});
+
+test("an enabled but empty Reply to remains optional", async () => {
+  open();
+  await ready();
+  flushSync(() => target.querySelector<HTMLButtonElement>('[data-slot="toggle-group-item"]')!.click());
+  body("<p>Reply body</p>");
+  flushSync(() => target.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalled());
+  const outgoing = vi.mocked(invoke).mock.calls[0][1] as { data: Record<string, unknown> };
+  expect(outgoing.data).not.toHaveProperty("replyTo");
 });
 
 test("Tab from Subject goes to the writer; Shift-Tab keeps native backwards navigation", async () => {
