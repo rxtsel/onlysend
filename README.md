@@ -30,6 +30,8 @@ changes and may redirect existing mail; review the instructions before changing 
 
 - [x] Multiple accounts, domains, and sender addresses.
 - [x] Rich-text messages with attachments, CC, and BCC.
+- [x] Custom HTML with visual text/link editing and desktop/mobile previews.
+- [x] Reusable email templates saved locally per account.
 - [x] Sent mail, an optional inbox, and replies.
 - [x] Search saved mail and filter by domain.
 - [x] Read downloaded messages offline.
@@ -38,6 +40,19 @@ changes and may redirect existing mail; review the instructions before changing 
 - [x] Configurable inbox checks and notifications while the app is running.
 - [x] Light, dark, and system themes, with customizable avatars.
 - [x] Check for updates from Settings.
+
+## HTML and templates
+
+Choose **Custom HTML** in the composer, then **HTML** to paste your design.
+Switch to **Visual** to edit text in place; select linked text to change its destination.
+**Preview** shows the design without editing controls, at desktop or mobile width.
+Visual edits preserve the surrounding HTML, styles, and Outlook-specific comments.
+Switching back to rich text may remove unsupported formatting and requires confirmation.
+
+Use **Save template** to store the current subject and design. **Templates** lets you
+reuse a copy, explicitly update a saved design, or delete it. Recipients and attachments
+are never saved in a template. Templates stay on this device and do not sync with Resend.
+Preview rendering can differ from Gmail, Outlook, and other email clients.
 
 ## Good to know
 
