@@ -111,7 +111,7 @@ test.each([false, true])("composer fields follow From, To, Subject without neste
   expect(input("#subject").classList.contains("h-8")).toBe(false);
   const to = input("#to");
   expect(to.parentElement?.classList.contains("border")).toBe(true);
-  const toggles = Array.from(target.querySelectorAll<HTMLButtonElement>('[data-slot="toggle-group-item"]'));
+  const toggles = Array.from(target.querySelectorAll<HTMLButtonElement>('[aria-label="Optional email fields"] [data-slot="toggle-group-item"]'));
   expect(toggles.map((button) => button.textContent)).toEqual(["Reply to", "Cc", "Bcc"]);
   flushSync(() => { toggles.forEach((button) => button.click()); });
   expect(labels()).toEqual(["From", "To", "Reply to", "Cc", "Bcc", "Subject", "Content"]);
@@ -130,7 +130,7 @@ test.each([
 ])("optional layout: Reply to=%s, Cc=%s, Bcc=%s", async (replyTo, cc, bcc) => {
   open();
   await ready();
-  const buttons = Array.from(target.querySelectorAll<HTMLButtonElement>('[data-slot="toggle-group-item"]'));
+  const buttons = Array.from(target.querySelectorAll<HTMLButtonElement>('[aria-label="Optional email fields"] [data-slot="toggle-group-item"]'));
   flushSync(() => { [replyTo, cc, bcc].forEach((enabled, index) => { if (enabled) buttons[index].click(); }); });
   expect(!!target.querySelector("#replyTo")).toBe(replyTo);
   expect(!!target.querySelector("#cc")).toBe(cc);
@@ -241,6 +241,112 @@ test("missing reply details block sending and remain retryable without losing th
   flushSync(() => target.querySelector<HTMLButtonElement>("button")!.click());
   await ready();
   expect(input("#subject").readOnly).toBe(true);
+});
+
+function button(label: string, root: ParentNode = target) {
+  return Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.trim() === label)!;
+}
+
+test("custom HTML is sent unchanged and switching back to rich text requires confirmation", async () => {
+  open();
+  await ready();
+  flushSync(() => button("Custom HTML").click());
+  flushSync(() => button("HTML").click());
+  const html = '<!doctype html><html><body><!--[if mso]>Outlook<![endif]--><table><tr><td style="color:red">Hi María</td></tr></table></body></html>';
+  body(html);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  flushSync(() => button("Rich text").click());
+  expect(confirm).toHaveBeenCalled();
+  expect(target.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(html);
+  flushSync(() => target.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", { accountId: "account-a", data: expect.objectContaining({ content: html, subject: "Re: Invoice" }) }));
+});
+
+test("visual edits update the original HTML without leaking preview markers or losing Outlook code", async () => {
+  vi.mocked(invoke).mockImplementation(async (command, args) => command === "prepare_email_html" ? (args as { html: string }).html : undefined);
+  open();
+  await ready();
+  flushSync(() => button("Custom HTML").click());
+  flushSync(() => button("HTML").click());
+  const html = '<!doctype html><!--[if mso]><table><![endif]--><p style="color:red">Hi María</p><a href="https://example.com">Visit us</a>';
+  body(html);
+  flushSync(() => button("Visual").click());
+  await vi.waitFor(() => expect(target.querySelector<HTMLIFrameElement>("iframe")?.srcdoc).toContain("Hi María"));
+  const frame = target.querySelector<HTMLIFrameElement>("iframe")!;
+  expect(frame.getAttribute("sandbox")).toBe("allow-same-origin");
+  // jsdom does not implement srcdoc navigation; load its prepared document explicitly.
+  frame.contentDocument!.open();
+  frame.contentDocument!.write(frame.srcdoc);
+  frame.contentDocument!.close();
+  flushSync(() => frame.dispatchEvent(new Event("load")));
+  const text = frame.contentDocument!.querySelector<HTMLElement>('[contenteditable="plaintext-only"]')!;
+  expect(text).not.toBeNull();
+  flushSync(() => {
+    text.textContent = "Hi Ana & team";
+    text.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const linkedText = frame.contentDocument!.querySelector<HTMLElement>('a [contenteditable]')!;
+  flushSync(() => linkedText.dispatchEvent(new Event("focus")));
+  const destination = input('[aria-label="Link destination"]');
+  flushSync(() => { destination.value = "https://example.com/news"; destination.dispatchEvent(new Event("input", { bubbles: true })); });
+  flushSync(() => button("Update link").click());
+  const expected = html.replace("Hi María", "Hi Ana &amp; team").replace('href="https://example.com"', 'href="https://example.com/news"');
+  flushSync(() => button("HTML").click());
+  expect(target.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(expected);
+  flushSync(() => button("Visual").click());
+  await vi.waitFor(() => expect(target.querySelector<HTMLIFrameElement>("iframe")?.srcdoc).toContain("Hi Ana &amp; team"));
+  flushSync(() => target.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", { accountId: "account-a", data: expect.objectContaining({ content: expected }) }));
+});
+
+test.each([false, true])("applying a template copies its design without changing reply subjects (reply: %s)", async (isReply) => {
+  if (!isReply) pageState.url = new URL("https://app.test/mail/account-a/composer");
+  const template = { id: "template-1", name: "Newsletter", subject: "June news", html: "<p>Saved design</p>" };
+  vi.mocked(invoke).mockImplementation(async (command, args) => command === "list_email_templates" ? [template] : command === "prepare_email_html" ? (args as { html: string }).html : undefined);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  open();
+  await ready();
+  body("<p>Existing draft</p>");
+  flushSync(() => button("Templates").click());
+  await vi.waitFor(() => expect(button("Use template", document.body)).toBeTruthy());
+  flushSync(() => button("Use template", document.body).click());
+  expect(input("#subject").value).toBe(isReply ? "Re: Invoice" : template.subject);
+  flushSync(() => button("HTML").click());
+  expect(target.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(template.html);
+  body("<p>My edited copy</p>");
+  expect(template.html).toBe("<p>Saved design</p>");
+  expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "save_email_template")).toBe(false);
+});
+
+test("declining template replacement leaves the draft intact", async () => {
+  const template = { id: "template-1", name: "Newsletter", subject: "June news", html: "<p>Saved design</p>" };
+  vi.mocked(invoke).mockResolvedValue([template]);
+  vi.spyOn(window, "confirm").mockReturnValue(false);
+  open();
+  await ready();
+  body("<p>Keep this draft</p>");
+  flushSync(() => button("Templates").click());
+  await vi.waitFor(() => expect(button("Use template", document.body)).toBeTruthy());
+  flushSync(() => button("Use template", document.body).click());
+  expect(target.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("<p>Keep this draft</p>");
+  expect(input("#subject").value).toBe("Re: Invoice");
+});
+
+test("templates save only the subject and design and preserve the draft after storage errors", async () => {
+  vi.mocked(invoke).mockRejectedValueOnce("Storage unavailable").mockResolvedValue({ id: "new" });
+  open();
+  await ready();
+  body("<p>Reusable design</p>");
+  flushSync(() => button("Save template").click());
+  const name = document.querySelector<HTMLInputElement>("#template-name")!;
+  flushSync(() => { name.value = "Newsletter"; name.dispatchEvent(new Event("input", { bubbles: true })); });
+  const save = () => Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((button) => button.textContent?.trim() === "Save template")!.click();
+  flushSync(save);
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toContain("Storage unavailable"));
+  expect(target.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("<p>Reusable design</p>");
+  flushSync(save);
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+  expect(invoke).toHaveBeenCalledWith("save_email_template", { accountId: "account-a", id: null, name: "Newsletter", subject: "Re: Invoice", html: "<p>Reusable design</p>" });
 });
 
 test("a reply cannot initialize a composer after it has been closed", async () => {
