@@ -31,7 +31,7 @@
         "object-src": "'none'",
         "base-uri": "'none'",
         "form-action": "'none'",
-        "frame-src": "'none'"
+        "frame-src": "'self'"
       }
     }
   },

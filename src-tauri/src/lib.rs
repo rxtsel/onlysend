@@ -10,6 +10,7 @@ mod notifications;
 mod oauth;
 mod permissions;
 mod sent;
+mod templates;
 #[cfg(desktop)]
 mod updates;
 
@@ -127,6 +128,9 @@ pub fn run() {
             permissions::probe_full_access,
             email::send_email,
             email::prepare_reply,
+            templates::list_email_templates,
+            templates::save_email_template,
+            templates::delete_email_template,
             attachments::list_email_attachments,
             attachments::attachment_action,
             attachments::cancel_attachment_download,

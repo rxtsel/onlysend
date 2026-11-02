@@ -21,6 +21,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/006_email_threads.sql"),
     include_str!("migrations/007_deleted_emails.sql"),
     include_str!("migrations/008_backfill_thread_links.sql"),
+    include_str!("migrations/009_email_templates.sql"),
 ];
 pub(crate) const DATABASE_FILE: &str = "onlysend.sqlite3";
 

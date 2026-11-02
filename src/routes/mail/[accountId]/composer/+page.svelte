@@ -12,7 +12,7 @@
   import { InputTag } from "@/lib/components/ui/input-tag";
   import type { Tag } from "@/lib/components/ui/input-tag/input-tag.svelte";
   import * as ToggleGroup from "$lib/components/ui/toggle-group";
-  import { Editor } from "@/lib/components/editor";
+  import ComposerBody from "$lib/features/sending/composer-body.svelte";
   import { LoaderCircle } from "@lucide/svelte";
   import Button from "@/lib/components/ui/button/button.svelte";
   import { emailComposerSchema } from "@/lib/schemas/email-composer.schema";
@@ -210,7 +210,7 @@
           {#if errors.from}<Field.Error>{errors.from}</Field.Error>{/if}
         </Field.Field>
         <Field.Field class="w-fit shrink-0">
-          <ToggleGroup.Root type="multiple" variant="outline" class="*:flex-none">
+          <ToggleGroup.Root type="multiple" variant="outline" class="*:flex-none" aria-label="Optional email fields">
             <ToggleGroup.Item value="replyTo" onclick={() => (isReplyToEnabled = !isReplyToEnabled)}>Reply to</ToggleGroup.Item>
             <ToggleGroup.Item value="cc" onclick={() => (isCcEnabled = !isCcEnabled)}>Cc</ToggleGroup.Item>
             <ToggleGroup.Item value="bcc" onclick={() => (isBccEnabled = !isBccEnabled)}>Bcc</ToggleGroup.Item>
@@ -272,7 +272,10 @@
     <Field.Field data-invalid={!!errors.content} class="min-h-0 flex-1 gap-0 border-t pt-2">
       <Field.Label for="content" class="sr-only">Content</Field.Label>
       <div class="flex h-full min-h-0 flex-col gap-3">
-        <Editor
+        <ComposerBody
+          {accountId}
+          {isReply}
+          bind:subject
           bind:this={composerEditor}
           bind:content
           bind:files
