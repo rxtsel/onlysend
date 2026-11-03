@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { BookTemplate, Save, Trash2 } from "@lucide/svelte";
+  import { BookTemplate, Trash2 } from "@lucide/svelte";
   import { toast } from "svelte-sonner";
   import Button from "$lib/components/ui/button/button.svelte";
   import Input from "$lib/components/ui/input/input.svelte";
@@ -30,7 +30,7 @@
     } catch (cause) { if (!disposed) error = errorMessage(cause, "Could not load templates"); }
     finally { if (!disposed) loading = false; }
   }
-  function show(next: "library" | "save") {
+  export function show(next: "library" | "save") {
     panel = next; name = ""; error = ""; open = true;
     if (next === "library") void load();
   }
@@ -65,10 +65,6 @@
   }
 </script>
 
-<div class="flex items-center gap-1">
-  <Button type="button" variant="ghost" size="sm" {disabled} onclick={() => show("library")}><BookTemplate />Templates</Button>
-  <Button type="button" variant="ghost" size="sm" disabled={disabled || !content.trim()} onclick={() => show("save")}><Save />Save template</Button>
-</div>
 <Dialog.Root bind:open onOpenChange={(next) => { if (!saving) open = next; }}>
   <Dialog.Content class="sm:max-w-xl">
     <Dialog.Header>

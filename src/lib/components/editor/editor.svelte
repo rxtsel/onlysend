@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, type Snippet } from "svelte";
   import { Editor } from "@tiptap/core";
   import StarterKit from "@tiptap/starter-kit";
   import Placeholder from "@tiptap/extension-placeholder";
@@ -9,6 +9,8 @@
     List as ListIcon,
     ListOrdered as ListOrderedIcon,
     Paperclip,
+    Undo2,
+    Redo2,
   } from "@lucide/svelte";
   import Button, { buttonVariants } from "../ui/button/button.svelte";
   import * as Popover from "$lib/components/ui/popover";
@@ -27,6 +29,7 @@
     editable = true,
     disabled = false,
     files = $bindable<File[]>([]),
+    toolbarActions = undefined as Snippet | undefined,
     "aria-invalid": ariaInvalid,
   } = $props();
 
@@ -45,6 +48,8 @@
   let isBulletList = $state(false);
   let isOrderedList = $state(false);
   let isLink = $state(false);
+  let canUndo = $state(false);
+  let canRedo = $state(false);
 
   // Popover link
   let linkPopoverOpen = $state(false);
@@ -57,6 +62,8 @@
     isBulletList = editor.isActive("bulletList");
     isOrderedList = editor.isActive("orderedList");
     isLink = editor.isActive("link");
+    canUndo = editor.can().undo();
+    canRedo = editor.can().redo();
   }
 
   function handleOpenLinkPopover() {
@@ -138,7 +145,9 @@
 >
   {#if editor && editable}
     <!-- Toolbar -->
-    <div class="flex shrink-0 flex-wrap items-center gap-1 py-2">
+    <div class="flex shrink-0 flex-wrap items-center gap-1 py-2" role="toolbar" aria-label="Message editor">
+      <Button type="button" variant="ghost" size="icon-sm" aria-label="Undo" disabled={disabled || !canUndo} onclick={() => editor?.chain().focus().undo().run()}><Undo2 /></Button>
+      <Button type="button" variant="ghost" size="icon-sm" aria-label="Redo" disabled={disabled || !canRedo} onclick={() => editor?.chain().focus().redo().run()}><Redo2 /></Button>
       <Button
         type="button"
         variant="ghost"
@@ -275,6 +284,7 @@
         />
         <Paperclip class="size-4" />
       </label>
+      {#if toolbarActions}<div class="ml-auto">{@render toolbarActions()}</div>{/if}
     </div>
   {/if}
 

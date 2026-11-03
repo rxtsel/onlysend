@@ -1,20 +1,18 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
-  import { Code, Eye, Monitor, Smartphone, Undo2, Redo2, PencilLine } from "@lucide/svelte";
+  import { onDestroy, type Snippet } from "svelte";
+  import { Eye, Monitor, Smartphone, Undo2, Redo2 } from "@lucide/svelte";
   import Button from "$lib/components/ui/button/button.svelte";
   import Input from "$lib/components/ui/input/input.svelte";
-  import Textarea from "$lib/components/ui/textarea/textarea.svelte";
   import * as ToggleGroup from "$lib/components/ui/toggle-group";
   import { prepareEmailHtml } from "$lib/shared/email-html";
   import { errorMessage } from "$lib/shared/utils/errors";
   import { HtmlDocument, previewDocument } from "./html-document";
   import { cn } from "$lib/utils";
 
-  let { content = $bindable(""), disabled = false, "aria-invalid": ariaInvalid }: { content?: string; disabled?: boolean; "aria-invalid"?: boolean } = $props();
+  let { content = $bindable(""), disabled = false, toolbarActions, "aria-invalid": ariaInvalid }: { content?: string; disabled?: boolean; toolbarActions?: Snippet; "aria-invalid"?: boolean } = $props();
   let view = $state("visual");
   let width = $state("desktop");
   let frame = $state<HTMLIFrameElement | null>(null);
-  let code = $state<HTMLTextAreaElement | null>(null);
   let srcdoc = $state("");
   let loading = $state(false);
   let error = $state("");
@@ -26,9 +24,17 @@
   let undo = $state<string[]>([]);
   let redo = $state<string[]>([]);
   let cleanup: (() => void) | undefined;
+  let restoreFocus: number | null = null;
+  // Toolbar clicks blur the iframe before undo runs.
+  let focusedRegion: number | null = null;
+
+  export function replaceContent(html: string) {
+    if (disabled) return;
+    view = "visual";
+    change(html);
+  }
 
   export function focus(): boolean {
-    if (view === "html") { code?.focus(); return !!code; }
     const target = frame?.contentDocument?.querySelector<HTMLElement>('[contenteditable="plaintext-only"]');
     target?.focus();
     return !!target;
@@ -44,6 +50,7 @@
     if (disabled) return;
     const stack = direction === "undo" ? undo : redo;
     if (!stack.length) return;
+    restoreFocus = focusedRegion;
     const next = stack[stack.length - 1];
     if (direction === "undo") { undo = undo.slice(0, -1); redo = [...redo, content]; }
     else { redo = redo.slice(0, -1); undo = [...undo, content]; }
@@ -55,7 +62,6 @@
     const source = content;
     const currentView = view;
     void retry;
-    if (currentView === "html") { model = null; return; }
     if (currentView === "visual" && source === model?.html && srcdoc) return;
     model = null;
     let cancelled = false;
@@ -110,6 +116,7 @@
         element.setAttribute("aria-label", "Edit email text");
         element.setAttribute("spellcheck", "true");
         element.addEventListener("focus", () => {
+          focusedRegion = index;
           selectedLink = region.link ?? null;
           linkUrl = region.link === undefined ? "" : current.regions[region.link].value;
           linkError = "";
@@ -123,7 +130,7 @@
         });
         element.addEventListener("paste", (event) => {
           event.preventDefault();
-          if (disabled) return;
+          if (disabled || model !== current) return;
           const selection = document.getSelection();
           if (!selection?.rangeCount) return;
           const range = selection.getRangeAt(0);
@@ -140,10 +147,28 @@
       });
       listen("keydown", (event) => {
         const key = event as KeyboardEvent;
-        if ((key.ctrlKey || key.metaKey) && key.key.toLowerCase() === "z") {
-          key.preventDefault(); history(key.shiftKey ? "redo" : "undo");
+        if ((key.ctrlKey || key.metaKey) && ["z", "y"].includes(key.key.toLowerCase())) {
+          key.preventDefault();
+          history(key.shiftKey || key.key.toLowerCase() === "y" ? "redo" : "undo");
         }
       });
+      listen("beforeinput", (event) => {
+        const input = event as InputEvent;
+        if (input.inputType === "historyUndo" || input.inputType === "historyRedo") {
+          event.preventDefault();
+          history(input.inputType === "historyUndo" ? "undo" : "redo");
+        }
+      });
+      if (restoreFocus !== null) {
+        const target = document.getElementById(`${current.prefix}-${restoreFocus}`);
+        target?.focus();
+        if (target) {
+          const selection = document.getSelection();
+          selection?.selectAllChildren(target);
+          selection?.collapseToEnd();
+        }
+        restoreFocus = null;
+      }
     }
     cleanup = () => remove.forEach((remove) => remove());
   }
@@ -157,22 +182,15 @@
 </script>
 
 <div class="flex h-full min-h-0 flex-col gap-2" aria-invalid={ariaInvalid || undefined}>
-  <div class="flex shrink-0 flex-wrap items-center justify-between gap-2">
-    <ToggleGroup.Root type="single" value={view === "preview" ? "" : view} onValueChange={(next) => { if (next) view = next; }} variant="outline" size="sm" aria-label="HTML editor view" {disabled}>
-      <ToggleGroup.Item value="visual"><PencilLine />Visual</ToggleGroup.Item>
-      <ToggleGroup.Item value="html"><Code />HTML</ToggleGroup.Item>
+  <div class="flex shrink-0 flex-wrap items-center gap-1 py-2" role="toolbar" aria-label="Message editor">
+    <Button type="button" variant="ghost" size="icon-sm" aria-label="Undo" disabled={disabled || !undo.length} onclick={() => history("undo")}><Undo2 /></Button>
+    <Button type="button" variant="ghost" size="icon-sm" aria-label="Redo" disabled={disabled || !redo.length} onclick={() => history("redo")}><Redo2 /></Button>
+    <Button type="button" variant={view === "preview" ? "secondary" : "ghost"} size="sm" aria-pressed={view === "preview"} {disabled} onclick={() => { view = view === "preview" ? "visual" : "preview"; }}><Eye />{view === "preview" ? "Edit" : "Preview"}</Button>
+    <ToggleGroup.Root type="single" value={width} onValueChange={(next) => { if (next) width = next; }} variant="outline" size="sm" aria-label="Preview width">
+      <ToggleGroup.Item value="desktop" aria-label="Desktop preview"><Monitor /></ToggleGroup.Item>
+      <ToggleGroup.Item value="mobile" aria-label="Mobile preview"><Smartphone /></ToggleGroup.Item>
     </ToggleGroup.Root>
-    <div class="flex items-center gap-1">
-      <Button type="button" variant="ghost" size="icon-sm" aria-label="Undo HTML edit" disabled={disabled || !undo.length} onclick={() => history("undo")}><Undo2 /></Button>
-      <Button type="button" variant="ghost" size="icon-sm" aria-label="Redo HTML edit" disabled={disabled || !redo.length} onclick={() => history("redo")}><Redo2 /></Button>
-      <Button type="button" variant={view === "preview" ? "secondary" : "ghost"} size="sm" aria-pressed={view === "preview"} {disabled} onclick={() => { view = view === "preview" ? "visual" : "preview"; }}><Eye />Preview</Button>
-      {#if view !== "html"}
-        <ToggleGroup.Root type="single" value={width} onValueChange={(next) => { if (next) width = next; }} variant="outline" size="sm" aria-label="Preview width">
-          <ToggleGroup.Item value="desktop" aria-label="Desktop preview"><Monitor /></ToggleGroup.Item>
-          <ToggleGroup.Item value="mobile" aria-label="Mobile preview"><Smartphone /></ToggleGroup.Item>
-        </ToggleGroup.Root>
-      {/if}
-    </div>
+    {#if toolbarActions}<div class="ml-auto">{@render toolbarActions()}</div>{/if}
   </div>
   {#if selectedLink !== null && view === "visual"}
     <div class="flex shrink-0 items-center gap-2">
@@ -181,21 +199,19 @@
     </div>
     {#if linkError}<p class="text-sm text-destructive" role="alert">{linkError}</p>{/if}
   {/if}
-  {#if view === "html"}
-    <Textarea bind:ref={code} value={content} oninput={(event) => change(event.currentTarget.value)} aria-label="Email HTML source" aria-invalid={ariaInvalid} {disabled} spellcheck="false" placeholder="Paste your email HTML here…" class="min-h-48 flex-1 resize-none font-mono text-xs [field-sizing:fixed]" />
-  {:else if error}
+  {#if error}
     <div class="flex flex-1 flex-col items-center justify-center gap-3 py-8"><p role="alert" class="text-sm text-destructive">{error}</p><Button type="button" variant="outline" size="sm" onclick={() => retry++}>Try again</Button></div>
   {:else}
     <div class="relative flex min-h-48 flex-1 justify-center overflow-auto rounded-lg border bg-muted/30 p-2" aria-busy={loading}>
       {#if loading}<span class="absolute top-4 rounded-md bg-background px-3 py-1 text-xs shadow-sm" role="status">Preparing preview…</span>{/if}
-      {#if !content.trim() && !loading}<p class="absolute top-12 px-4 text-center text-sm text-muted-foreground">Switch to HTML to paste a design, or choose a saved template.</p>{/if}
+      {#if !content.trim() && !loading}<p class="absolute top-12 px-4 text-center text-sm text-muted-foreground">Use the HTML menu to insert a design or choose a saved template.</p>{/if}
       {#key srcdoc}
         <iframe bind:this={frame} title={view === "visual" ? "Editable email design" : "Email preview"} {srcdoc} sandbox="allow-same-origin" referrerpolicy="no-referrer" onload={connectFrame} inert={loading || disabled} class={cn("h-full min-h-48 border-0 bg-white", width === "mobile" ? "w-[375px] max-w-full" : "w-full")}></iframe>
       {/key}
     </div>
   {/if}
   <p class="shrink-0 text-xs text-muted-foreground">
-    {view === "visual" ? "Click text to edit. Select linked text to update its destination. Layout stays intact." : view === "html" ? "Your original HTML is preserved. Scripts are never run in the preview." : "Preview only. Email clients may render your design differently."}
+    {view === "visual" ? "Click text to edit. Select linked text to update its destination. Layout stays intact." : "Preview only. Email clients may render your design differently."}
     Remote images and styles may load.
   </p>
 </div>
