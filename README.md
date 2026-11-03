@@ -43,15 +43,17 @@ changes and may redirect existing mail; review the instructions before changing 
 
 ## HTML and templates
 
-Choose **Custom HTML** in the composer, then **HTML** to paste your design.
-Switch to **Visual** to edit text in place; select linked text to change its destination.
+Use **HTML → Insert HTML…** in the editor toolbar to paste or modify a design.
+Apply it to edit its text and links directly in the same message area, without switching
+editor tabs. Imported designs preserve their surrounding HTML, styles, and Outlook-specific
+comments instead of being converted to the limited rich-text format.
 **Preview** shows the design without editing controls, at desktop or mobile width.
-Visual edits preserve the surrounding HTML, styles, and Outlook-specific comments.
-Switching back to rich text may remove unsupported formatting and requires confirmation.
+Undo and redo are available in both ordinary messages and imported designs.
 
-Use **Save template** to store the current subject and design. **Templates** lets you
-reuse a copy, explicitly update a saved design, or delete it. Recipients and attachments
-are never saved in a template. Templates stay on this device and do not sync with Resend.
+Use **HTML → Save as template…** to store the current subject and design.
+**HTML → Use template…** lets you reuse a copy, explicitly update a saved design,
+or delete it. Recipients and attachments are never saved in a template.
+Templates stay on this device and do not sync with Resend.
 Preview rendering can differ from Gmail, Outlook, and other email clients.
 
 ## Good to know
