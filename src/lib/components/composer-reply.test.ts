@@ -247,54 +247,98 @@ function button(label: string, root: ParentNode = target) {
   return Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.trim() === label)!;
 }
 
-test("custom HTML is sent unchanged and switching back to rich text requires confirmation", async () => {
+async function htmlAction(label: string) {
+  flushSync(() => target.querySelector<HTMLButtonElement>('[aria-label="HTML options"]')!.click());
+  await vi.waitFor(() => expect(document.querySelector('[role="menuitem"]')).not.toBeNull());
+  const item = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((item) => item.textContent?.trim() === label)!;
+  flushSync(() => item.click());
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+}
+function htmlDraft(value: string) {
+  const textarea = document.querySelector<HTMLTextAreaElement>("#email-html-source")!;
+  flushSync(() => { textarea.value = value; textarea.dispatchEvent(new Event("input", { bubbles: true })); });
+}
+async function insertHtml(value: string) {
+  await htmlAction("Insert HTML…");
+  htmlDraft(value);
+  flushSync(() => button("Apply HTML", document.body).click());
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+}
+async function editableFrame(text: string) {
+  await vi.waitFor(() => expect(target.querySelector<HTMLIFrameElement>("iframe")?.srcdoc).toContain(text));
+  const frame = target.querySelector<HTMLIFrameElement>("iframe")!;
+  // jsdom does not implement srcdoc navigation; load its prepared document explicitly.
+  frame.contentDocument!.open();
+  frame.contentDocument!.write(frame.srcdoc);
+  frame.contentDocument!.close();
+  flushSync(() => frame.dispatchEvent(new Event("load")));
+  return frame;
+}
+
+test("one toolbar imports custom HTML without mode tabs and sends it unchanged", async () => {
   open();
   await ready();
-  flushSync(() => button("Custom HTML").click());
-  flushSync(() => button("HTML").click());
+  expect(target.querySelector('[aria-label="Email content format"]')).toBeNull();
   const html = '<!doctype html><html><body><!--[if mso]>Outlook<![endif]--><table><tr><td style="color:red">Hi María</td></tr></table></body></html>';
-  body(html);
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-  flushSync(() => button("Rich text").click());
-  expect(confirm).toHaveBeenCalled();
-  expect(target.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(html);
+  await insertHtml(html);
+  expect(target.querySelectorAll('[aria-label="Message editor"]')).toHaveLength(1);
+  expect(target.querySelector('[aria-label="HTML editor view"]')).toBeNull();
   flushSync(() => target.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
   await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", { accountId: "account-a", data: expect.objectContaining({ content: html, subject: "Re: Invoice" }) }));
+});
+
+test("cancelling an HTML replacement preserves the rich-text draft", async () => {
+  vi.spyOn(window, "confirm").mockReturnValue(false);
+  open();
+  await ready();
+  body("<p>Keep this message</p>");
+  await htmlAction("Insert HTML…");
+  htmlDraft("<p>Replacement</p>");
+  flushSync(() => button("Apply HTML", document.body).click());
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  flushSync(() => button("Cancel", document.body).click());
+  expect(target.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("<p>Keep this message</p>");
 });
 
 test("visual edits update the original HTML without leaking preview markers or losing Outlook code", async () => {
   vi.mocked(invoke).mockImplementation(async (command, args) => command === "prepare_email_html" ? (args as { html: string }).html : undefined);
   open();
   await ready();
-  flushSync(() => button("Custom HTML").click());
-  flushSync(() => button("HTML").click());
   const html = '<!doctype html><!--[if mso]><table><![endif]--><p style="color:red">Hi María</p><a href="https://example.com">Visit us</a>';
-  body(html);
-  flushSync(() => button("Visual").click());
-  await vi.waitFor(() => expect(target.querySelector<HTMLIFrameElement>("iframe")?.srcdoc).toContain("Hi María"));
-  const frame = target.querySelector<HTMLIFrameElement>("iframe")!;
+  await insertHtml(html);
+  let frame = await editableFrame("Hi María");
   expect(frame.getAttribute("sandbox")).toBe("allow-same-origin");
-  // jsdom does not implement srcdoc navigation; load its prepared document explicitly.
-  frame.contentDocument!.open();
-  frame.contentDocument!.write(frame.srcdoc);
-  frame.contentDocument!.close();
-  flushSync(() => frame.dispatchEvent(new Event("load")));
   const text = frame.contentDocument!.querySelector<HTMLElement>('[contenteditable="plaintext-only"]')!;
   expect(text).not.toBeNull();
   flushSync(() => {
     text.textContent = "Hi Ana & team";
     text.dispatchEvent(new Event("input", { bubbles: true }));
   });
+  const undo = target.querySelector<HTMLButtonElement>('[aria-label="Undo"]')!;
+  expect(undo.disabled).toBe(false);
+  flushSync(() => undo.click());
+  frame = await editableFrame("Hi María");
+  const redo = target.querySelector<HTMLButtonElement>('[aria-label="Redo"]')!;
+  expect(redo.disabled).toBe(false);
+  flushSync(() => redo.click());
+  frame = await editableFrame("Hi Ana &amp; team");
+  const keyboardUndo = new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true });
+  flushSync(() => frame.contentDocument!.dispatchEvent(keyboardUndo));
+  expect(keyboardUndo.defaultPrevented).toBe(true);
+  frame = await editableFrame("Hi María");
+  const nativeRedo = new InputEvent("beforeinput", { inputType: "historyRedo", bubbles: true, cancelable: true });
+  flushSync(() => frame.contentDocument!.dispatchEvent(nativeRedo));
+  expect(nativeRedo.defaultPrevented).toBe(true);
+  frame = await editableFrame("Hi Ana &amp; team");
   const linkedText = frame.contentDocument!.querySelector<HTMLElement>('a [contenteditable]')!;
   flushSync(() => linkedText.dispatchEvent(new Event("focus")));
   const destination = input('[aria-label="Link destination"]');
   flushSync(() => { destination.value = "https://example.com/news"; destination.dispatchEvent(new Event("input", { bubbles: true })); });
   flushSync(() => button("Update link").click());
   const expected = html.replace("Hi María", "Hi Ana &amp; team").replace('href="https://example.com"', 'href="https://example.com/news"');
-  flushSync(() => button("HTML").click());
-  expect(target.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(expected);
-  flushSync(() => button("Visual").click());
-  await vi.waitFor(() => expect(target.querySelector<HTMLIFrameElement>("iframe")?.srcdoc).toContain("Hi Ana &amp; team"));
+  await htmlAction("Insert HTML…");
+  expect(document.querySelector<HTMLTextAreaElement>("#email-html-source")?.value).toBe(expected);
+  flushSync(() => button("Cancel", document.body).click());
   flushSync(() => target.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
   await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", { accountId: "account-a", data: expect.objectContaining({ content: expected }) }));
 });
@@ -307,13 +351,14 @@ test.each([false, true])("applying a template copies its design without changing
   open();
   await ready();
   body("<p>Existing draft</p>");
-  flushSync(() => button("Templates").click());
+  await htmlAction("Use template…");
   await vi.waitFor(() => expect(button("Use template", document.body)).toBeTruthy());
   flushSync(() => button("Use template", document.body).click());
   expect(input("#subject").value).toBe(isReply ? "Re: Invoice" : template.subject);
-  flushSync(() => button("HTML").click());
-  expect(target.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(template.html);
-  body("<p>My edited copy</p>");
+  await htmlAction("Insert HTML…");
+  expect(document.querySelector<HTMLTextAreaElement>("#email-html-source")?.value).toBe(template.html);
+  htmlDraft("<p>My edited copy</p>");
+  flushSync(() => button("Apply HTML", document.body).click());
   expect(template.html).toBe("<p>Saved design</p>");
   expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "save_email_template")).toBe(false);
 });
@@ -325,7 +370,7 @@ test("declining template replacement leaves the draft intact", async () => {
   open();
   await ready();
   body("<p>Keep this draft</p>");
-  flushSync(() => button("Templates").click());
+  await htmlAction("Use template…");
   await vi.waitFor(() => expect(button("Use template", document.body)).toBeTruthy());
   flushSync(() => button("Use template", document.body).click());
   expect(target.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("<p>Keep this draft</p>");
@@ -337,7 +382,7 @@ test("templates save only the subject and design and preserve the draft after st
   open();
   await ready();
   body("<p>Reusable design</p>");
-  flushSync(() => button("Save template").click());
+  await htmlAction("Save as template…");
   const name = document.querySelector<HTMLInputElement>("#template-name")!;
   flushSync(() => { name.value = "Newsletter"; name.dispatchEvent(new Event("input", { bubbles: true })); });
   const save = () => Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((button) => button.textContent?.trim() === "Save template")!.click();
