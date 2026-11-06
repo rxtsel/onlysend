@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.1.10 - 2026-11-06
+
+### Features
+- Add local draft saving and management (8f1c642)
+- Warn before sending without mentioned attachments (d0060f7)
+
+
+### Fixes
+- Show sent and draft attachments correctly (65d9670)
+
 ## v0.1.9 - 2026-10-31
 
 ### Features
