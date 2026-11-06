@@ -5,6 +5,8 @@ import Layout from "./__tests__/mail-layout-harness.svelte";
 import { prepareReply, type ReplyContext } from "$lib/shared/reply";
 import { deleteLocalMail } from "$lib/shared/services/delete-mail";
 import { goto } from "$app/navigation";
+import { invoke } from "@tauri-apps/api/core";
+import { listFromEmails } from "$lib/shared/from-emails";
 
 const { pageState } = vi.hoisted(() => ({ pageState: {
   url: new URL("https://app.test/mail/account-a/inbox/message"), params: { id: "message" as string | undefined },
@@ -95,6 +97,34 @@ test("the Sent toolbar does not reply to the user's own address", () => {
   instance = mount(Layout, { target });
   flushSync();
   expect(target.querySelector('[aria-label="Reply to this message"]')).toBeNull();
+});
+
+test("the header Send button shows a single English attachment warning before sending", async () => {
+  pageState.url = new URL(`https://app.test/mail/account-a/composer?reply=${emailId}`);
+  pageState.params.id = undefined;
+  vi.mocked(prepareReply).mockResolvedValueOnce({ to: ["recipient@example.com"], subject: "Re: Invoice", fromCandidates: [] });
+  vi.mocked(listFromEmails).mockResolvedValueOnce([{ id: "me", label: "Me", address: "me@example.com", isDefault: true }]);
+  vi.mocked(invoke).mockImplementation(async (command) => command === "mentions_attachment" ? true : undefined);
+  instance = mount(Layout, { target, props: { composer: true } });
+  await vi.waitFor(() => expect(target.querySelector<HTMLTextAreaElement>("textarea")).not.toBeNull());
+  const editor = target.querySelector<HTMLTextAreaElement>("textarea")!;
+  flushSync(() => { editor.value = "<p>Te envío el documento adjunto.</p>"; editor.dispatchEvent(new Event("input", { bubbles: true })); });
+  const send = Array.from(target.querySelectorAll<HTMLButtonElement>("main > header button")).find((button) => button.textContent?.trim() === "Send")!;
+  expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  send.click();
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("Missing an attachment?"));
+  expect(document.querySelectorAll('[role="alertdialog"]')).toHaveLength(1);
+  expect(document.querySelector('[data-slot="alert-dialog-action"]')?.textContent?.trim()).toBe("Send anyway");
+  expect(invoke).not.toHaveBeenCalledWith("send_email", expect.anything());
+  document.querySelector<HTMLButtonElement>('[data-slot="alert-dialog-cancel"]')!.click();
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).toBeNull());
+  await vi.waitFor(() => expect(document.activeElement).toBe(send));
+  send.click();
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("Missing an attachment?"));
+  document.querySelector<HTMLButtonElement>('[data-slot="alert-dialog-action"]')!.click();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", expect.anything()));
+  await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/mail/account-a/sent"));
+  expect(document.querySelector('[role="alertdialog"]')).toBeNull();
 });
 
 test("Send is disabled until reply preparation finishes, with a back link to the original", async () => {

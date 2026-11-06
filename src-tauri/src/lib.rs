@@ -1,4 +1,6 @@
 mod app_exit;
+mod attachment_keywords;
+mod attachment_reminder;
 mod attachments;
 mod config;
 mod domains;
@@ -133,6 +135,7 @@ pub fn run() {
             app_exit::request_app_exit,
             app_exit::complete_app_exit,
             email::send_email,
+            attachment_reminder::mentions_attachment,
             drafts::save_draft,
             drafts::get_draft,
             drafts::list_drafts,

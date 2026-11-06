@@ -31,6 +31,10 @@
     "aria-invalid": ariaInvalid,
   } = $props();
 
+  export function getText(): string {
+    return editor?.getText() ?? "";
+  }
+
   export function focus(): boolean {
     const writer = element?.querySelector<HTMLElement>('[contenteditable="true"]');
     if (!writer) return false;
@@ -38,7 +42,7 @@
     return document.activeElement === writer;
   }
 
-  $effect(() => { editor?.setEditable(editable && !disabled); });
+  $effect(() => { editor?.setEditable(editable && !disabled, false); });
 
   // States reactive for buttons
   let isBold = $state(false);

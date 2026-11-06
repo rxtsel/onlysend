@@ -47,6 +47,13 @@ function input(selector: string) { return target.querySelector<HTMLInputElement>
 async function ready() {
   await vi.waitFor(() => expect(target.querySelector("[data-composer-ready]")?.textContent).toBe("true"));
 }
+async function confirmSend() {
+  await vi.waitFor(() => expect(document.querySelector('[data-slot="alert-dialog-action"]')).not.toBeNull());
+  document.querySelector<HTMLButtonElement>('[data-slot="alert-dialog-action"]')!.click();
+}
+function submit() {
+  flushSync(() => target.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+}
 function body(value: string) {
   const editor = target.querySelector<HTMLTextAreaElement>("textarea")!;
   flushSync(() => { editor.value = value; editor.dispatchEvent(new Event("input", { bubbles: true })); });
@@ -69,11 +76,88 @@ test("reply reuses the composer, locks its subject and chooses the matching send
   expect(confirm).not.toHaveBeenCalled();
   body("<p>My reply</p>");
   expect(guard()).toBe(false);
-  flushSync(() => target.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  submit();
+  await confirmSend();
   await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", { accountId: "account-a", data: {
     replyEmailId: emailId, subject: "Re: Invoice", to: ["reply@example.com"], from: "Me <me@example.com>", content: "<p>My reply</p>", attachments: [], cc: [], bcc: [],
   } }));
   await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/mail/account-a/sent"));
+});
+
+test.each(["Please see the attached document.", "Te envío el documento adjunto."])("attachment reminder is English, preserves edits on cancel and allows sending: %s", async (text) => {
+  vi.mocked(invoke).mockImplementation(async (command) => command === "mentions_attachment" ? true : undefined);
+  open();
+  await ready();
+  body(`<p>${text}</p>`);
+  expect(invoke).not.toHaveBeenCalledWith("mentions_attachment", expect.anything());
+  submit();
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("Missing an attachment?"));
+  expect(invoke).toHaveBeenCalledWith("mentions_attachment", { subject: "Re: Invoice", body: text });
+  const title = document.querySelector('[data-slot="alert-dialog-title"]')!;
+  expect(title.firstElementChild?.tagName.toLowerCase()).toBe("svg");
+  expect(title.firstElementChild?.getAttribute("aria-hidden")).toBe("true");
+  expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("Your message appears to mention an attachment, but no files have been added. Send it without attachments?");
+  expect(document.querySelector('[data-slot="alert-dialog-cancel"]')?.textContent).toBe("Keep editing");
+  expect(document.querySelector('[data-slot="alert-dialog-action"]')?.textContent?.trim()).toBe("Send anyway");
+  expect(invoke).not.toHaveBeenCalledWith("send_email", expect.anything());
+  document.querySelector<HTMLButtonElement>('[data-slot="alert-dialog-cancel"]')!.click();
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).toBeNull());
+  expect(target.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(`<p>${text}</p>`);
+  expect(goto).not.toHaveBeenCalled();
+  submit();
+  await confirmSend();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", expect.objectContaining({ data: expect.objectContaining({ content: `<p>${text}</p>`, attachments: [] }) })));
+  expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "send_email")).toHaveLength(1);
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).toBeNull());
+});
+
+test("mentions in the subject also warn, but a selected attachment uses normal confirmation", async () => {
+  vi.mocked(invoke).mockImplementation(async (command) => command === "mentions_attachment" ? true : undefined);
+  vi.mocked(prepareReply).mockResolvedValueOnce({ ...context, subject: "Re: Attached invoice" });
+  open();
+  await ready();
+  body("<p>Here you go.</p>");
+  submit();
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("Missing an attachment?"));
+  document.querySelector<HTMLButtonElement>('[data-slot="alert-dialog-cancel"]')!.click();
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).toBeNull());
+  const file = new File(["invoice"], "invoice.txt", { type: "text/plain" });
+  Object.defineProperty(file, "arrayBuffer", { value: async () => new TextEncoder().encode("invoice").buffer });
+  const picker = target.querySelector<HTMLInputElement>('[aria-label="Attach files"]')!;
+  Object.defineProperty(picker, "files", { configurable: true, value: [file] });
+  flushSync(() => picker.dispatchEvent(new Event("change", { bubbles: true })));
+  submit();
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("Send this message?"));
+  expect(document.querySelector('[role="alertdialog"]')?.textContent).not.toContain("Missing an attachment?");
+  expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "mentions_attachment")).toHaveLength(1);
+  await confirmSend();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", expect.objectContaining({ data: expect.objectContaining({ attachments: [{ filename: "invoice.txt", content: "aW52b2ljZQ==", mimeType: "text/plain" }] }) })));
+});
+
+test("attachment keywords in a link URL do not warn about visible message text", async () => {
+  open();
+  await ready();
+  body('<p><a href="https://example.com/attachments">View details</a></p>');
+  submit();
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("Send this message?"));
+  expect(document.querySelector('[role="alertdialog"]')?.textContent).not.toContain("Missing an attachment?");
+  expect(invoke).toHaveBeenCalledWith("mentions_attachment", { subject: "Re: Invoice", body: "View details" });
+  expect(document.querySelector('[data-slot="alert-dialog-title"] svg')).toBeNull();
+});
+
+test("attachment check failures keep the message editable and allow retry", async () => {
+  vi.mocked(invoke).mockRejectedValueOnce(new Error("Check unavailable"));
+  open();
+  await ready();
+  body("<p>Please see the attachment.</p>");
+  submit();
+  await vi.waitFor(() => expect(target.querySelector("[data-composer-ready]")?.textContent).toBe("true"));
+  expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  expect(invoke).not.toHaveBeenCalledWith("send_email", expect.anything());
+  expect(target.querySelector<HTMLTextAreaElement>("textarea")?.disabled).toBe(false);
+  vi.mocked(invoke).mockResolvedValue(true);
+  submit();
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("Missing an attachment?"));
 });
 
 test("ordinary messages keep an editable subject and the default sender", async () => {
@@ -162,7 +246,8 @@ test("Reply to is saved in the outgoing payload and autosaved before departure",
   expect(guard()).toBe(false);
   expect(confirm).not.toHaveBeenCalled();
   body("<p>Reply body</p>");
-  flushSync(() => target.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  submit();
+  await confirmSend();
   await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", {
     accountId: "account-a", data: expect.objectContaining({ replyTo: "replies@example.com", replyEmailId: emailId }),
   }));
@@ -190,6 +275,7 @@ test("invalid Reply to blocks sending; hiding it excludes the preserved value", 
   expect(input("#replyTo").value).toBe("not-an-email");
   flushSync(() => { toggle.click(); });
   flushSync(submit);
+  await confirmSend();
   await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", expect.anything()));
   const outgoing = vi.mocked(invoke).mock.calls.find(([command]) => command === "send_email")![1] as { data: Record<string, unknown> };
   expect(outgoing.data).not.toHaveProperty("replyTo");
@@ -200,7 +286,8 @@ test("an enabled but empty Reply to remains optional", async () => {
   await ready();
   flushSync(() => target.querySelector<HTMLButtonElement>('[data-slot="toggle-group-item"]')!.click());
   body("<p>Reply body</p>");
-  flushSync(() => target.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  submit();
+  await confirmSend();
   await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", expect.anything()));
   const outgoing = vi.mocked(invoke).mock.calls.find(([command]) => command === "send_email")![1] as { data: Record<string, unknown> };
   expect(outgoing.data).not.toHaveProperty("replyTo");
@@ -413,14 +500,15 @@ test("failed sending preserves the saved draft and successful sending removes it
   open();
   await ready();
   body("<p>Keep me</p>");
-  const submit = () => flushSync(() => target.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
   submit();
+  await confirmSend();
   await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", expect.anything()));
   await vi.waitFor(() => expect(target.querySelector("[data-composer-sending]")?.textContent).toBe("false"));
   expect(invoke).not.toHaveBeenCalledWith("delete_draft", expect.anything());
   expect(goto).not.toHaveBeenCalled();
   vi.mocked(invoke).mockResolvedValue(undefined);
   submit();
+  await confirmSend();
   await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("delete_draft", expect.anything()));
   await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/mail/account-a/sent"));
 });
