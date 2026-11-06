@@ -4,7 +4,8 @@ import { mount, unmount } from "svelte";
 import Reader from "./__tests__/mail-reader-harness.svelte";
 import { getInboundEmail } from "$lib/shared/inbound";
 import { getSentEmail } from "$lib/shared/sent";
-import { listEmailAttachments } from "$lib/shared/attachments";
+import { listEmailAttachments, attachmentAction } from "$lib/shared/attachments";
+import { getDraft, listDrafts } from "$lib/shared/drafts";
 import { getMailThread } from "$lib/shared/local-mail";
 import { deleteLocalMail } from "$lib/shared/services/delete-mail";
 import { goto } from "$app/navigation";
@@ -16,13 +17,16 @@ vi.mock("$lib/shared/services/delete-mail", () => ({ deleteLocalMail: vi.fn().mo
 vi.mock("$lib/shared/inbound", () => ({ getInboundEmail: vi.fn() }));
 vi.mock("$lib/shared/sent", () => ({ getSentEmail: vi.fn() }));
 vi.mock("$lib/shared/local-mail", () => ({ getMailThread: vi.fn().mockResolvedValue([]) }));
-vi.mock("$lib/shared/attachments", async (original) => ({ ...await original<typeof import("$lib/shared/attachments")>(), listEmailAttachments: vi.fn().mockResolvedValue([]) }));
-vi.mock("svelte-sonner", () => ({ toast: { error: vi.fn() } }));
+vi.mock("$lib/shared/attachments", async (original) => ({ ...await original<typeof import("$lib/shared/attachments")>(), listEmailAttachments: vi.fn(), attachmentAction: vi.fn() }));
+vi.mock("$lib/shared/drafts", async (original) => ({ ...await original<typeof import("$lib/shared/drafts")>(), getDraft: vi.fn(), listDrafts: vi.fn() }));
+vi.mock("svelte-sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 let target: HTMLElement;
 let instance: ReturnType<typeof mount>;
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(listEmailAttachments).mockReset().mockResolvedValue([]);
+  vi.mocked(attachmentAction).mockReset().mockResolvedValue({ kind: "saved" });
   vi.mocked(getMailThread).mockReset().mockResolvedValue([]);
   target = document.createElement("div");
   document.body.append(target);
@@ -105,6 +109,66 @@ test("received attachments sit below the content and leave the subject at full w
   expect(target.querySelector("pre")?.textContent).toBe("Private body");
   expect(target.querySelector("article ol")?.contains(attachments)).toBe(true);
   expect(target.textContent).toContain("reply@example.com");
+});
+
+test.each([undefined, []])("Sent discovers attachments even when the email detail has none (%j)", async (attachments) => {
+  const attachment = { id: "file", filename: "invoice.pdf", contentType: "application/pdf", size: 100 };
+  vi.mocked(listEmailAttachments).mockResolvedValueOnce([attachment]);
+  vi.mocked(getSentEmail).mockResolvedValue({
+    id: "b3e2b2b6-3f0e-4c8e-9ad3-2f43a1e2c7f1", from: "me@example.com", to: ["recipient@example.com"],
+    subject: "Sent subject", createdAt: "2026-01-01T00:00:00Z", html: null, text: "Sent body",
+    cc: [], bcc: [], replyTo: null, attachments,
+  });
+  instance = mount(Reader, { target, props: { mailbox: "sent" } });
+  await vi.waitFor(() => expect(target.querySelector('[aria-label="Attachments"]')).not.toBeNull());
+  expect(listEmailAttachments).toHaveBeenCalledExactlyOnceWith({ accountId: "account-a", mailbox: "sent", emailId: "b3e2b2b6-3f0e-4c8e-9ad3-2f43a1e2c7f1" });
+  expect(target.querySelector("pre")?.textContent).toBe("Sent body");
+  const cards = target.querySelector('[aria-label="Attachments"]')!;
+  expect(cards.textContent).toContain("invoice.pdf");
+  expect(target.querySelector("header")?.contains(cards)).toBe(false);
+  target.querySelector<HTMLButtonElement>('button[aria-label="Save invoice.pdf as"]')!.click();
+  await vi.waitFor(() => expect(attachmentAction).toHaveBeenCalledWith(expect.objectContaining({ accountId: "account-a", mailbox: "sent", attachmentId: "file", action: "save" }), expect.any(Function)));
+});
+
+test("Sent with no remote attachments leaves no empty attachment section", async () => {
+  vi.mocked(getSentEmail).mockResolvedValue({
+    id: "message", from: "me@example.com", to: ["recipient@example.com"], subject: "No files",
+    createdAt: "2026-01-01T00:00:00Z", html: null, text: "Body", cc: [], bcc: [], replyTo: null, attachments: [],
+  });
+  instance = mount(Reader, { target, props: { mailbox: "sent" } });
+  await vi.waitFor(() => expect(listEmailAttachments).toHaveBeenCalledOnce());
+  expect(target.querySelector("pre")?.textContent).toBe("Body");
+  expect(target.querySelector('[aria-label="Attachments"]')).toBeNull();
+});
+
+test.each([false, true])("Sent remains readable when attachment listing fails (cached metadata: %s)", async (cached) => {
+  const attachment = { id: "file", filename: "invoice.pdf", contentType: "application/pdf", size: 100 };
+  vi.mocked(listEmailAttachments).mockRejectedValueOnce(new Error("Offline"));
+  vi.mocked(getSentEmail).mockResolvedValue({
+    id: "message", from: "me@example.com", to: ["recipient@example.com"], subject: "Offline mail",
+    createdAt: "2026-01-01T00:00:00Z", html: null, text: "Saved sent body", cc: [], bcc: [], replyTo: null, attachments: cached ? [attachment] : [],
+  });
+  instance = mount(Reader, { target, props: { mailbox: "sent" } });
+  await vi.waitFor(() => expect(target.textContent).toContain("Offline"));
+  expect(target.querySelector("pre")?.textContent).toBe("Saved sent body");
+  expect(target.querySelector('[aria-label="Attachments"]')?.textContent?.includes("invoice.pdf")).toBe(cached);
+  vi.mocked(listEmailAttachments).mockResolvedValueOnce([attachment]);
+  Array.from(target.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Retry")!.click();
+  await vi.waitFor(() => expect(target.querySelector('[aria-label="Attachments"]')?.textContent).toContain("invoice.pdf"));
+  await vi.waitFor(() => expect(target.textContent).not.toContain("Offline"));
+});
+
+test("draft preview shows its local files without querying Sent attachments", async () => {
+  vi.mocked(getDraft).mockResolvedValue({
+    from: "me@example.com", to: ["recipient@example.com"], cc: [], bcc: [], subject: "Draft", content: "", replyEmailId: null,
+    pendingTo: "", pendingCc: "", pendingBcc: "", replyTo: "", isReplyToEnabled: false, isCcEnabled: false, isBccEnabled: false,
+    attachments: [{ filename: "local.txt", content: "aGVsbG8=", mimeType: "text/plain" }],
+  });
+  vi.mocked(listDrafts).mockResolvedValue([{ id: "draft", subject: "Draft", from: "me@example.com", to: ["recipient@example.com"], preview: "", updatedAt: Date.parse("2026-01-01T00:00:00Z") }]);
+  instance = mount(Reader, { target, props: { draftId: "draft" } });
+  await vi.waitFor(() => expect(target.querySelector('[aria-label="Draft attachments"]')?.textContent).toContain("local.txt"));
+  expect(listEmailAttachments).not.toHaveBeenCalled();
+  expect(getSentEmail).not.toHaveBeenCalled();
 });
 
 test("a thread's Reply action targets the exact message card", async () => {
