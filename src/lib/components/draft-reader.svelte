@@ -43,7 +43,7 @@
   <article class="h-full overflow-auto overscroll-contain" aria-label="Draft preview">
     <!-- Use the outbound message presentation with local details; no remote fetch or reply actions. -->
     <MailThreadMessage
-      message={{ ...mail, mailbox: "sent" }} selectedId={mail.id} threaded={false} onDeleted={() => {}}
+      message={{ ...mail, mailbox: "sent" }} selectedId={mail.id} threaded={false} remoteAttachments={false} onDeleted={() => {}}
       initialDetail={{ from: draft.from, to: draft.to, subject: draft.subject, createdAt: mail.createdAt, html: draft.content,
         cc: draft.isCcEnabled ? draft.cc : [], bcc: draft.isBccEnabled ? draft.bcc : [], replyTo: draft.isReplyToEnabled ? draft.replyTo : null }}
     />

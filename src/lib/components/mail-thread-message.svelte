@@ -27,9 +27,10 @@
     html: string | null; text?: string | null; attachments?: EmailAttachment[];
     cc?: string[]; bcc?: string[]; replyTo?: string | string[] | null;
   };
-  let { message, selectedId, threaded, initialDetail = null, previewLoading = false, onDeleted }: {
+  let { message, selectedId, threaded, initialDetail = null, previewLoading = false, remoteAttachments = true, onDeleted }: {
     message: MailThreadMessage; selectedId: string; threaded: boolean; initialDetail?: Detail | null;
     previewLoading?: boolean;
+    remoteAttachments?: boolean;
     onDeleted: () => void;
   } = $props();
   const accountId = useAccountId();
@@ -141,7 +142,7 @@
       {:else}
         <p class="py-6 text-sm text-muted-foreground">No content available.</p>
       {/if}
-      {#if detail.attachments?.length}
+      {#if remoteAttachments && (message.mailbox === "sent" || detail.attachments?.length)}
         {#await import("./message-attachments.svelte")}
           <p class="mt-4 text-xs text-muted-foreground" role="status">Loading attachments…</p>
         {:then { default: MessageAttachments }}
