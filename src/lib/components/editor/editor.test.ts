@@ -22,7 +22,8 @@ vi.mock("@tiptap/core", async (original) => ({
 test("updates toolbar state once per transaction and configures only StarterKit's link", async () => {
   const target = document.createElement("div");
   document.body.append(target);
-  const instance = mount(Editor, { target });
+  const onchange = vi.fn();
+  const instance = mount(Editor, { target, props: { onchange } });
   flushSync();
   const frame = target.firstElementChild!;
   expect(frame.classList.contains("border")).toBe(false);
@@ -34,8 +35,10 @@ test("updates toolbar state once per transaction and configures only StarterKit'
   const options = probe.options!;
   expect(options.extensions?.map((extension) => extension.name)).toEqual(["starterKit", "placeholder"]);
   expect(options.extensions?.[0].options.link.openOnClick).toBe(false);
+  expect(onchange).not.toHaveBeenCalled();
   options.onTransaction?.({} as never);
   options.onUpdate?.({ editor: { getHTML: () => "<p>Updated</p>" } } as never);
+  expect(onchange).toHaveBeenCalledOnce();
   expect(options.onSelectionUpdate).toBeUndefined();
   expect(probe.isActive.mock.calls.map(([name]) => name)).toEqual(["bold", "italic", "bulletList", "orderedList", "link"]);
   await unmount(instance);

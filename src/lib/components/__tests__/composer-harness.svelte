@@ -10,3 +10,5 @@
 <Composer />
 <output data-composer-ready>{String(status.ready)}</output>
 <output data-composer-sending>{String(status.sending)}</output>
+<output data-draft-status>{status.saveState}</output>
+<button data-discard-draft onclick={() => status.discard?.()}>Discard draft probe</button>

@@ -14,7 +14,7 @@
 
   let { mail, mode, threadCount = 1, isActive = false, isUnread = false, isSelected = false, disabled = false, onclick, onreply, ondelete }: {
     mail: MailListItem;
-    mode: Mailbox;
+    mode: Mailbox | "drafts";
     threadCount?: number;
     isActive?: boolean;
     isUnread?: boolean;
@@ -28,7 +28,7 @@
   const name = $derived(address.split("<")[0].replaceAll('"', "").trim() || address);
   const senderName = $derived(mail.from.split("<")[0].replaceAll('"', "").trim() || mail.from);
   const failureLabel = $derived(mode === "sent" ? sentFailureLabel(mail.lastEvent) : null);
-  const deleteLabel = $derived(threadCount > 1 ? "Delete this message from this device" : "Delete from this device");
+  const deleteLabel = $derived(mode === "drafts" ? "Delete draft" : threadCount > 1 ? "Delete this message from this device" : "Delete from this device");
   let deleting = $state(false);
   let confirmDelete = $state(false);
   $effect.pre(() => {
@@ -63,7 +63,7 @@
   </div>
   <div class="min-w-0 flex-1">
     <div class="flex items-center gap-2 pr-7">
-      <span class={cn("min-w-0 flex-1 truncate text-sm", isUnread ? "font-semibold text-foreground" : "font-medium")}>{name || "Unknown sender"}</span>
+      <span class={cn("min-w-0 flex-1 truncate text-sm", isUnread ? "font-semibold text-foreground" : "font-medium")}>{name || (mode === "drafts" ? "No recipients" : "Unknown sender")}</span>
       <time class="shrink-0 text-[11px] tabular-nums text-muted-foreground" title={formatFullEmailDate(mail.createdAt)}>{formatEmailDate(mail.createdAt)}</time>
     </div>
     <div class="mt-1 flex min-w-0 items-center gap-2">
@@ -117,4 +117,4 @@
   <ContextMenu.Item variant="destructive" disabled={deleting || disabled} onSelect={() => { confirmDelete = true; }}><Trash2 />{deleteLabel}</ContextMenu.Item>
 </ContextMenu.Content>
 </ContextMenu.Root>
-<ConfirmDeleteMail bind:open={confirmDelete} subject={mail.subject} onConfirm={() => { void deleteMessage(); }} />
+<ConfirmDeleteMail bind:open={confirmDelete} draft={mode === "drafts"} subject={mail.subject} onConfirm={() => { void deleteMessage(); }} />

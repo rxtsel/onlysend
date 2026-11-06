@@ -21,15 +21,18 @@
   import { cn } from "$lib/utils";
   import { createMailSelection } from "$lib/shared/mail-selection.svelte";
   import ConfirmDeleteMail from "$lib/components/confirm-delete-mail.svelte";
+  import { emailAvatarSeed } from "$lib/shared/email-avatar";
+  import { listDrafts, deleteDraft, draftListItem } from "$lib/shared/drafts";
+  type ListMailbox = Mailbox | "drafts";
 
   let { mailbox, domain, active = true, class: className, onDomainsChange, onSelectMail, onArchiveStatusChange }: {
-    mailbox: Mailbox;
+    mailbox: ListMailbox;
     domain: string | null;
     active?: boolean;
     class?: string;
     onDomainsChange: (domains: string[]) => void;
-    onSelectMail: (mail: MailListItem, mailbox: Mailbox) => void;
-    onArchiveStatusChange: (accountId: string, mailbox: Mailbox, data: ArchiveFooterData) => void;
+    onSelectMail: (mail: MailListItem, mailbox: ListMailbox) => void;
+    onArchiveStatusChange: (accountId: string, mailbox: ListMailbox, data: ArchiveFooterData) => void;
   } = $props();
   const accountId = useAccountId();
   let search = $state("");
@@ -39,16 +42,31 @@
   let statusError = $state<string | null>(null);
   let disposed = false;
   let lastKey = "";
-  let lastMailbox: Mailbox | null = null;
+  let lastMailbox: ListMailbox | null = null;
   let catalogKey = "";
   const selection = createMailSelection();
   let bulkDeleting = $state(false);
   let confirmBulkDelete = $state(false);
-  let pendingDelete = $state<{ ids: string[]; mailbox: Mailbox; key: string } | null>(null);
+  let pendingDelete = $state<{ ids: string[]; mailbox: ListMailbox; key: string } | null>(null);
   let listElement: HTMLElement;
 
   async function fetchPage(limit: number, after: string | null, refresh: boolean) {
     const owner = mailbox;
+    if (owner === "drafts") {
+      const [drafts, catalog] = await Promise.all([
+        listDrafts(accountId),
+        // Reuse the account's domain catalog without refreshing remote mail.
+        loadMailList(accountId, { mailbox: "sent", limit: 1, after: null, domain: null, search: null, refresh: false }).catch(() => null),
+      ]);
+      if (!disposed && owner === mailbox && catalog && catalog.domains.join("\0") !== catalogKey) {
+        catalogKey = catalog.domains.join("\0");
+        onDomainsChange(catalog.domains);
+      }
+      const items = drafts.map(draftListItem).filter((mail) =>
+        (!domain || emailAvatarSeed(mail.from).split("@").at(-1) === domain) &&
+        (!searchTerm || [mail.subject, mail.from, mail.to.join(" "), mail.preview].join(" ").toLowerCase().includes(searchTerm.toLowerCase())));
+      return { items, hasMore: false, nextCursor: null, domains: catalog?.domains ?? [], cache: { downloadedAt: Math.floor(Date.now() / 1000), error: null } };
+    }
     const result = await loadMailList(accountId, { mailbox: owner, limit, after, domain, search: searchTerm || null, refresh });
     const key = result.domains.join("\0");
     if (!disposed && owner === mailbox && key !== catalogKey) {
@@ -135,7 +153,9 @@
     if (!request || bulkDeleting || request.key !== lastKey || !active) return;
     bulkDeleting = true;
     try {
-      const deleted = await deleteLocalMails(accountId, request.mailbox, request.ids);
+      const deleted = request.mailbox === "drafts"
+        ? await Promise.all(request.ids.map((id) => deleteDraft(accountId, id))).then(() => true)
+        : await deleteLocalMails(accountId, request.mailbox, request.ids);
       if (!deleted || disposed || request.key !== lastKey || !active) return;
       selection.clear();
       // The deletion event also refreshes other views; refresh here even if it was missed.
@@ -143,7 +163,10 @@
       await list.refreshCached();
       if (disposed || request.key !== lastKey || !active) return;
       if (request.ids.includes(page.params.id ?? "")) await goto(mailUrl(accountId, request.mailbox));
-    } catch (error) { report(error); }
+    } catch (error) {
+      report(error);
+      if (request.mailbox === "drafts") { list.clearItems(); await list.refreshCached().catch(report); }
+    }
     finally { bulkDeleting = false; }
   }
 
@@ -155,6 +178,7 @@
 
   async function refreshStatus() {
     const owner = mailbox;
+    if (owner === "drafts") return;
     try {
       const result = await getMailArchiveStatus(accountId, owner);
       if (disposed || owner !== mailbox) return;
@@ -228,8 +252,12 @@
   }
 
   async function deleteMail(id: string) {
-    try { await deleteLocalMail(accountId, mailbox, id); }
-    catch (error) { report(error); }
+    try {
+      if (mailbox === "drafts") {
+        await deleteDraft(accountId, id);
+        if (page.params.id === id) await goto(mailUrl(accountId, "drafts"));
+      } else await deleteLocalMail(accountId, mailbox, id);
+    } catch (error) { report(error); }
   }
 
   async function refresh() {
@@ -237,6 +265,7 @@
     const owner = mailbox;
     manualRefreshing = true;
     try {
+      if (owner === "drafts") { await list.refresh(); return; }
       await refreshMailbox(accountId, owner);
       if (disposed || owner !== mailbox) return;
       await list.refreshCached();
@@ -274,8 +303,15 @@
       if (item) item.isRead = true;
     });
     const visible = () => { if (!document.hidden && active) void refreshStatus(); };
+    const draftDeleted = (event: Event) => {
+      if (mailbox !== "drafts" || !active || bulkDeleting || (event as CustomEvent).detail.accountId !== accountId) return;
+      selection.clear();
+      list.clearItems();
+      void list.refreshCached().catch(report);
+    };
     document.addEventListener("visibilitychange", visible);
-    return () => { cleanups.forEach((cleanup) => cleanup()); document.removeEventListener("visibilitychange", visible); };
+    window.addEventListener("draft-deleted", draftDeleted);
+    return () => { cleanups.forEach((cleanup) => cleanup()); document.removeEventListener("visibilitychange", visible); window.removeEventListener("draft-deleted", draftDeleted); };
   });
 
   onDestroy(() => { disposed = true; list.clearItems(); });
@@ -283,11 +319,11 @@
 
 <svelte:window onkeydown={selectionKeydown} />
 
-<section bind:this={listElement} class={cn("flex min-h-0 min-w-0 flex-col border-e bg-background", className)} aria-label={`${mailbox === "inbox" ? "Inbox" : "Sent"} messages`}>
+<section bind:this={listElement} class={cn("flex min-h-0 min-w-0 flex-col border-e bg-background", className)} aria-label={`${mailbox === "drafts" ? "Draft" : mailbox === "inbox" ? "Inbox" : "Sent"} messages`}>
   <header class="flex h-16 shrink-0 items-center gap-2 border-b px-4">
     <Sidebar.Trigger aria-label="Toggle mailboxes" />
     <div class="min-w-0 flex-1">
-      <h1 class="text-base font-semibold tracking-tight">{mailbox === "inbox" ? "Inbox" : "Sent"}</h1>
+      <h1 class="text-base font-semibold tracking-tight">{mailbox === "drafts" ? "Drafts" : mailbox === "inbox" ? "Inbox" : "Sent"}</h1>
       {#if domain}<p class="truncate text-xs text-muted-foreground">{domain}</p>{/if}
     </div>
     {#if selection.ids.length || bulkDeleting}
@@ -321,8 +357,8 @@
     {:else if list.items.length === 0}
       <div class="flex h-full min-h-48 flex-col items-center justify-center gap-3 p-6 text-center">
         <Inbox class="size-7 text-muted-foreground" aria-hidden="true" />
-        <p class="text-sm font-medium">{searchTerm ? "No matches" : list.cacheInfo ? "No mail yet" : "No saved mail"}</p>
-        <p class="text-xs text-muted-foreground">{searchTerm ? "Try another search." : list.cacheInfo ? "Your messages will appear here." : "Refresh to check for messages."}</p>
+        <p class="text-sm font-medium">{searchTerm ? "No matches" : mailbox === "drafts" ? "No drafts yet" : list.cacheInfo ? "No mail yet" : "No saved mail"}</p>
+        <p class="text-xs text-muted-foreground">{searchTerm ? "Try another search." : mailbox === "drafts" ? "Unsent messages are saved automatically on this device." : list.cacheInfo ? "Your messages will appear here." : "Refresh to check for messages."}</p>
         {#if list.error || !list.cacheInfo}<Button variant="outline" size="sm" onclick={refresh}>{list.error ? "Try again" : "Check for mail"}</Button>{/if}
       </div>
     {:else}
@@ -338,4 +374,4 @@
     {/if}
   </div>
 </section>
-<ConfirmDeleteMail bind:open={confirmBulkDelete} count={pendingDelete?.ids.length ?? 0} onConfirm={() => { void deleteSelected(); }} />
+<ConfirmDeleteMail bind:open={confirmBulkDelete} draft={mailbox === "drafts"} count={pendingDelete?.ids.length ?? 0} onConfirm={() => { void deleteSelected(); }} />

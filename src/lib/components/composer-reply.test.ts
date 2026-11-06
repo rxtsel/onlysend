@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
-import { goto } from "$app/navigation";
+import { goto, beforeNavigate } from "$app/navigation";
 import { invoke } from "@tauri-apps/api/core";
 import Composer from "./__tests__/composer-harness.svelte";
 import { prepareReply } from "$lib/shared/reply";
@@ -32,6 +32,7 @@ beforeEach(() => {
   vi.mocked(invoke).mockReset().mockResolvedValue(undefined);
   vi.mocked(registerDraftGuard).mockClear();
   vi.mocked(goto).mockClear();
+  vi.mocked(beforeNavigate).mockClear();
   target = document.createElement("div");
   document.body.append(target);
 });
@@ -146,20 +147,20 @@ test.each([
   }
 });
 
-test("Reply to is saved in the outgoing payload and protected by the draft guard", async () => {
+test("Reply to is saved in the outgoing payload and autosaved before departure", async () => {
   open();
   await ready();
   const toggle = target.querySelector<HTMLButtonElement>('[data-slot="toggle-group-item"]')!;
   flushSync(() => toggle.click());
   const guard = vi.mocked(registerDraftGuard).mock.calls[0][1];
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-  expect(guard()).toBe(true);
+  expect(guard()).toBe(true); // Visibility alone does not start a new draft.
   flushSync(() => {
     input("#replyTo").value = "  replies@example.com  ";
     input("#replyTo").dispatchEvent(new Event("input", { bubbles: true }));
   });
   expect(guard()).toBe(false);
-  expect(confirm).toHaveBeenCalledTimes(1);
+  expect(confirm).not.toHaveBeenCalled();
   body("<p>Reply body</p>");
   flushSync(() => target.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
   await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", {
@@ -189,8 +190,8 @@ test("invalid Reply to blocks sending; hiding it excludes the preserved value", 
   expect(input("#replyTo").value).toBe("not-an-email");
   flushSync(() => { toggle.click(); });
   flushSync(submit);
-  await vi.waitFor(() => expect(invoke).toHaveBeenCalled());
-  const outgoing = vi.mocked(invoke).mock.calls[0][1] as { data: Record<string, unknown> };
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", expect.anything()));
+  const outgoing = vi.mocked(invoke).mock.calls.find(([command]) => command === "send_email")![1] as { data: Record<string, unknown> };
   expect(outgoing.data).not.toHaveProperty("replyTo");
 });
 
@@ -200,8 +201,8 @@ test("an enabled but empty Reply to remains optional", async () => {
   flushSync(() => target.querySelector<HTMLButtonElement>('[data-slot="toggle-group-item"]')!.click());
   body("<p>Reply body</p>");
   flushSync(() => target.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
-  await vi.waitFor(() => expect(invoke).toHaveBeenCalled());
-  const outgoing = vi.mocked(invoke).mock.calls[0][1] as { data: Record<string, unknown> };
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", expect.anything()));
+  const outgoing = vi.mocked(invoke).mock.calls.find(([command]) => command === "send_email")![1] as { data: Record<string, unknown> };
   expect(outgoing.data).not.toHaveProperty("replyTo");
 });
 
@@ -254,4 +255,172 @@ test("a reply cannot initialize a composer after it has been closed", async () =
   flushSync();
   expect(target.querySelector("form")).toBeNull();
   expect(invoke).not.toHaveBeenCalled();
+});
+
+test("opening or internal editor initialization does not save until the user types", async () => {
+  pageState.url = new URL("https://app.test/mail/account-a/composer");
+  open();
+  await ready();
+  flushSync(() => {
+    const editor = target.querySelector<HTMLTextAreaElement>("textarea")!;
+    editor.value = "<p></p>";
+    editor.dispatchEvent(new Event("input")); // Internal update, not a bubbled user edit.
+    target.querySelector<HTMLButtonElement>('[data-slot="toggle-group-item"]')!.click();
+  });
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  expect(invoke).not.toHaveBeenCalled();
+  expect(target.querySelector("[data-draft-status]")?.textContent).toBe("");
+  body("<p>First typed text</p>");
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("save_draft", expect.anything()), { timeout: 1500 });
+});
+
+test("pasting recipients starts autosave without a native input event", async () => {
+  pageState.url = new URL("https://app.test/mail/account-a/composer");
+  open();
+  await ready();
+  const paste = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(paste, "clipboardData", { value: { getData: () => "pasted@example.com" } });
+  flushSync(() => input("#to").dispatchEvent(paste));
+  expect(paste.defaultPrevented).toBe(true);
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("save_draft", expect.objectContaining({ data: expect.objectContaining({ to: ["pasted@example.com"] }) })), { timeout: 1500 });
+});
+
+test("autosaves the latest edit after debounce and keeps incomplete recipient input on blur", async () => {
+  pageState.url = new URL("https://app.test/mail/account-a/composer");
+  open();
+  await ready();
+  expect(invoke).not.toHaveBeenCalled(); // Opening a blank composer creates no draft.
+  body("<p>First</p>");
+  body("<p>Latest</p>");
+  flushSync(() => {
+    input("#to").value = "unfinished@";
+    input("#to").dispatchEvent(new Event("input", { bubbles: true }));
+    input("#to").dispatchEvent(new Event("blur"));
+  });
+  expect(input("#to").value).toBe("unfinished@");
+  expect(invoke).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1), { timeout: 1500 });
+  expect(invoke).toHaveBeenCalledWith("save_draft", {
+    accountId: "account-a", draftId: expect.any(String),
+    data: expect.objectContaining({ content: "<p>Latest</p>", pendingTo: "unfinished@", attachments: [] }),
+  });
+  expect(vi.mocked(registerDraftGuard).mock.calls[0][1]()).toBe(true);
+});
+
+test("navigation flushes immediately and stays in the composer if saving fails", async () => {
+  open();
+  await ready();
+  body("<p>Do not lose this</p>");
+  const cancel = vi.fn();
+  const navigate = vi.mocked(beforeNavigate).mock.calls[0][0];
+  vi.mocked(invoke).mockRejectedValueOnce(new Error("Disk full"));
+  navigate({ cancel, to: { url: new URL("https://app.test/mail/account-a/inbox") }, willUnload: false } as never);
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("save_draft", expect.anything()));
+  await vi.waitFor(() => expect(target.querySelector("[data-draft-status]")?.textContent).toBe("Not saved"));
+  expect(cancel).toHaveBeenCalledOnce();
+  expect(goto).not.toHaveBeenCalled();
+  navigate({ cancel, to: { url: new URL("https://app.test/mail/account-a/inbox") }, willUnload: false } as never);
+  await vi.waitFor(() => expect(goto).toHaveBeenCalledWith(new URL("https://app.test/mail/account-a/inbox")));
+});
+
+test.each([-1, 1])("Back/Forward resumes its original history delta (%s) after rollback and save", async (delta) => {
+  open();
+  await ready();
+  body("<p>Save before history traversal</p>");
+  let finish!: () => void;
+  vi.mocked(invoke).mockReturnValueOnce(new Promise<void>((resolve) => { finish = resolve; }));
+  const go = vi.spyOn(history, "go").mockImplementation(() => {});
+  const cancel = vi.fn();
+  const navigate = vi.mocked(beforeNavigate).mock.calls[0][0];
+  navigate({ cancel, to: { url: new URL("https://app.test/mail/account-a/inbox") }, willUnload: false, type: "popstate", delta } as never);
+  expect(cancel).toHaveBeenCalledOnce();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("save_draft", expect.anything()));
+  finish();
+  await Promise.resolve();
+  expect(go).not.toHaveBeenCalled();
+  window.dispatchEvent(new PopStateEvent("popstate")); // SvelteKit restored the old entry.
+  await vi.waitFor(() => expect(go).toHaveBeenCalledExactlyOnceWith(delta));
+  expect(goto).not.toHaveBeenCalled();
+});
+
+test("failed discard leaves a skipped queued edit dirty until it is actually saved", async () => {
+  open();
+  await ready();
+  const guard = vi.mocked(registerDraftGuard).mock.calls[0][1];
+  const flush = vi.mocked(registerDraftGuard).mock.calls[0][2]!;
+  let finish!: () => void;
+  const firstWrite = new Promise<void>((resolve) => { finish = resolve; });
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "save_draft") await firstWrite;
+    if (command === "delete_draft") throw new Error("Delete failed");
+  });
+  body("<p>A</p>");
+  const first = flush();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("save_draft", expect.anything()));
+  body("<p>B</p>");
+  const queued = flush();
+  flushSync(() => target.querySelector<HTMLButtonElement>("[data-discard-draft]")!.click());
+  finish();
+  await Promise.all([first, queued]);
+  await vi.waitFor(() => expect(target.querySelector("[data-composer-sending]")?.textContent).toBe("false"));
+  expect(guard()).toBe(false);
+  expect(goto).not.toHaveBeenCalled();
+  await flush();
+  expect(guard()).toBe(true);
+  expect(invoke).toHaveBeenLastCalledWith("save_draft", expect.objectContaining({ data: expect.objectContaining({ content: "<p>B</p>" }) }));
+});
+
+test("reopens a persisted draft with all fields and attachments without creating a second draft", async () => {
+  pageState.url = new URL(`https://app.test/mail/account-a/composer?draft=${emailId}`);
+  vi.mocked(invoke).mockResolvedValueOnce({
+    from: "Me <me@example.com>", to: ["to@example.com"], cc: ["cc@example.com"], bcc: ["bcc@example.com"],
+    pendingTo: "unfinished@", pendingCc: "", pendingBcc: "", subject: "Saved subject", content: "<p>Saved body</p>",
+    replyEmailId: null, replyTo: "reply@example.com", isReplyToEnabled: true, isCcEnabled: true, isBccEnabled: true,
+    attachments: [{ filename: "note.txt", content: "aGVsbG8=", mimeType: "text/plain" }],
+  });
+  open();
+  await ready();
+  expect(invoke).toHaveBeenCalledExactlyOnceWith("get_draft", { accountId: "account-a", draftId: emailId });
+  expect(input("#subject").value).toBe("Saved subject");
+  expect(target.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("<p>Saved body</p>");
+  expect(input("#to").value).toBe("unfinished@");
+  expect(input("#replyTo").value).toBe("reply@example.com");
+  expect(input('[name="cc"][type="hidden"]').value).toBe("cc@example.com");
+  expect(input('[name="bcc"][type="hidden"]').value).toBe("bcc@example.com");
+  expect(target.textContent).toContain("note.txt");
+  expect(vi.mocked(registerDraftGuard).mock.calls[0][1]()).toBe(true);
+  body("<p>Only text changed</p>");
+  await vi.mocked(registerDraftGuard).mock.calls[0][2]!();
+  expect(invoke).toHaveBeenLastCalledWith("save_draft", expect.objectContaining({ draftId: emailId, data: expect.not.objectContaining({ attachments: expect.anything() }) }));
+});
+
+test("discard removes the draft and never saves it again on unmount", async () => {
+  open();
+  await ready();
+  body("<p>Discard me</p>");
+  flushSync(() => target.querySelector<HTMLButtonElement>("[data-discard-draft]")!.click());
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("delete_draft", { accountId: "account-a", draftId: expect.any(String) }));
+  await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/mail/account-a/drafts"));
+  await unmount(instance!);
+  instance = null;
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual(["delete_draft"]);
+});
+
+test("failed sending preserves the saved draft and successful sending removes it", async () => {
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "send_email") throw new Error("Offline");
+  });
+  open();
+  await ready();
+  body("<p>Keep me</p>");
+  const submit = () => flushSync(() => target.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  submit();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", expect.anything()));
+  await vi.waitFor(() => expect(target.querySelector("[data-composer-sending]")?.textContent).toBe("false"));
+  expect(invoke).not.toHaveBeenCalledWith("delete_draft", expect.anything());
+  expect(goto).not.toHaveBeenCalled();
+  vi.mocked(invoke).mockResolvedValue(undefined);
+  submit();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("delete_draft", expect.anything()));
+  await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/mail/account-a/sent"));
 });

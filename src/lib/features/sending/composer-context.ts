@@ -3,4 +3,6 @@ export const COMPOSER_STATUS = Symbol("composer-status");
 export interface ComposerStatus {
   ready: boolean;
   sending: boolean;
+  saveState?: string;
+  discard?: () => Promise<void>;
 }

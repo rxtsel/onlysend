@@ -1,6 +1,8 @@
+mod app_exit;
 mod attachments;
 mod config;
 mod domains;
+mod drafts;
 mod email;
 mod email_html;
 mod external;
@@ -37,10 +39,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(attachments::AttachmentTransfers::default())
+        .manage(app_exit::ExitState::default())
         .plugin(tauri_plugin_notification::init())
         .manage(notifications::InboxService::default())
         .manage(oauth::OAuthState::default())
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            app_exit::install_quit_menu(app.handle())?;
             // Initialize the store
             let _store = app.store("settings.json")?;
             println!("🚀 Store initialized");
@@ -125,7 +130,13 @@ pub fn run() {
             oauth::connect_resend,
             oauth::disconnect_resend,
             permissions::probe_full_access,
+            app_exit::request_app_exit,
+            app_exit::complete_app_exit,
             email::send_email,
+            drafts::save_draft,
+            drafts::get_draft,
+            drafts::list_drafts,
+            drafts::delete_draft,
             email::prepare_reply,
             attachments::list_email_attachments,
             attachments::attachment_action,
@@ -157,10 +168,9 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, event| {
-            if matches!(event, tauri::RunEvent::Exit) {
-                app.state::<attachments::AttachmentTransfers>()
-                    .cleanup_on_exit();
-            }
+        .run(|app, event| match event {
+            tauri::RunEvent::ExitRequested { api, code, .. } => app_exit::on_exit_requested(app, &api, code),
+            tauri::RunEvent::Exit => app.state::<attachments::AttachmentTransfers>().cleanup_on_exit(),
+            _ => {}
         });
 }

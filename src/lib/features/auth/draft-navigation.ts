@@ -1,11 +1,17 @@
-type DraftGuard = { confirm: () => boolean; approved: boolean };
+type DraftGuard = { confirm: () => boolean; approved: boolean; save?: () => Promise<void> };
 const guards = new Map<string, DraftGuard>();
 
 /** Register only the mounted composer; cleanup cannot remove a newer guard. */
-export function registerDraftGuard(accountId: string, confirm: () => boolean): () => void {
-  const guard = { confirm, approved: false };
+export function registerDraftGuard(accountId: string, confirm: () => boolean, save?: () => Promise<void>): () => void {
+  const guard = { confirm, approved: false, save };
   guards.set(accountId, guard);
   return () => { if (guards.get(accountId) === guard) guards.delete(accountId); };
+}
+
+/** Flush pending edits before navigation, account operations or app restart. */
+export async function saveDrafts(accountId?: string): Promise<void> {
+  const selected = accountId ? [guards.get(accountId)] : [...guards.values()];
+  await Promise.all(selected.map((guard) => guard?.save?.()));
 }
 
 /** Updates can exit the whole app. Approval must not leak into later navigation. */

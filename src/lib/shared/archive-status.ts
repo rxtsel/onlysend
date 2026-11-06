@@ -8,14 +8,14 @@ export interface ArchiveFooterData {
 }
 export interface ArchiveFooterSnapshot {
   accountId: string;
-  mailbox: Mailbox;
+  mailbox: Mailbox | "drafts";
   data: ArchiveFooterData;
 }
 export const EMPTY_ARCHIVE_FOOTER: ArchiveFooterData = {
   status: null, statusError: null, refreshError: null, downloadedAt: null,
 };
 
-export function selectArchiveFooter(snapshot: ArchiveFooterSnapshot | null, accountId: string, mailbox: Mailbox): ArchiveFooterData {
+export function selectArchiveFooter(snapshot: ArchiveFooterSnapshot | null, accountId: string, mailbox: Mailbox | "drafts"): ArchiveFooterData {
   return snapshot?.accountId === accountId && snapshot.mailbox === mailbox ? snapshot.data : EMPTY_ARCHIVE_FOOTER;
 }
 

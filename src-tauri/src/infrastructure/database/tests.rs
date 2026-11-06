@@ -30,6 +30,28 @@ impl Drop for TemporaryDatabase {
 }
 
 #[tokio::test]
+async fn splits_existing_draft_attachments_without_losing_data() {
+    let temporary = TemporaryDatabase::new();
+    std::fs::create_dir_all(temporary.path().parent().unwrap()).unwrap();
+    let mut connection = Connection::open(temporary.path()).unwrap();
+    migrate(&mut connection, &MIGRATIONS[..9]).unwrap();
+    connection.execute("INSERT INTO account_state VALUES ('a')", []).unwrap();
+    connection.execute("INSERT INTO drafts VALUES ('a','draft',?1,123)", [r#"{"content":"saved body","attachments":[{"filename":"note.txt","content":"aGVsbG8=","mimeType":"text/plain"}]}"#]).unwrap();
+    drop(connection);
+    let database = temporary.database();
+    database.initialize().await.unwrap();
+    let (fields, attachments, updated_at) = database.run(|connection| {
+        connection.query_row("SELECT d.data_json,a.data_json,d.updated_at FROM drafts d JOIN draft_attachments a USING(account_id,draft_id)", [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?)))
+    }).await.unwrap();
+    let fields: serde_json::Value = serde_json::from_str(&fields).unwrap();
+    let attachments: serde_json::Value = serde_json::from_str(&attachments).unwrap();
+    assert_eq!(fields["content"], "saved body");
+    assert!(fields.get("attachments").is_none());
+    assert_eq!(attachments[0]["content"], "aGVsbG8=");
+    assert_eq!(updated_at, 123);
+}
+
+#[tokio::test]
 async fn initializes_real_file_with_versioned_schema_and_connection_pragmas() {
     let temporary = TemporaryDatabase::new();
     let database = temporary.database();

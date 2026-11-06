@@ -4,7 +4,7 @@
   import { Button } from "$lib/components/ui/button";
   import { openUrl } from "$lib/shared/api/external";
   import { appUpdate } from "$lib/shared/app-update.svelte";
-  import { confirmAppDeparture } from "$lib/features/auth/draft-navigation";
+  import { confirmAppDeparture, saveDrafts } from "$lib/features/auth/draft-navigation";
 
   let open = $state(false);
   let linkError = $state<string | null>(null);
@@ -15,7 +15,10 @@
 
   async function install(event: MouseEvent) {
     event.preventDefault();
-    if (busy || !confirmAppDeparture()) return;
+    if (busy) return;
+    try { await saveDrafts(); }
+    catch { linkError = "Could not save your draft. Keep editing and try again."; return; }
+    if (!confirmAppDeparture()) return;
     await appUpdate.install();
   }
 
@@ -43,7 +46,7 @@
         <AlertDialog.Title>Update OnlySend to v{info.version}</AlertDialog.Title>
         <AlertDialog.Description>
           {#if info.installSupported}
-            Downloading does not close the app. Once verified, installation will close and restart OnlySend. Unsaved drafts must be discarded before installing. Your accounts and local mail archive will be retained.
+            Downloading does not close the app. Once verified, installation will close and restart OnlySend. Drafts are saved before installing. Your accounts and local mail archive will be retained.
           {:else}
             This installation is managed outside the app. Download the new Debian package and install it using your package manager. Your accounts and local mail archive will be retained.
           {/if}

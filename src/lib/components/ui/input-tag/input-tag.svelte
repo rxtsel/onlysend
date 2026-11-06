@@ -11,27 +11,30 @@
 
   type Props = {
     value?: Tag[];
+    inputValue?: string;
     type?: "email";
     list?: string[];
     class?: string;
     placeholder?: string;
     name?: string;
     onDuplicateAttempt?: (text: string) => void;
-  } & Omit<HTMLInputAttributes, "value" | "type" | "list" | "name">;
+    onchange?: () => void;
+  } & Omit<HTMLInputAttributes, "value" | "type" | "list" | "name" | "onchange">;
 
   let {
     value = $bindable<Tag[]>([]),
+    inputValue = $bindable(""),
     type = "email",
     list = [] as string[],
     class: className,
     placeholder = "",
     name,
     onDuplicateAttempt,
+    onchange,
     ...restProps
   }: Props = $props();
 
   let inputRef = $state<HTMLInputElement | null>(null);
-  let inputValue = $state("");
   let activeTagIndex = $state<number | null>(null);
   let duplicateTag = $state<string | null>(null);
 
@@ -44,7 +47,7 @@
 
   function commitTagFromValue(raw: string) {
     const text = raw.trim();
-    if (!text) return;
+    if (!text || (type === "email" && !emailSchema.safeParse(text).success)) return;
 
     // Normalize for case-insensitive comparison
     const normalizedText = text.toLowerCase();
@@ -71,6 +74,7 @@
     next = validateTags(next);
     value = next;
     inputValue = "";
+    onchange?.();
   }
 
   function handleKeydown(event: KeyboardEvent) {
@@ -82,6 +86,7 @@
     if (event.key === "Backspace" && inputValue === "" && value.length > 0) {
       value = value.slice(0, -1);
       activeTagIndex = value.length - 1;
+      onchange?.();
       return;
     }
     activeTagIndex = null;
@@ -114,11 +119,13 @@
     next = validateTags(next);
     value = next;
     inputValue = "";
+    onchange?.();
   }
 
   function removeTag(id: string) {
     value = value.filter((tag) => tag.id !== id);
     activeTagIndex = null;
+    onchange?.();
   }
 
   function chooseSuggestion(text: string) {
