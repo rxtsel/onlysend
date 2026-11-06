@@ -13,7 +13,7 @@
   import type { Tag } from "@/lib/components/ui/input-tag/input-tag.svelte";
   import * as ToggleGroup from "$lib/components/ui/toggle-group";
   import { Editor } from "@/lib/components/editor";
-  import { LoaderCircle } from "@lucide/svelte";
+  import { LoaderCircle, TriangleAlert } from "@lucide/svelte";
   import Button from "@/lib/components/ui/button/button.svelte";
   import { emailComposerSchema } from "@/lib/schemas/email-composer.schema";
   import { toast } from "svelte-sonner";
@@ -27,6 +27,7 @@
   import { getContext, onMount, onDestroy, tick, untrack } from "svelte";
   import { listFromEmails, formatFromEmail } from "@/lib/shared/from-emails";
   import { createDraftWriter, getDraft, restoreDraftFiles, type DraftFields } from "$lib/shared/drafts";
+  import * as AlertDialog from "$lib/components/ui/alert-dialog";
 
   // Each mounted composer owns one persisted draft, including replies.
   const existingDraftId = untrack(() => page.url.searchParams.get("draft"));
@@ -42,10 +43,14 @@
   let fromEmails = $state<FromEmail[]>([]);
   let from = $state<string>("");
   let subject = $state<string>("");
-  let composerEditor = $state<{ focus: () => boolean } | null>(null);
+  let composerEditor = $state<{ focus: () => boolean; getText: () => string } | null>(null);
   let content = $state<string>("");
   let files = $state<File[]>([]);
   let isSending = $state(false);
+  let confirmSend = $state(false);
+  let attachmentWarning = $state(false);
+  let checkingSend = $state(false);
+  let sendTrigger = $state<HTMLElement | null>(null);
 
   let isReplyToEnabled = $state(false);
   let replyTo = $state("");
@@ -92,7 +97,7 @@
     }
   }
   async function discard() {
-    if (isSending || sent) return;
+    if (isSending || checkingSend || sent) return;
     clearTimeout(timer);
     isSending = true;
     try {
@@ -102,7 +107,7 @@
     } catch (error) { toast.error(errorMessage(error, "Could not discard draft")); }
     finally { isSending = false; }
   }
-  const unregisterGuard = registerDraftGuard(accountId, () => (sent || !isSending) && !hasChanges(), () => saveNow());
+  const unregisterGuard = registerDraftGuard(accountId, () => (sent || (!isSending && !checkingSend)) && !hasChanges(), () => saveNow());
   $effect(() => { if (!initializing && files.length) hasUserInput = true; });
   $effect(() => {
     if (initializing || initializationError || sent || isSending) return;
@@ -114,7 +119,7 @@
     return () => clearTimeout(timer);
   });
   $effect(() => {
-    composerStatus.ready = !initializing && !initializationError && !sent;
+    composerStatus.ready = !initializing && !initializationError && !sent && !checkingSend;
     composerStatus.sending = isSending;
     composerStatus.saveState = saveState;
     composerStatus.discard = discard;
@@ -129,7 +134,7 @@
     composerStatus.discard = undefined;
   });
   beforeNavigate(({ cancel, to, willUnload, type, delta }) => {
-    if (isSending && !sent) { cancel(); toast.error("Wait for the current operation to finish."); return; }
+    if ((isSending || checkingSend) && !sent) { cancel(); toast.error("Wait for the current operation to finish."); return; }
     if (!hasChanges()) {
       if (!allowAccountNavigation(accountId)) cancel();
       return;
@@ -147,9 +152,9 @@
     }).catch(() => {});
   });
 
-  async function handleSubmit(event: Event) {
+  async function handleSubmit(event: SubmitEvent) {
     event.preventDefault();
-    if (isSending || initializing || initializationError || sent || (isReply && !reply)) return;
+    if (isSending || checkingSend || initializing || initializationError || sent || (isReply && !reply)) return;
 
     errors = {};
     const form = event.currentTarget as HTMLFormElement;
@@ -174,6 +179,22 @@
       return;
     }
 
+    if (event.submitter?.getAttribute("name") !== "confirm-send") {
+      sendTrigger = event.submitter instanceof HTMLElement ? event.submitter
+        : document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      checkingSend = true;
+      try {
+        attachmentWarning = files.length === 0 && await invoke<boolean>("mentions_attachment", {
+          subject: parsed.data.subject, body: composerEditor?.getText() ?? "",
+        });
+        if (!disposed) confirmSend = true;
+      } catch (error) {
+        if (!disposed) toast.error(errorMessage(error, "Could not check for missing attachments. Please try again."));
+      } finally { if (!disposed) checkingSend = false; }
+      return;
+    }
+
+    confirmSend = false;
     isSending = true;
     const sendingToast = toast.loading("Sending message…");
     try {
@@ -267,7 +288,7 @@
   onMount(() => {
     void initialize();
     const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (hasChanges() || (isSending && !sent)) { event.preventDefault(); event.returnValue = ""; }
+      if (hasChanges() || ((isSending || checkingSend) && !sent)) { event.preventDefault(); event.returnValue = ""; }
     };
     window.addEventListener("beforeunload", beforeUnload);
     return () => { window.removeEventListener("beforeunload", beforeUnload); };
@@ -287,9 +308,9 @@
   onsubmit={handleSubmit}
   oninput={() => { hasUserInput = true; }}
   id="compose-email-form"
-  aria-busy={isSending}
+  aria-busy={isSending || checkingSend}
 >
-  <fieldset disabled={isSending} class="contents">
+  <fieldset disabled={isSending || checkingSend} class="contents">
   <Field.Group class="h-full min-h-0 gap-0">
     <div class="flex shrink-0 flex-col gap-3 pb-4">
       <div class="flex items-end gap-3">
@@ -383,7 +404,7 @@
           bind:content
           bind:files
           onchange={() => { hasUserInput = true; }}
-          disabled={isSending}
+          disabled={isSending || checkingSend}
           aria-invalid={!!errors.content}
         />
         {#if errors.content}<Field.Error>{errors.content}</Field.Error>{/if}
@@ -394,3 +415,26 @@
   </fieldset>
 </form>
 {/if}
+
+<AlertDialog.Root bind:open={confirmSend}>
+  <AlertDialog.Content onCloseAutoFocus={(event) => {
+    event.preventDefault();
+    if (!isSending && !disposed) sendTrigger?.focus();
+  }}>
+    <AlertDialog.Header>
+      <AlertDialog.Title class="flex items-center gap-2">
+        {#if attachmentWarning}<TriangleAlert class="size-5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />{/if}
+        {attachmentWarning ? "Missing an attachment?" : "Send this message?"}
+      </AlertDialog.Title>
+      <AlertDialog.Description>
+        {attachmentWarning ? "Your message appears to mention an attachment, but no files have been added. Send it without attachments?" : "Once sent, this message cannot be recalled."}
+      </AlertDialog.Description>
+    </AlertDialog.Header>
+    <AlertDialog.Footer>
+      <AlertDialog.Cancel>Keep editing</AlertDialog.Cancel>
+      <AlertDialog.Action form="compose-email-form" type="submit" name="confirm-send" disabled={isSending}>
+        {attachmentWarning ? "Send anyway" : "Send message"}
+      </AlertDialog.Action>
+    </AlertDialog.Footer>
+  </AlertDialog.Content>
+</AlertDialog.Root>

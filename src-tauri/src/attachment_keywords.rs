@@ -1,0 +1,37 @@
+// Add languages here without changing detection. These are hints, not proof that a file is needed.
+pub(crate) const ATTACHMENT_KEYWORDS: &[(&str, &[&str])] = &[
+    (
+        "en",
+        &[
+            "attach",
+            "attached",
+            "attaching",
+            "attachment",
+            "attachments",
+            "enclosed",
+            "enclosure",
+            "enclosures",
+        ],
+    ),
+    (
+        "es",
+        &[
+            "adjunto",
+            "adjunta",
+            "adjuntos",
+            "adjuntas",
+            "adjuntar",
+            "adjunte",
+            "adjunté",
+            "adjuntamos",
+            "adjuntado",
+            "adjuntada",
+            "adjuntados",
+            "adjuntadas",
+            "anexo",
+            "anexa",
+            "anexos",
+            "anexas",
+        ],
+    ),
+];

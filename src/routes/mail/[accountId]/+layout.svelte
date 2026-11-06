@@ -76,11 +76,10 @@
     const owner = accountId;
     untrack(() => { domain = null; domains = []; });
   });
-  let confirmSend = $state(false);
   let confirmDiscard = $state(false);
   $effect.pre(() => {
     accountId; isComposer; composerKey;
-    untrack(() => { confirmSend = false; confirmDiscard = false; composerStatus.ready = false; composerStatus.sending = false; composerStatus.saveState = undefined; composerStatus.discard = undefined; });
+    untrack(() => { confirmDiscard = false; composerStatus.ready = false; composerStatus.sending = false; composerStatus.saveState = undefined; composerStatus.discard = undefined; });
   });
   let archiveFooter = $state<ArchiveFooterSnapshot | null>(null);
   const footerData = $derived(selectArchiveFooter(archiveFooter, accountId, isDrafts ? "drafts" : mailbox));
@@ -136,19 +135,7 @@
                 </AlertDialog.Footer>
               </AlertDialog.Content>
             </AlertDialog.Root>
-            <AlertDialog.Root bind:open={confirmSend}>
-              <AlertDialog.Trigger disabled={!composerStatus.ready || composerStatus.sending} class={buttonVariants({ variant: "default" })}><Send /> {composerStatus.sending ? "Sending…" : "Send"}</AlertDialog.Trigger>
-              <AlertDialog.Content>
-                <AlertDialog.Header>
-                  <AlertDialog.Title>Send this message?</AlertDialog.Title>
-                  <AlertDialog.Description>Once sent, this message cannot be recalled.</AlertDialog.Description>
-                </AlertDialog.Header>
-                <AlertDialog.Footer>
-                  <AlertDialog.Cancel>Keep editing</AlertDialog.Cancel>
-                  <AlertDialog.Action form="compose-email-form" type="submit" onclick={() => { confirmSend = false; }}>Send message</AlertDialog.Action>
-                </AlertDialog.Footer>
-              </AlertDialog.Content>
-            </AlertDialog.Root>
+            <Button form="compose-email-form" type="submit" disabled={!composerStatus.ready || composerStatus.sending}><Send /> {composerStatus.sending ? "Sending…" : "Send"}</Button>
           {:else}
             <Button href={mailUrl(accountId, isDrafts ? "drafts" : mailbox)} variant="ghost" size="icon" class="lg:hidden" aria-label="Back to messages"><ArrowLeft /></Button>
             <h1 class="min-w-0 flex-1 break-words text-base font-semibold leading-7 tracking-tight" aria-busy={isDetail && !detailSubject}>
