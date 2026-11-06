@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Inbox, Send, SquarePen, Bug, Globe } from "@lucide/svelte";
+  import { Inbox, Send, SquarePen, FilePenLine, Bug, Globe } from "@lucide/svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { openUrl } from "$lib/shared/api/external";
@@ -14,7 +14,7 @@
   import NavUser from "./nav-user.svelte";
 
   let { mailbox, domains, domain = $bindable(null) }: {
-    mailbox: Mailbox;
+    mailbox: Mailbox | "drafts";
     domains: string[];
     domain?: string | null;
   } = $props();
@@ -24,6 +24,7 @@
   const folders = [
     { label: "Inbox", value: "inbox" as const, icon: Inbox },
     { label: "Sent", value: "sent" as const, icon: Send },
+    { label: "Drafts", value: "drafts" as const, icon: FilePenLine },
   ];
 
   function closeMobile() {

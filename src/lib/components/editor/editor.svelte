@@ -27,6 +27,7 @@
     editable = true,
     disabled = false,
     files = $bindable<File[]>([]),
+    onchange,
     "aria-invalid": ariaInvalid,
   } = $props();
 
@@ -117,6 +118,7 @@
       },
       onUpdate: ({ editor }) => {
         content = editor.getHTML();
+        onchange?.();
       },
     });
 

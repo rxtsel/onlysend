@@ -1,4 +1,4 @@
-export type Mailbox = "inbox" | "sent" | "composer";
+export type Mailbox = "inbox" | "sent" | "composer" | "drafts";
 
 export function mailUrl(accountId: string, mailbox: Mailbox, emailId?: string): string {
   if (!accountId) throw new Error("Account ID is required");
@@ -9,5 +9,5 @@ export function mailUrl(accountId: string, mailbox: Mailbox, emailId?: string): 
 export function mailboxFromPath(pathname: string): Mailbox {
   const parts = pathname.split("/");
   const mailbox = parts.length >= 4 ? parts[3] : parts[2];
-  return mailbox === "inbox" ? "inbox" : mailbox === "composer" ? "composer" : "sent";
+  return mailbox === "inbox" || mailbox === "composer" || mailbox === "drafts" ? mailbox : "sent";
 }

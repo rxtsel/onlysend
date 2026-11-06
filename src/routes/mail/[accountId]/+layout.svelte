@@ -2,12 +2,13 @@
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { toast } from "svelte-sonner";
+  import { deleteDraft } from "$lib/shared/drafts";
   import { deleteLocalMail } from "$lib/shared/services/delete-mail";
   import ConfirmDeleteMail from "$lib/components/confirm-delete-mail.svelte";
   import * as Tooltip from "$lib/components/ui/tooltip";
   import { setContext, untrack } from "svelte";
   import { COMPOSER_STATUS, type ComposerStatus } from "$lib/features/sending/composer-context";
-  import { ArrowLeft, Reply, Send, LoaderCircle, Trash2 } from "@lucide/svelte";
+  import { ArrowLeft, Reply, Send, LoaderCircle, Trash2, SquarePen } from "@lucide/svelte";
   import AppSidebar from "$lib/components/app-sidebar.svelte";
   import MailList from "$lib/components/mail-list.svelte";
   import MailStatusFooter from "$lib/components/mail-status-footer.svelte";
@@ -27,27 +28,30 @@
   provideAccount(() => accountId);
   const mailbox = $derived<Mailbox>(page.url.pathname.startsWith(mailUrl(accountId, "inbox")) ? "inbox" : "sent");
   const isComposer = $derived(page.url.pathname === mailUrl(accountId, "composer"));
+  const isDrafts = $derived(page.url.pathname === mailUrl(accountId, "drafts") || page.url.pathname.startsWith(`${mailUrl(accountId, "drafts")}/`));
   const replyId = $derived(page.url.searchParams.get("reply"));
-  const composerKey = $derived(replyId === null ? "composer" : `reply:${replyId}`);
+  const draftId = $derived(page.url.searchParams.get("draft"));
+  const composerKey = $derived(draftId ? `draft:${draftId}` : replyId === null ? "composer" : `reply:${replyId}`);
   const composerStatus = $state<ComposerStatus>({ ready: false, sending: false });
   let detailSubject = $state("");
   let deleting = $state(false);
   let confirmDelete = $state(false);
   async function deleteMessage() {
     const owner = accountId;
-    const box = mailbox;
+    const box = isDrafts ? "drafts" : mailbox;
     const id = page.params.id;
     if (!id || deleting) return;
     deleting = true;
     try {
-      if (await deleteLocalMail(owner, box, id) && owner === accountId && box === mailbox && id === page.params.id) {
+      const deleted = box === "drafts" ? await deleteDraft(owner, id).then(() => true) : await deleteLocalMail(owner, box, id);
+      if (deleted && owner === accountId && box === (isDrafts ? "drafts" : mailbox) && id === page.params.id) {
         await goto(mailUrl(owner, box));
       }
     } catch {
       toast.error("Could not return to the mail list");
     } finally { deleting = false; }
   }
-  let selectedListMail = $state<{ accountId: string; mailbox: Mailbox; mail: MailListItem } | null>(null);
+  let selectedListMail = $state<{ accountId: string; mailbox: Mailbox | "drafts"; mail: MailListItem } | null>(null);
   let detailIsThread = $state<boolean | null>(null);
   setContext(COMPOSER_STATUS, composerStatus);
   setContext("mail-subject", (subject: string) => { detailSubject = subject; });
@@ -56,7 +60,7 @@
   $effect.pre(() => {
     const id = page.params.id;
     const owner = accountId;
-    const box = mailbox;
+    const box = isDrafts ? "drafts" : mailbox;
     untrack(() => {
       confirmDelete = false;
       const selection = selectedListMail;
@@ -73,18 +77,19 @@
     untrack(() => { domain = null; domains = []; });
   });
   let confirmSend = $state(false);
+  let confirmDiscard = $state(false);
   $effect.pre(() => {
-    accountId; isComposer; replyId;
-    untrack(() => { confirmSend = false; composerStatus.ready = false; composerStatus.sending = false; });
+    accountId; isComposer; composerKey;
+    untrack(() => { confirmSend = false; confirmDiscard = false; composerStatus.ready = false; composerStatus.sending = false; composerStatus.saveState = undefined; composerStatus.discard = undefined; });
   });
   let archiveFooter = $state<ArchiveFooterSnapshot | null>(null);
-  const footerData = $derived(selectArchiveFooter(archiveFooter, accountId, mailbox));
-  function selectMail(mail: MailListItem, selectedMailbox: Mailbox) {
+  const footerData = $derived(selectArchiveFooter(archiveFooter, accountId, isDrafts ? "drafts" : mailbox));
+  function selectMail(mail: MailListItem, selectedMailbox: Mailbox | "drafts") {
     selectedListMail = { accountId, mailbox: selectedMailbox, mail };
     detailSubject = mail.subject || "(No subject)";
     detailIsThread = (mail.threadCount ?? 1) > 1;
   }
-  function updateArchiveStatus(owner: string, mailbox: Mailbox, data: ArchiveFooterData) {
+  function updateArchiveStatus(owner: string, mailbox: Mailbox | "drafts", data: ArchiveFooterData) {
     if (owner === accountId) archiveFooter = { accountId: owner, mailbox, data };
   }
 </script>
@@ -99,10 +104,10 @@
     style="--sidebar-width: 16.5rem;"
     class="h-[calc(100svh-2rem)] min-h-0 [&_[data-slot=sidebar-container]]:bottom-8 [&_[data-slot=sidebar-container]]:h-[calc(100svh-2rem)]"
   >
-    <AppSidebar {mailbox} {domains} bind:domain />
+    <AppSidebar mailbox={isDrafts ? "drafts" : mailbox} {domains} bind:domain />
     <div class="flex min-h-0 min-w-0 flex-1">
       <MailList
-        {mailbox} {domain} active={!isComposer}
+        mailbox={isDrafts ? "drafts" : mailbox} {domain} active={!isComposer}
         class={cn("w-full shrink-0 lg:w-[340px] xl:w-[360px]", isComposer ? "hidden" : isDetail ? "hidden lg:flex" : "flex")}
         onDomainsChange={(value) => { domains = value; }}
         onSelectMail={selectMail}
@@ -116,7 +121,21 @@
             {:else}
               <Sidebar.Trigger aria-label="Toggle mailboxes" />
             {/if}
-            <h1 class="flex-1 text-base font-semibold tracking-tight">{replyId !== null ? "Reply" : "New message"}</h1>
+            <h1 class="flex-1 text-base font-semibold tracking-tight">{draftId ? "Edit draft" : replyId !== null ? "Reply" : "New message"}</h1>
+            <span class="text-xs text-muted-foreground" role="status">{composerStatus.saveState ?? ""}</span>
+            <AlertDialog.Root bind:open={confirmDiscard}>
+              <AlertDialog.Trigger aria-label="Discard draft" disabled={!composerStatus.ready || composerStatus.sending} class={buttonVariants({ variant: "outline" })}><Trash2 /> <span class="hidden sm:inline">Discard draft</span></AlertDialog.Trigger>
+              <AlertDialog.Content>
+                <AlertDialog.Header>
+                  <AlertDialog.Title>Discard this draft?</AlertDialog.Title>
+                  <AlertDialog.Description>This permanently deletes the message and its attachments from this device.</AlertDialog.Description>
+                </AlertDialog.Header>
+                <AlertDialog.Footer>
+                  <AlertDialog.Cancel>Keep editing</AlertDialog.Cancel>
+                  <AlertDialog.Action onclick={() => { confirmDiscard = false; void composerStatus.discard?.(); }}>Discard draft</AlertDialog.Action>
+                </AlertDialog.Footer>
+              </AlertDialog.Content>
+            </AlertDialog.Root>
             <AlertDialog.Root bind:open={confirmSend}>
               <AlertDialog.Trigger disabled={!composerStatus.ready || composerStatus.sending} class={buttonVariants({ variant: "default" })}><Send /> {composerStatus.sending ? "Sending…" : "Send"}</AlertDialog.Trigger>
               <AlertDialog.Content>
@@ -131,7 +150,7 @@
               </AlertDialog.Content>
             </AlertDialog.Root>
           {:else}
-            <Button href={mailUrl(accountId, mailbox)} variant="ghost" size="icon" class="lg:hidden" aria-label="Back to messages"><ArrowLeft /></Button>
+            <Button href={mailUrl(accountId, isDrafts ? "drafts" : mailbox)} variant="ghost" size="icon" class="lg:hidden" aria-label="Back to messages"><ArrowLeft /></Button>
             <h1 class="min-w-0 flex-1 break-words text-base font-semibold leading-7 tracking-tight" aria-busy={isDetail && !detailSubject}>
               {#if isDetail && !detailSubject}
                 <span class="sr-only">Loading subject</span><Skeleton aria-hidden="true" class="h-5 w-36" />
@@ -141,7 +160,9 @@
             </h1>
             {#if isDetail && detailIsThread === false}
               <div class="flex shrink-0 items-center gap-1 self-start">
-                {#if mailbox === "inbox"}
+                {#if isDrafts}
+                  <Button href={`${mailUrl(accountId, "composer")}?draft=${encodeURIComponent(page.params.id!)}`} variant="outline" size="sm"><SquarePen class="size-4" />Edit draft</Button>
+                {:else if mailbox === "inbox"}
                   <Button href={`${mailUrl(accountId, "composer")}?reply=${encodeURIComponent(page.params.id!)}`} variant="outline" size="sm" aria-label="Reply to this message"><Reply class="size-4" />Reply</Button>
                 {/if}
                 <Tooltip.Provider delayDuration={150}>
@@ -168,6 +189,6 @@
       </main>
     </div>
   </Sidebar.Provider>
-  <ConfirmDeleteMail bind:open={confirmDelete} subject={detailSubject} onConfirm={() => { void deleteMessage(); }} />
-  <MailStatusFooter data={footerData} mailbox={mailbox} />
+  <ConfirmDeleteMail bind:open={confirmDelete} draft={isDrafts} subject={detailSubject} onConfirm={() => { void deleteMessage(); }} />
+  <MailStatusFooter data={footerData} mailbox={isDrafts ? "drafts" : mailbox} />
 {/key}

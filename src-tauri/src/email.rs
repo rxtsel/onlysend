@@ -36,7 +36,7 @@ pub struct EmailComposerData {
     pub attachments: Vec<AttachmentPayload>,
 }
 
-fn attachment_bytes(attachment: &AttachmentPayload, total: &mut u64) -> Result<Vec<u8>, String> {
+pub(crate) fn attachment_bytes(attachment: &AttachmentPayload, total: &mut u64) -> Result<Vec<u8>, String> {
     let limit = crate::attachments::MAX_ATTACHMENT_BYTES;
     if attachment.filename.is_empty()
         || attachment

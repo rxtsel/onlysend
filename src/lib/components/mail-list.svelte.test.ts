@@ -5,12 +5,14 @@ import Harness from "./__tests__/mail-list-harness.svelte";
 import { loadMailList, type MailListItem, type Mailbox } from "$lib/shared/local-mail";
 import { deleteLocalMails } from "$lib/shared/services/delete-mail";
 import { goto } from "$app/navigation";
+import { invoke } from "@tauri-apps/api/core";
 
 const { page, handlers } = vi.hoisted(() => ({
   page: { params: { id: undefined as string | undefined } },
   handlers: new Map<string, (event: { payload: unknown }) => void>(),
 }));
 vi.mock("$app/state", () => ({ page }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), Channel: vi.fn() }));
 vi.mock("$app/navigation", () => ({ goto: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async (name, handler) => {
   handlers.set(name, handler);
@@ -23,9 +25,10 @@ vi.mock("svelte-sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } })
 
 let instance: ReturnType<typeof mount>;
 let target: HTMLElement;
-let controls = $state<{ mailbox: Mailbox; domain: string | null; active: boolean }>({ mailbox: "inbox", domain: null, active: true });
+let controls = $state<{ mailbox: Mailbox | "drafts"; domain: string | null; active: boolean }>({ mailbox: "inbox", domain: null, active: true });
 let items: MailListItem[];
 const onSelectMail = vi.fn();
+const onDomainsChange = vi.fn();
 const rows = () => Array.from(target.querySelectorAll<HTMLButtonElement>("[data-mail-id]"));
 const selected = () => rows().filter((row) => row.getAttribute("aria-pressed") === "true").map((row) => row.dataset.mailId);
 const click = (index: number, modifiers: MouseEventInit = {}) => {
@@ -53,10 +56,39 @@ beforeEach(async () => {
   vi.mocked(deleteLocalMails).mockResolvedValue(true);
   target = document.createElement("div");
   document.body.append(target);
-  instance = mount(Harness, { target, props: { controls, onSelectMail } });
+  instance = mount(Harness, { target, props: { controls, onSelectMail, onDomainsChange } });
   await vi.waitFor(() => expect(rows()).toHaveLength(9));
 });
 afterEach(async () => { await unmount(instance); document.body.replaceChildren(); });
+
+test("drafts reuse mail rows with avatars, preview navigation, search and permanent-delete confirmation", async () => {
+  const drafts = [{ id: "draft-1", from: "Me <me@example.com>", to: ["recipient@example.com"], subject: "Unsent subject", preview: "Draft body", updatedAt: Date.parse("2026-01-01T00:00:00Z") }];
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "list_drafts") return [...drafts];
+    if (command === "delete_draft") drafts.splice(0);
+  });
+  vi.mocked(loadMailList).mockResolvedValue({ items: [], domains: ["example.com"], hasMore: false, nextCursor: null });
+  flushSync(() => { controls.mailbox = "drafts"; });
+  await vi.waitFor(() => expect(rows()).toHaveLength(1));
+  expect(onDomainsChange).toHaveBeenLastCalledWith(["example.com"]);
+  expect(loadMailList).toHaveBeenLastCalledWith("account-a", expect.objectContaining({ refresh: false }));
+  expect(target.querySelector("h1")?.textContent).toBe("Drafts");
+  expect(rows()[0].textContent).toContain("Unsent subject");
+  expect(rows()[0].textContent).toContain("Draft body");
+  expect(rows()[0].querySelector('span[aria-hidden="true"][style*="32px"]')).not.toBeNull();
+  expect(target.querySelector('input[type="search"]')).not.toBeNull();
+  click(0);
+  expect(goto).toHaveBeenLastCalledWith("/mail/account-a/drafts/draft-1", { keepFocus: true, noScroll: true });
+  click(0, { ctrlKey: true });
+  target.querySelector<HTMLButtonElement>('[aria-label="Delete selected emails"]')!.click();
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).not.toBeNull());
+  expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("permanently deleted");
+  expect(invoke).not.toHaveBeenCalledWith("delete_draft", expect.anything());
+  confirm();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("delete_draft", { accountId: "account-a", draftId: "draft-1" }));
+  await vi.waitFor(() => expect(rows()).toHaveLength(0));
+  expect(deleteLocalMails).not.toHaveBeenCalled();
+});
 
 test("shift and ctrl/cmd clicks preserve selection and preview the latest selected row", () => {
   click(1, { shiftKey: true });

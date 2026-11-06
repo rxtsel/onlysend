@@ -26,19 +26,21 @@
   import ComposerAttachments from "$lib/components/composer-attachments.svelte";
   import { getContext, onMount, onDestroy, tick, untrack } from "svelte";
   import { listFromEmails, formatFromEmail } from "@/lib/shared/from-emails";
+  import { createDraftWriter, getDraft, restoreDraftFiles, type DraftFields } from "$lib/shared/drafts";
 
-  // The layout keys this page by reply ID, so each message owns a separate draft.
-  const replyEmailId = untrack(() => page.url.searchParams.get("reply"));
-  const isReply = replyEmailId !== null;
+  // Each mounted composer owns one persisted draft, including replies.
+  const existingDraftId = untrack(() => page.url.searchParams.get("draft"));
+  const draftId = existingDraftId ?? crypto.randomUUID();
+  let writer = createDraftWriter(accountId, draftId);
+  let replyEmailId = $state<string | null>(untrack(() => page.url.searchParams.get("reply")));
+  const isReply = $derived(replyEmailId !== null);
   const composerStatus = getContext<ComposerStatus>(COMPOSER_STATUS);
   let reply = $state<ReplyContext | null>(null);
   let initializing = $state(true);
   let initializationError = $state("");
-  let initialTo = "";
   let toEmails = $state<Tag[]>([]);
   let fromEmails = $state<FromEmail[]>([]);
   let from = $state<string>("");
-  let initialFrom = "";
   let subject = $state<string>("");
   let composerEditor = $state<{ focus: () => boolean } | null>(null);
   let content = $state<string>("");
@@ -51,27 +53,98 @@
   let isBccEnabled = $state<boolean>(false);
   let ccEmails = $state<Tag[]>([]);
   let bccEmails = $state<Tag[]>([]);
+  let pendingTo = $state("");
+  let pendingCc = $state("");
+  let pendingBcc = $state("");
 
   let errors: Record<string, string> = $state({});
   let disposed = false;
-  let sent = false;
-  const unregisterGuard = registerDraftGuard(accountId, () =>
-    sent || !((!isReply && subject) || content || toEmails.map((tag) => tag.text).join("\n") !== initialTo || ccEmails.length ||
-      bccEmails.length || replyTo.trim() || files.length || from !== initialFrom) ||
-    window.confirm("Leave this page and discard the current draft?"),
-  );
+  let sent = $state(false);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let savedFields = "";
+  let savedFiles: File[] = [];
+  let saveState = $state("");
+  let hasUserInput = $state(false);
+  function snapshot(): DraftFields {
+    return {
+      from, to: toEmails.map((tag) => tag.text), cc: ccEmails.map((tag) => tag.text), bcc: bccEmails.map((tag) => tag.text),
+      pendingTo, pendingCc, pendingBcc, subject, content, replyEmailId, replyTo,
+      isReplyToEnabled, isCcEnabled, isBccEnabled,
+    };
+  }
+  function hasChanges(data = snapshot(), selectedFiles = files): boolean {
+    return !!(existingDraftId || hasUserInput || selectedFiles.length) && !initializing && !initializationError && !sent &&
+      (JSON.stringify(data) !== savedFields || selectedFiles.length !== savedFiles.length || selectedFiles.some((file, index) => file !== savedFiles[index]));
+  }
+  async function saveNow(data = snapshot(), selectedFiles = [...files]): Promise<void> {
+    clearTimeout(timer);
+    if (!hasChanges(data, selectedFiles)) return;
+    saveState = "Saving…";
+    try {
+      if (!await writer.save(data, selectedFiles)) { saveState = "Unsaved changes"; return; }
+      savedFields = JSON.stringify(data);
+      savedFiles = selectedFiles;
+      saveState = hasChanges() ? "Unsaved changes" : "Saved";
+    } catch (error) {
+      saveState = "Not saved";
+      toast.error(errorMessage(error, "Could not save draft. Do not close this message."));
+      throw error;
+    }
+  }
+  async function discard() {
+    if (isSending || sent) return;
+    clearTimeout(timer);
+    isSending = true;
+    try {
+      await writer.remove();
+      sent = true;
+      await goto(mailUrl(accountId, "drafts"));
+    } catch (error) { toast.error(errorMessage(error, "Could not discard draft")); }
+    finally { isSending = false; }
+  }
+  const unregisterGuard = registerDraftGuard(accountId, () => (sent || !isSending) && !hasChanges(), () => saveNow());
+  $effect(() => { if (!initializing && files.length) hasUserInput = true; });
+  $effect(() => {
+    if (initializing || initializationError || sent || isSending) return;
+    const data = snapshot();
+    const selectedFiles = [...files];
+    if (!untrack(() => hasChanges(data, selectedFiles))) return;
+    saveState = "Unsaved changes";
+    timer = setTimeout(() => { void saveNow(data, selectedFiles).catch(() => {}); }, 500);
+    return () => clearTimeout(timer);
+  });
   $effect(() => {
     composerStatus.ready = !initializing && !initializationError && !sent;
     composerStatus.sending = isSending;
+    composerStatus.saveState = saveState;
+    composerStatus.discard = discard;
   });
   onDestroy(() => {
+    clearTimeout(timer);
+    void saveNow().catch(() => {});
     disposed = true;
     unregisterGuard();
     composerStatus.ready = false;
     composerStatus.sending = false;
+    composerStatus.discard = undefined;
   });
-  beforeNavigate(({ cancel }) => {
-    if (!allowAccountNavigation(accountId)) cancel();
+  beforeNavigate(({ cancel, to, willUnload, type, delta }) => {
+    if (isSending && !sent) { cancel(); toast.error("Wait for the current operation to finish."); return; }
+    if (!hasChanges()) {
+      if (!allowAccountNavigation(accountId)) cancel();
+      return;
+    }
+    if (willUnload) return; // The native beforeunload prompt protects reloads.
+    cancel();
+    // SvelteKit first rolls back a cancelled Back/Forward traversal.
+    const restored = type === "popstate"
+      ? new Promise<void>((resolve) => window.addEventListener("popstate", () => resolve(), { once: true }))
+      : Promise.resolve();
+    if (to) void Promise.all([saveNow(), restored]).then(() => {
+      if (disposed) return;
+      if (type === "popstate") history.go(delta!);
+      else return goto(to.url);
+    }).catch(() => {});
   });
 
   async function handleSubmit(event: Event) {
@@ -104,12 +177,16 @@
     isSending = true;
     const sendingToast = toast.loading("Sending message…");
     try {
+      await saveNow();
       const attachments = await encodeAttachments(files);
       if (disposed) return;
       await invoke("send_email", { accountId, data: { ...parsed.data, attachments } });
 
       if (disposed) return;
       sent = true;
+      clearTimeout(timer);
+      try { await writer.remove(); }
+      catch { toast.error("Message sent, but its draft could not be removed. Delete it from Drafts; do not resend."); }
       // Reset form and states
       toEmails = [];
       from = "";
@@ -143,6 +220,10 @@
     initializing = true;
     initializationError = "";
     try {
+      const draft = existingDraftId ? await getDraft(accountId, existingDraftId) : null;
+      if (existingDraftId && !draft) throw new Error("This draft no longer exists");
+      if (disposed) return;
+      if (draft) replyEmailId = draft.replyEmailId;
       const [list, context] = await Promise.all([
         listFromEmails(accountId),
         isReply ? prepareReply(accountId, replyEmailId!) : Promise.resolve(null),
@@ -153,11 +234,28 @@
       if (context) {
         subject = context.subject;
         toEmails = context.to.map((text) => ({ id: crypto.randomUUID(), text }));
-        initialTo = context.to.join("\n");
       }
       const defaultFrom = list.find((sender) => context?.fromCandidates.some((recipient) => recipient.toLowerCase() === sender.address.toLowerCase()))
         ?? list.find((sender) => sender.isDefault) ?? list[0];
-      if (defaultFrom) { from = formatFromEmail(defaultFrom); initialFrom = from; }
+      if (defaultFrom) from = formatFromEmail(defaultFrom);
+      if (draft) {
+        from = draft.from;
+        subject = draft.subject;
+        content = draft.content;
+        toEmails = draft.to.map((text) => ({ id: crypto.randomUUID(), text }));
+        ccEmails = draft.cc.map((text) => ({ id: crypto.randomUUID(), text }));
+        bccEmails = draft.bcc.map((text) => ({ id: crypto.randomUUID(), text }));
+        pendingTo = draft.pendingTo; pendingCc = draft.pendingCc; pendingBcc = draft.pendingBcc;
+        replyTo = draft.replyTo;
+        isReplyToEnabled = draft.isReplyToEnabled;
+        isCcEnabled = draft.isCcEnabled;
+        isBccEnabled = draft.isBccEnabled;
+        files = restoreDraftFiles(draft.attachments);
+        writer = createDraftWriter(accountId, draftId, [...files]);
+      }
+      savedFields = JSON.stringify(snapshot());
+      savedFiles = [...files];
+      saveState = draft ? "Saved" : "";
     } catch (cause) {
       if (!disposed) initializationError = errorMessage(cause, "Could not prepare this message");
     } finally {
@@ -166,7 +264,14 @@
     await tick();
     if (!disposed && isReply && !initializationError) composerEditor?.focus();
   }
-  onMount(() => { void initialize(); });
+  onMount(() => {
+    void initialize();
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (hasChanges() || (isSending && !sent)) { event.preventDefault(); event.returnValue = ""; }
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => { window.removeEventListener("beforeunload", beforeUnload); };
+  });
 </script>
 
 {#if initializing}
@@ -180,6 +285,7 @@
 <form
   class="h-full w-full"
   onsubmit={handleSubmit}
+  oninput={() => { hasUserInput = true; }}
   id="compose-email-form"
   aria-busy={isSending}
 >
@@ -210,7 +316,7 @@
           {#if errors.from}<Field.Error>{errors.from}</Field.Error>{/if}
         </Field.Field>
         <Field.Field class="w-fit shrink-0">
-          <ToggleGroup.Root type="multiple" variant="outline" class="*:flex-none">
+          <ToggleGroup.Root type="multiple" value={[...(isReplyToEnabled ? ["replyTo"] : []), ...(isCcEnabled ? ["cc"] : []), ...(isBccEnabled ? ["bcc"] : [])]} variant="outline" class="*:flex-none">
             <ToggleGroup.Item value="replyTo" onclick={() => (isReplyToEnabled = !isReplyToEnabled)}>Reply to</ToggleGroup.Item>
             <ToggleGroup.Item value="cc" onclick={() => (isCcEnabled = !isCcEnabled)}>Cc</ToggleGroup.Item>
             <ToggleGroup.Item value="bcc" onclick={() => (isBccEnabled = !isBccEnabled)}>Bcc</ToggleGroup.Item>
@@ -220,7 +326,7 @@
       <div class="flex gap-3">
         <Field.Field data-invalid={!!errors.to} class="flex-1">
           <Field.Label for="to">To</Field.Label>
-          <InputTag id="to" type="email" bind:value={toEmails} name="to" placeholder="Add recipient email" aria-invalid={!!errors.to} />
+          <InputTag id="to" type="email" bind:value={toEmails} bind:inputValue={pendingTo} onchange={() => { hasUserInput = true; }} name="to" placeholder="Add recipient email" aria-invalid={!!errors.to} />
           {#if errors.to}<Field.Error>{errors.to}</Field.Error>{/if}
         </Field.Field>
         {#if isReplyToEnabled}
@@ -236,14 +342,14 @@
           {#if isCcEnabled}
             <Field.Field data-invalid={!!errors.cc} class="min-w-0">
               <Field.Label for="cc">Cc</Field.Label>
-              <InputTag id="cc" type="email" bind:value={ccEmails} name="cc" placeholder="Add Cc email" aria-invalid={!!errors.cc} />
+              <InputTag id="cc" type="email" bind:value={ccEmails} bind:inputValue={pendingCc} onchange={() => { hasUserInput = true; }} name="cc" placeholder="Add Cc email" aria-invalid={!!errors.cc} />
               {#if errors.cc}<Field.Error>{errors.cc}</Field.Error>{/if}
             </Field.Field>
           {/if}
           {#if isBccEnabled}
             <Field.Field data-invalid={!!errors.bcc} class="min-w-0">
               <Field.Label for="bcc">Bcc</Field.Label>
-              <InputTag id="bcc" type="email" bind:value={bccEmails} name="bcc" placeholder="Add Bcc email" aria-invalid={!!errors.bcc} />
+              <InputTag id="bcc" type="email" bind:value={bccEmails} bind:inputValue={pendingBcc} onchange={() => { hasUserInput = true; }} name="bcc" placeholder="Add Bcc email" aria-invalid={!!errors.bcc} />
               {#if errors.bcc}<Field.Error>{errors.bcc}</Field.Error>{/if}
             </Field.Field>
           {/if}
@@ -276,6 +382,7 @@
           bind:this={composerEditor}
           bind:content
           bind:files
+          onchange={() => { hasUserInput = true; }}
           disabled={isSending}
           aria-invalid={!!errors.content}
         />

@@ -7,9 +7,11 @@
   import { appUpdate } from "$lib/shared/app-update.svelte";
   import AppUpdateControl from "$lib/components/app-update-control.svelte";
 
-  let { data, mailbox }: { data: ArchiveFooterData; mailbox: Mailbox } = $props();
-  const view = $derived(archiveStatusPresentation(data));
-  const mailboxLabel = $derived(mailbox === "inbox" ? "Inbox" : "Sent");
+  let { data, mailbox }: { data: ArchiveFooterData; mailbox: Mailbox | "drafts" } = $props();
+  const view = $derived(mailbox === "drafts"
+    ? { kind: data.refreshError ? "error" : "ready", label: data.refreshError ? "Could not load drafts" : "Drafts stored locally" }
+    : archiveStatusPresentation(data));
+  const mailboxLabel = $derived(mailbox === "drafts" ? "Drafts" : mailbox === "inbox" ? "Inbox" : "Sent");
   const status = $derived(data.status);
   const issue = $derived(data.statusError ?? data.refreshError ?? status?.sync?.lastError);
 </script>
@@ -32,7 +34,9 @@
       <Tooltip.Content side="top" align="start" sideOffset={8} class="max-w-[min(22rem,calc(100vw-1rem))]">
         <div class="flex flex-col gap-1">
           <p class="font-medium">Local copy · {mailboxLabel}</p>
-          {#if status}
+          {#if mailbox === "drafts"}
+            <p>Unsent messages and attachments are saved automatically on this device.</p>
+          {:else if status}
             <p>{status.downloadedMessages} messages · {status.downloadedBodies} bodies</p>
             {#if status.running}
               <p>{status.sync?.metadataCompletedAt ? "Metadata downloaded; copying bodies…" : "Downloading metadata…"}</p>
