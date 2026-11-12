@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.12 - 2026-11-12
+
+### Features
+- Manage conversations from message actions (26aa3a7)
+
+
+### Maintenance
+- Update feature highlights in README and website (bfdb10b)
+
 ## v0.1.11 - 2026-11-12
 
 ### Features
