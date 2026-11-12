@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   attachmentAction, cancelAttachmentDownload, listEmailAttachments, canPreviewImage,
   primaryAttachmentAction, attachmentStatus, formatAttachmentSize, contentId, encodeAttachments,
-  validateAttachmentFiles, MAX_ATTACHMENT_BYTES,
+  validateAttachmentFiles, MAX_ATTACHMENT_BYTES, isFileDrag,
 } from "./attachments";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -58,6 +58,14 @@ test("large binary encoding crosses chunk boundaries without corrupting bytes", 
   const [encoded] = await encodeAttachments([new File([bytes], "large.bin")]);
   const decoded = Uint8Array.from(atob(encoded.content), (character) => character.charCodeAt(0));
   expect(decoded).toEqual(bytes);
+});
+
+test("file drags are detected even before their protected file data is available", () => {
+  const event = (types: string[], files: File[] = []) => ({ dataTransfer: { types, files } }) as unknown as DragEvent;
+  expect(isFileDrag({ dataTransfer: null } as DragEvent)).toBe(false);
+  expect(isFileDrag(event(["text/plain"]))).toBe(false);
+  expect(isFileDrag(event(["Files"]))).toBe(true);
+  expect(isFileDrag(event([], [new File(["text"], "file.txt")]))).toBe(true);
 });
 
 test("size validation happens before reading files and includes the whole selection", async () => {

@@ -7,6 +7,7 @@ import Composer from "./__tests__/composer-harness.svelte";
 import { prepareReply } from "$lib/shared/reply";
 import { listFromEmails } from "$lib/shared/from-emails";
 import { registerDraftGuard } from "$lib/features/auth/draft-navigation";
+import { toast } from "svelte-sonner";
 
 const { pageState } = vi.hoisted(() => ({ pageState: { url: new URL("https://app.test/mail/account-a/composer") } }));
 vi.mock("$app/state", () => ({ page: pageState }));
@@ -69,6 +70,95 @@ function setScheduleTime(value: string) {
     time.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
+
+function attachmentFile(name: string, value = "attachment") {
+  const file = new File([value], name, { type: "text/plain" });
+  Object.defineProperty(file, "arrayBuffer", { value: async () => new TextEncoder().encode(value).buffer });
+  return file;
+}
+function drag(type: string, files: File[] = [], element: Element = target.querySelector("form")!, items: object[] = [], types = ["Files"]) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", { value: { files, items, types, dropEffect: "none" } });
+  flushSync(() => element.dispatchEvent(event));
+  return event;
+}
+
+test("dropping files anywhere in the composer adds attachments, preserves existing files and autosaves", async () => {
+  open();
+  await ready();
+  const first = attachmentFile("first.txt", "one");
+  const second = attachmentFile("second.txt", "two");
+  const editorDrop = vi.fn();
+  target.querySelector("textarea")!.addEventListener("drop", editorDrop);
+  expect(drag("drop", [first], target.querySelector("#subject")!).defaultPrevented).toBe(true);
+  drag("drop", [second], target.querySelector("textarea")!);
+  expect(editorDrop).not.toHaveBeenCalled(); // Files must not be inserted into the rich-text body.
+  expect(target.textContent).toContain("first.txt");
+  expect(target.textContent).toContain("second.txt");
+  await vi.mocked(registerDraftGuard).mock.calls[0][2]!();
+  expect(invoke).toHaveBeenCalledWith("save_draft", expect.objectContaining({ data: expect.objectContaining({ attachments: [
+    { filename: "first.txt", content: "b25l", mimeType: "text/plain" },
+    { filename: "second.txt", content: "dHdv", mimeType: "text/plain" },
+  ] }) }));
+  body("<p>With attachments</p>");
+  submit();
+  await confirmSend();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", expect.objectContaining({ data: expect.objectContaining({ attachments: expect.arrayContaining([expect.objectContaining({ filename: "first.txt" }), expect.objectContaining({ filename: "second.txt" })]) }) })));
+});
+
+test("file drag feedback survives nested elements, clears on leave or drop, and ignores text drags", async () => {
+  open();
+  await ready();
+  expect(drag("dragenter", [], target.querySelector("textarea")!, [], ["text/plain"]).defaultPrevented).toBe(false);
+  expect(target.textContent).not.toContain("Drop files to attach");
+  drag("dragenter");
+  drag("dragenter", [], target.querySelector("#subject")!);
+  expect(target.textContent).toContain("Drop files to attach");
+  drag("dragleave", [], target.querySelector("#subject")!);
+  expect(target.textContent).toContain("Drop files to attach");
+  drag("dragleave");
+  expect(target.textContent).not.toContain("Drop files to attach");
+  drag("dragenter");
+  drag("drop", [attachmentFile("dropped.txt")]);
+  expect(target.textContent).not.toContain("Drop files to attach");
+});
+
+test("oversized drops and folders leave existing attachments untouched", async () => {
+  open();
+  await ready();
+  drag("drop", [attachmentFile("keep.txt")]);
+  const oversized = attachmentFile("too-big.txt");
+  Object.defineProperty(oversized, "size", { value: 25 * 1024 * 1024 });
+  drag("drop", [attachmentFile("also-reject.txt"), oversized]);
+  expect(target.textContent).toContain("keep.txt");
+  expect(target.textContent).not.toContain("too-big.txt");
+  expect(target.textContent).not.toContain("also-reject.txt");
+  expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("25 MB"));
+  drag("drop", [], undefined, [{ kind: "file", webkitGetAsEntry: () => ({ isDirectory: true }) }]);
+  expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Drop files, not folders"));
+});
+
+test("files cannot be dropped while confirming or sending a message", async () => {
+  let finish!: () => void;
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "send_email") await new Promise<void>((resolve) => { finish = resolve; });
+  });
+  open();
+  await ready();
+  body("<p>Send unchanged</p>");
+  submit();
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).not.toBeNull());
+  drag("drop", [attachmentFile("confirming.txt")]);
+  expect(target.textContent).not.toContain("confirming.txt");
+  await confirmSend();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", expect.anything()));
+  drag("dragenter");
+  expect(target.textContent).not.toContain("Drop files to attach");
+  drag("drop", [attachmentFile("sending.txt")]);
+  expect(target.textContent).not.toContain("sending.txt");
+  finish();
+  await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/mail/account-a/sent"));
+});
 
 test("calendar and time picker schedule in local time and persist the selection", async () => {
   open();
