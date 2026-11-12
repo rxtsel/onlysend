@@ -292,6 +292,40 @@ test("mentions in the subject also warn, but a selected attachment uses normal c
   await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", expect.objectContaining({ data: expect.objectContaining({ attachments: [{ filename: "invoice.txt", content: "aW52b2ljZQ==", mimeType: "text/plain" }] }) })));
 });
 
+test.each([true, false])("reply inherits our conversation Reply-To and lets it be disabled (enabled: %s)", async (enabled) => {
+  vi.mocked(prepareReply).mockResolvedValueOnce({ ...context, replyTo: "c@rxtsel.dev" });
+  open();
+  await ready();
+  expect(input("#replyTo").value).toBe("c@rxtsel.dev");
+  expect(input('input[type="hidden"][name="to"]').value).toBe("reply@example.com");
+  if (!enabled) {
+    flushSync(() => Array.from(target.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Reply to")!.click());
+    expect(target.querySelector("#replyTo")).toBeNull();
+  }
+  body("<p>My reply</p>");
+  submit();
+  await confirmSend();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", expect.objectContaining({
+    data: enabled ? expect.objectContaining({ replyTo: "c@rxtsel.dev" }) : expect.not.objectContaining({ replyTo: expect.anything() }),
+  })));
+});
+
+test("a reopened draft keeps an explicit Reply-To opt-out instead of re-enabling the inherited default", async () => {
+  pageState.url = new URL(`https://app.test/mail/account-a/composer?draft=${emailId}`);
+  vi.mocked(prepareReply).mockResolvedValueOnce({ ...context, replyTo: "c@rxtsel.dev" });
+  vi.mocked(invoke).mockResolvedValueOnce({
+    from: "Me <me@example.com>", to: ["to@example.com"], cc: [], bcc: [],
+    pendingTo: "", pendingCc: "", pendingBcc: "", subject: "Re: Invoice", content: "<p>Saved reply</p>",
+    replyEmailId: emailId, replyTo: "c@rxtsel.dev", isReplyToEnabled: false, isCcEnabled: false, isBccEnabled: false, attachments: [],
+  });
+  open();
+  await ready();
+  expect(target.querySelector("#replyTo")).toBeNull();
+  submit();
+  await confirmSend();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", expect.objectContaining({ data: expect.not.objectContaining({ replyTo: expect.anything() }) })));
+});
+
 test("attachment keywords in a link URL do not warn about visible message text", async () => {
   open();
   await ready();

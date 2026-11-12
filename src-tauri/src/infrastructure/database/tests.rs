@@ -30,6 +30,36 @@ impl Drop for TemporaryDatabase {
 }
 
 #[tokio::test]
+async fn old_sent_thread_keys_are_upgraded_without_losing_a_later_reply_to_opt_out() {
+    let temporary = TemporaryDatabase::new();
+    std::fs::create_dir_all(temporary.path().parent().unwrap()).unwrap();
+    let mut connection = Connection::open(temporary.path()).unwrap();
+    migrate(&mut connection, &MIGRATIONS[..10]).unwrap();
+    connection.execute("INSERT INTO account_state VALUES ('a'),('b')", []).unwrap();
+    for (id, date, thread, reply_to) in [
+        ("root", 1, "root@example.com", Some("alias@example.com")),
+        ("opt-out", 2, "<root@example.com>", None),
+    ] {
+        let json = serde_json::json!({"id":id,"replyTo":reply_to,"lastEvent":"sent"}).to_string();
+        connection.execute("INSERT INTO emails(account_id,mailbox,email_id,created_at_ms,subject,sender,subject_sort,sender_sort,recipient_text,metadata_json,downloaded_at) VALUES ('a','sent',?1,?2,'Invoice','me@example.com','invoice','me@example.com','to@example.com',?3,1)", params![id,date,json]).unwrap();
+        connection.execute("INSERT INTO email_bodies VALUES ('a','sent',?1,?2,'body',1)", params![id,json]).unwrap();
+        connection.execute("INSERT INTO email_threads VALUES ('a','sent',?1,?2)", params![id,thread]).unwrap();
+    }
+    connection.execute("INSERT INTO email_threads VALUES ('b','sent','other','unrelated@example.com')", []).unwrap();
+    drop(connection);
+    let database = temporary.database();
+    database.initialize().await.unwrap();
+    let messages = super::mail::cached_thread(&database, "a".into(), "root@example.com".into(), super::mail::Mailbox::Sent).await.unwrap();
+    assert_eq!(messages.len(), 2);
+    let latest: serde_json::Value = serde_json::from_str(&messages[1].1).unwrap();
+    assert_eq!(latest["id"], "opt-out");
+    assert!(latest["replyTo"].is_null());
+    assert_eq!(super::mail::thread_id_for(&database, "b".into(), super::mail::Mailbox::Sent, "other".into()).await.unwrap().as_deref(), Some("unrelated@example.com"));
+    drop(database);
+    temporary.database().initialize().await.unwrap();
+}
+
+#[tokio::test]
 async fn splits_existing_draft_attachments_without_losing_data() {
     let temporary = TemporaryDatabase::new();
     std::fs::create_dir_all(temporary.path().parent().unwrap()).unwrap();
