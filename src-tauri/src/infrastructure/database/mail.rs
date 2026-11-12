@@ -122,10 +122,28 @@ pub(crate) async fn missing_detail_ids(
     let ids = serde_json::to_string(&ids).map_err(|_| "Could not encode email IDs")?;
     database.run(move |connection| {
         let mut statement = connection.prepare(
-            "SELECT value FROM json_each(?3) WHERE NOT EXISTS(SELECT 1 FROM email_bodies b WHERE b.account_id=?1 AND b.mailbox=?2 AND b.email_id=value)",
+            "SELECT value FROM json_each(?3) WHERE NOT EXISTS(SELECT 1 FROM email_bodies b WHERE b.account_id=?1 AND b.mailbox=?2 AND b.email_id=value AND (?2<>'sent' OR COALESCE(json_extract(b.detail_json,'$.bodyFormatVersion'),1)>0))",
         )?;
         let rows = statement.query_map(params![account_id, mailbox.as_str(), ids], |row| row.get(0))?.collect();
         rows
+    }).await
+}
+
+pub(crate) async fn pending_sent_header_ids(
+    database: &Database,
+    account_id: String,
+) -> Result<Vec<String>, String> {
+    database.run(move |connection| {
+        let mut statement = connection.prepare(
+            "SELECT e.email_id FROM emails e LEFT JOIN email_bodies b USING(account_id,mailbox,email_id)
+             WHERE e.account_id=?1 AND e.mailbox='sent'
+             AND (b.email_id IS NOT NULL OR json_extract(e.metadata_json,'$.bodyFormatVersion')=0)
+             AND NOT EXISTS(SELECT 1 FROM email_threads t WHERE t.account_id=e.account_id AND t.mailbox=e.mailbox AND t.email_id=e.email_id)
+             AND NOT EXISTS(SELECT 1 FROM deleted_emails d WHERE d.account_id=e.account_id AND d.mailbox=e.mailbox AND d.email_id=e.email_id)
+             ORDER BY e.created_at_ms DESC,e.email_id DESC",
+        )?;
+        let rows = statement.query_map([account_id], |row| row.get(0))?;
+        rows.collect()
     }).await
 }
 
@@ -204,7 +222,11 @@ pub(crate) async fn cached_thread(
 ) -> Result<Vec<(String, String)>, String> {
     let rows = database.run(move |connection| {
         let mut statement = connection.prepare(
-            "SELECT e.mailbox,e.created_at_ms,b.detail_json FROM email_threads t JOIN emails e USING(account_id,mailbox,email_id) JOIN email_bodies b USING(account_id,mailbox,email_id) WHERE t.account_id=?1 AND t.thread_id=?2 AND NOT EXISTS(SELECT 1 FROM deleted_emails d WHERE d.account_id=e.account_id AND d.mailbox=e.mailbox AND d.email_id=e.email_id) ORDER BY e.created_at_ms,e.email_id",
+            "SELECT e.mailbox,e.created_at_ms,
+             CASE WHEN e.mailbox='sent' AND json_type(e.metadata_json,'$.lastEvent')='text'
+                  THEN json_set(b.detail_json,'$.lastEvent',json_extract(e.metadata_json,'$.lastEvent'))
+                  ELSE b.detail_json END
+             FROM email_threads t JOIN emails e USING(account_id,mailbox,email_id) JOIN email_bodies b USING(account_id,mailbox,email_id) WHERE t.account_id=?1 AND t.thread_id=?2 AND NOT EXISTS(SELECT 1 FROM deleted_emails d WHERE d.account_id=e.account_id AND d.mailbox=e.mailbox AND d.email_id=e.email_id) ORDER BY e.created_at_ms,e.email_id",
         )?;
         let rows = statement.query_map(params![account_id, thread_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?))
@@ -319,6 +341,18 @@ pub(crate) async fn store_scan_page<T: Serialize>(
     // archive at every shifted head. The interactive head stays available.
     let snapshot = after.is_none();
     write_page(database, account_id, mailbox, limit, after, page, snapshot).await
+}
+
+pub(crate) async fn store_outgoing_sent(
+    database: &Database,
+    account_id: String,
+    email: &crate::sent::SentEmail,
+) -> Result<(), String> {
+    let page = EmailPage { items: vec![email], has_more: false, next_cursor: None, cache: None };
+    // Keep the accepted message without replacing a real remote pagination snapshot.
+    write_page(database, account_id.clone(), Mailbox::Sent, 1, None, &page, false).await?;
+    store_detail(database, account_id, Mailbox::Sent, email.id.clone(), email,
+        plain_html(email.html.as_deref().unwrap_or_default())).await
 }
 
 async fn write_page<T: Serialize>(

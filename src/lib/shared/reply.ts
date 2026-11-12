@@ -4,6 +4,7 @@ export interface ReplyContext {
   to: string[];
   subject: string;
   fromCandidates: string[];
+  replyTo?: string | null;
 }
 
 export function prepareReply(accountId: string, emailId: string): Promise<ReplyContext> {

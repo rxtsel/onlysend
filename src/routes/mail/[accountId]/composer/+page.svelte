@@ -301,6 +301,8 @@
       if (context) {
         subject = context.subject;
         toEmails = context.to.map((text) => ({ id: crypto.randomUUID(), text }));
+        replyTo = context.replyTo ?? "";
+        isReplyToEnabled = !!replyTo;
       }
       const defaultFrom = list.find((sender) => context?.fromCandidates.some((recipient) => recipient.toLowerCase() === sender.address.toLowerCase()))
         ?? list.find((sender) => sender.isDefault) ?? list[0];
