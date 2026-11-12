@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.1.11 - 2026-11-12
+
+### Features
+- Schedule and cancel email delivery (bc285a5)
+- Support dropping files into composer (7fa333e)
+- Add quote paste and history controls (fa403fb)
+- Inherit conversation reply-to settings (852a64c)
+
+
+### Fixes
+- Keep attachment picker available (173c280)
+
+
+### Maintenance
+- Cover scheduled email workflows (5c85318)
+- Cover composer file drops (507ae33)
+- Cover attachment picker and editor links (98a5d93)
+- Cover formatting and plain text paste (23d86a4)
+- Cover inherited reply-to defaults (6520827)
+
 ## v0.1.10 - 2026-11-06
 
 ### Features
