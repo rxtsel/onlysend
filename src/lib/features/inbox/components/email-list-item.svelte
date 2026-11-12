@@ -6,14 +6,14 @@
   import MailAvatar from "$lib/components/mail-avatar.svelte";
   import { Badge } from "$lib/components/ui/badge";
   import { sentFailureLabel } from "$lib/shared/sent-status";
-  import { CalendarClock, CircleAlert, EllipsisVertical, Reply, Trash2 } from "@lucide/svelte";
+  import { CalendarClock, CircleAlert, EllipsisVertical, MailOpen, Reply, Trash2 } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
   import * as ContextMenu from "$lib/components/ui/context-menu";
   import ConfirmDeleteMail from "$lib/components/confirm-delete-mail.svelte";
   import ConfirmCancelScheduled from "$lib/components/confirm-cancel-scheduled.svelte";
 
-  let { mail, mode, threadCount = 1, isActive = false, isUnread = false, isSelected = false, disabled = false, onclick, onreply, ondelete }: {
+  let { mail, mode, threadCount = 1, isActive = false, isUnread = false, isSelected = false, disabled = false, selectedCount = 0, onclick, onreply, ondelete, ondeleteThread, ondeleteSelected, onmarkRead }: {
     mail: MailListItem;
     mode: Mailbox | "drafts";
     threadCount?: number;
@@ -21,6 +21,10 @@
     isUnread?: boolean;
     isSelected?: boolean;
     disabled?: boolean;
+    selectedCount?: number;
+    ondeleteThread?: (id: string) => void;
+    ondeleteSelected?: () => void;
+    onmarkRead?: (id: string) => void;
     onclick: (id: string, event: MouseEvent) => void;
     onreply: (id: string) => void;
     ondelete: (id: string) => Promise<void>;
@@ -29,7 +33,7 @@
   const name = $derived(address.split("<")[0].replaceAll('"', "").trim() || address);
   const senderName = $derived(mail.from.split("<")[0].replaceAll('"', "").trim() || mail.from);
   const failureLabel = $derived(mode === "sent" ? (mail.lastEvent === "scheduled" ? "Scheduled" : sentFailureLabel(mail.lastEvent)) : null);
-  const deleteLabel = $derived(mode === "drafts" ? "Delete draft" : threadCount > 1 ? "Delete this message from this device" : "Delete from this device");
+  const deleteLabel = $derived(mode === "drafts" ? "Delete draft" : threadCount > 1 ? (ondeleteThread ? "Delete conversation from this device" : "Delete this message from this device") : "Delete from this device");
   let deleting = $state(false);
   let confirmDelete = $state(false);
   let confirmCancel = $state(false);
@@ -112,18 +116,25 @@
     {#if mode === "sent" && (mail.lastEvent === "scheduled" || mail.lastEvent === "canceled")}
       <DropdownMenu.Item disabled={deleting || disabled} onSelect={() => { confirmCancel = true; }}><CalendarClock />{mail.lastEvent === "canceled" ? "Restore to Drafts" : "Cancel scheduled send"}</DropdownMenu.Item>
     {/if}
-    <DropdownMenu.Item variant="destructive" disabled={deleting || disabled} onSelect={() => { confirmDelete = true; }}><Trash2 />{deleteLabel}</DropdownMenu.Item>
+    <DropdownMenu.Item variant="destructive" disabled={deleting || disabled} onSelect={() => { if (threadCount > 1 && ondeleteThread) ondeleteThread(mail.id); else confirmDelete = true; }}><Trash2 />{deleteLabel}</DropdownMenu.Item>
   </DropdownMenu.Content>
 </DropdownMenu.Root>
 </ContextMenu.Trigger>
 <ContextMenu.Content>
-  {#if mode === "inbox"}
-    <ContextMenu.Item disabled={deleting || disabled} onSelect={() => onreply(mail.id)}><Reply />Reply</ContextMenu.Item>
+  {#if mode === "inbox" && isUnread && onmarkRead}
+    <ContextMenu.Item disabled={disabled} onSelect={() => onmarkRead(mail.id)}><MailOpen />Mark as read</ContextMenu.Item>
   {/if}
-  {#if mode === "sent" && (mail.lastEvent === "scheduled" || mail.lastEvent === "canceled")}
-    <ContextMenu.Item disabled={deleting || disabled} onSelect={() => { confirmCancel = true; }}><CalendarClock />{mail.lastEvent === "canceled" ? "Restore to Drafts" : "Cancel scheduled send"}</ContextMenu.Item>
+  {#if isSelected && selectedCount && ondeleteSelected}
+    <ContextMenu.Item variant="destructive" disabled={deleting || disabled} onSelect={ondeleteSelected}><Trash2 />Delete {selectedCount} selected emails</ContextMenu.Item>
+  {:else}
+    {#if mode === "inbox"}
+      <ContextMenu.Item disabled={deleting || disabled} onSelect={() => onreply(mail.id)}><Reply />Reply</ContextMenu.Item>
+    {/if}
+    {#if mode === "sent" && (mail.lastEvent === "scheduled" || mail.lastEvent === "canceled")}
+      <ContextMenu.Item disabled={deleting || disabled} onSelect={() => { confirmCancel = true; }}><CalendarClock />{mail.lastEvent === "canceled" ? "Restore to Drafts" : "Cancel scheduled send"}</ContextMenu.Item>
+    {/if}
+    <ContextMenu.Item variant="destructive" disabled={deleting || disabled} onSelect={() => { if (threadCount > 1 && ondeleteThread) ondeleteThread(mail.id); else confirmDelete = true; }}><Trash2 />{deleteLabel}</ContextMenu.Item>
   {/if}
-  <ContextMenu.Item variant="destructive" disabled={deleting || disabled} onSelect={() => { confirmDelete = true; }}><Trash2 />{deleteLabel}</ContextMenu.Item>
 </ContextMenu.Content>
 </ContextMenu.Root>
 {#if confirmCancel}<ConfirmCancelScheduled bind:open={confirmCancel} emailId={mail.id} subject={mail.subject} alreadyCanceled={mail.lastEvent === "canceled"} />{/if}

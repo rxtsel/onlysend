@@ -13,7 +13,7 @@
   import { mailUrl } from "$lib/features/auth/mail-routes";
   import EmailListItem from "$lib/features/inbox/components/email-list-item.svelte";
   import { createEmailList } from "$lib/shared/email-list.svelte";
-  import { loadMailList, getMailArchiveStatus, refreshMailbox, type Mailbox, type MailArchiveStatus, type MailListItem } from "$lib/shared/local-mail";
+  import { loadMailList, getMailThreadIds, markMailThreadRead, getMailArchiveStatus, refreshMailbox, type Mailbox, type MailArchiveStatus, type MailListItem } from "$lib/shared/local-mail";
   import type { ArchiveFooterData } from "$lib/shared/archive-status";
   import { authErrorToast, isAuthError } from "$lib/shared/services/auth-toast.svelte";
   import { errorMessage } from "$lib/shared/utils/errors";
@@ -48,7 +48,7 @@
   const selection = createMailSelection();
   let bulkDeleting = $state(false);
   let confirmBulkDelete = $state(false);
-  let pendingDelete = $state<{ ids: string[]; mailbox: ListMailbox; key: string } | null>(null);
+  let pendingDelete = $state<{ ids: string[]; mailbox: ListMailbox; key: string; conversation?: boolean } | null>(null);
   let listElement: HTMLElement;
 
   async function fetchPage(limit: number, after: string | null, refresh: boolean) {
@@ -147,6 +147,18 @@
     if (!selection.ids.length || bulkDeleting) return;
     pendingDelete = { ids: [...selection.ids], mailbox, key: lastKey };
     confirmBulkDelete = true;
+  }
+
+  async function requestThreadDelete(id: string) {
+    const key = lastKey;
+    const owner = mailbox;
+    if (owner === "drafts" || bulkDeleting) return;
+    try {
+      const ids = await getMailThreadIds(accountId, owner, id);
+      if (!active || key !== lastKey || !ids.length) return;
+      pendingDelete = { ids, mailbox: owner, key, conversation: true };
+      confirmBulkDelete = true;
+    } catch (error) { report(error); }
   }
 
   async function deleteSelected() {
@@ -252,6 +264,15 @@
     void goto(`${mailUrl(accountId, "composer")}?reply=${encodeURIComponent(id)}`).catch(report);
   }
 
+  async function markRead(id: string) {
+    try {
+      const ids = await markMailThreadRead(accountId, id);
+      if (disposed || mailbox !== "inbox") return;
+      const changed = new Set(ids);
+      for (const item of list.items) if (changed.has(item.id)) item.isRead = true;
+    } catch (error) { report(error); }
+  }
+
   async function deleteMail(id: string) {
     try {
       if (mailbox === "drafts") {
@@ -321,10 +342,10 @@
       list.clearItems();
       void list.refreshCached().catch(report);
     });
-    subscribe<{ accountId: string; emailId: string }>("inbox-read", (event) => {
+    subscribe<{ accountId: string; emailId?: string; emailIds?: string[] }>("inbox-read", (event) => {
       if (event.accountId !== accountId || mailbox !== "inbox") return;
-      const item = list.items.find((mail) => mail.id === event.emailId);
-      if (item) item.isRead = true;
+      const ids = new Set(event.emailIds ?? (event.emailId ? [event.emailId] : []));
+      for (const item of list.items) if (ids.has(item.id)) item.isRead = true;
     });
     const visible = () => { if (!document.hidden && active) { void refreshStatus(); void refreshScheduled(); } };
     const draftDeleted = (event: Event) => {
@@ -388,7 +409,7 @@
     {:else}
       {#each threads as thread (thread.mail.threadId ?? thread.mail.id)}
         {@const mail = thread.mail}
-        <EmailListItem {mail} mode={mailbox} threadCount={mail.threadCount ?? thread.count} isActive={thread.ids.has(page.params.id ?? "")} isUnread={thread.unread} isSelected={selection.ids.includes(mail.id)} disabled={bulkDeleting} onclick={selectRow} onreply={replyMail} ondelete={deleteMail} />
+        <EmailListItem {mail} mode={mailbox} threadCount={mail.threadCount ?? thread.count} isActive={thread.ids.has(page.params.id ?? "")} isUnread={thread.unread} isSelected={selection.ids.includes(mail.id)} selectedCount={selection.ids.length} disabled={bulkDeleting} onclick={selectRow} onreply={replyMail} ondelete={deleteMail} ondeleteThread={requestThreadDelete} ondeleteSelected={requestBulkDelete} onmarkRead={markRead} />
       {/each}
       {#if list.hasMore}
         <div class="p-3"><Button class="w-full" variant="ghost" disabled={list.isLoadingMore || list.isRefreshing} onclick={() => { void list.loadMore().catch(report); }}>
@@ -398,4 +419,4 @@
     {/if}
   </div>
 </section>
-<ConfirmDeleteMail bind:open={confirmBulkDelete} draft={mailbox === "drafts"} count={pendingDelete?.ids.length ?? 0} onConfirm={() => { void deleteSelected(); }} />
+<ConfirmDeleteMail bind:open={confirmBulkDelete} draft={mailbox === "drafts"} count={pendingDelete?.ids.length ?? 0} conversation={pendingDelete?.conversation} onConfirm={() => { void deleteSelected(); }} />

@@ -161,6 +161,8 @@ pub fn run() {
             inbound::open_inbound_email,
             mailbox::load_mail_list,
             mailbox::get_mail_thread,
+            mailbox::get_mail_thread_ids,
+            mailbox::mark_mail_thread_read,
             mailbox::set_mail_deleted,
             mailbox::set_mail_deleted_many,
             config::list_from_emails,

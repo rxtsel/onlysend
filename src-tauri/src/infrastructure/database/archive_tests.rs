@@ -306,6 +306,34 @@ async fn thread_links_are_account_scoped_and_annotate_list_rows_with_counts() {
 }
 
 #[tokio::test]
+async fn thread_mail_ids_include_unloaded_bodies_but_only_visible_messages_in_this_mailbox() {
+    let temporary = TemporaryDatabase::new();
+    let database = temporary.database();
+    database.initialize().await.unwrap();
+    for (account, mailbox, id) in [
+        ("a", Mailbox::Inbox, "root"),
+        ("a", Mailbox::Inbox, "reply"),
+        ("a", Mailbox::Sent, "sent"),
+        ("b", Mailbox::Inbox, "other"),
+    ] {
+        mail::store_page(&database, account.into(), mailbox, 20, None,
+            &page(vec![message(id, "Thread", "2026-01-01T00:00:00Z")])).await.unwrap();
+        mail::store_thread_link(&database, account.into(), mailbox, id.into(), "thread".into()).await.unwrap();
+    }
+    assert_eq!(mail::thread_mail_ids(&database, "a".into(), Mailbox::Inbox, "root".into()).await.unwrap().len(), 2);
+    let mut changed = mail::mark_thread_read(&database, "a".into(), "root".into()).await.unwrap();
+    changed.sort();
+    assert_eq!(changed, ["reply", "root"]);
+    assert!(mail::mark_thread_read(&database, "a".into(), "root".into()).await.unwrap().is_empty());
+    assert!(mail::query(&database, "a".into(), query(Mailbox::Inbox)).await.unwrap().items.iter().all(|item| item["isRead"] == true));
+    mail::set_deleted(&database, "a".into(), Mailbox::Inbox, "reply".into(), true).await.unwrap();
+    assert_eq!(mail::thread_mail_ids(&database, "a".into(), Mailbox::Inbox, "root".into()).await.unwrap(), ["root"]);
+    mail::store_page(&database, "a".into(), Mailbox::Inbox, 20, None,
+        &page(vec![message("other-unthreaded", "Solo", "2026-01-01T00:00:00Z")])).await.unwrap();
+    assert_eq!(mail::mark_thread_read(&database, "a".into(), "other-unthreaded".into()).await.unwrap(), ["other-unthreaded"]);
+}
+
+#[tokio::test]
 async fn cached_thread_deduplicates_sent_and_received_copies_by_message_id() {
     let temporary = TemporaryDatabase::new();
     let database = temporary.database();

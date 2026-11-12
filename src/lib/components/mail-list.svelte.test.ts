@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
 import Harness from "./__tests__/mail-list-harness.svelte";
-import { loadMailList, type MailListItem, type Mailbox } from "$lib/shared/local-mail";
+import { loadMailList, getMailThreadIds, markMailThreadRead, type MailListItem, type Mailbox } from "$lib/shared/local-mail";
 import { deleteLocalMails } from "$lib/shared/services/delete-mail";
 import { goto } from "$app/navigation";
 import { invoke } from "@tauri-apps/api/core";
@@ -19,7 +19,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async (name, handler) =>
   return () => handlers.delete(name);
 }) }));
 vi.mock("$lib/components/ui/sidebar", async () => ({ Trigger: (await import("./__tests__/layout-frame-probe.svelte")).default }));
-vi.mock("$lib/shared/local-mail", () => ({ loadMailList: vi.fn(), getMailArchiveStatus: vi.fn().mockResolvedValue({ downloadedMessages: 9, downloadedBodies: 9 }), refreshMailbox: vi.fn() }));
+vi.mock("$lib/shared/local-mail", () => ({ loadMailList: vi.fn(), getMailThreadIds: vi.fn(), markMailThreadRead: vi.fn(), getMailArchiveStatus: vi.fn().mockResolvedValue({ downloadedMessages: 9, downloadedBodies: 9 }), refreshMailbox: vi.fn() }));
 vi.mock("$lib/shared/services/delete-mail", () => ({ deleteLocalMail: vi.fn().mockResolvedValue(true), deleteLocalMails: vi.fn().mockResolvedValue(true) }));
 vi.mock("svelte-sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
@@ -54,6 +54,8 @@ beforeEach(async () => {
   }));
   vi.mocked(loadMailList).mockImplementation(async () => ({ items: [...items], domains: [], hasMore: false, nextCursor: null, cache: { downloadedAt: 123, error: null } }));
   vi.mocked(deleteLocalMails).mockResolvedValue(true);
+  vi.mocked(getMailThreadIds).mockResolvedValue([]);
+  vi.mocked(markMailThreadRead).mockResolvedValue([]);
   target = document.createElement("div");
   document.body.append(target);
   instance = mount(Harness, { target, props: { controls, onSelectMail, onDomainsChange } });
@@ -309,6 +311,70 @@ test("confirmation snapshots IDs even if new rows arrive before confirmation", a
   await vi.waitFor(() => expect(rows()).toHaveLength(10));
   confirm();
   await vi.waitFor(() => expect(deleteLocalMails).toHaveBeenCalledExactlyOnceWith("account-a", "inbox", ["m1", "m6"]));
+});
+
+test("right-clicking a selected row deletes the selected rows, not their conversations", async () => {
+  click(0, { ctrlKey: true });
+  click(2, { ctrlKey: true });
+  rows()[0].dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+  await vi.waitFor(() => expect(document.querySelector('[role="menuitem"][data-variant="destructive"]')?.textContent).toContain("Delete 2 selected emails"));
+  document.querySelector<HTMLElement>('[role="menuitem"][data-variant="destructive"]')!.click();
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')).not.toBeNull());
+  confirm();
+  await vi.waitFor(() => expect(deleteLocalMails).toHaveBeenCalledExactlyOnceWith("account-a", "inbox", ["m0", "m2"]));
+  expect(getMailThreadIds).not.toHaveBeenCalled();
+});
+
+test("conversation row action deletes every mailbox message, including unloaded siblings", async () => {
+  items[0].threadId = "conversation";
+  items[0].threadCount = 3;
+  vi.mocked(getMailThreadIds).mockResolvedValue(["m0", "unloaded", "older"]);
+  await unmount(instance);
+  target.replaceChildren();
+  instance = mount(Harness, { target, props: { controls, onSelectMail, onDomainsChange } });
+  await vi.waitFor(() => expect(rows()[0].textContent).toContain("3"));
+  rows()[0].dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+  await vi.waitFor(() => expect(document.querySelector('[role="menuitem"][data-variant="destructive"]')?.textContent).toContain("Delete conversation"));
+  document.querySelector<HTMLElement>('[role="menuitem"][data-variant="destructive"]')!.click();
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("All 3 messages"));
+  expect(deleteLocalMails).not.toHaveBeenCalled();
+  confirm();
+  await vi.waitFor(() => expect(deleteLocalMails).toHaveBeenCalledExactlyOnceWith("account-a", "inbox", ["m0", "unloaded", "older"]));
+});
+
+test("context action marks every unread message in a conversation without opening it", async () => {
+  items[0].threadId = "conversation";
+  items[1].threadId = "conversation";
+  items[0].threadCount = 3;
+  items[0].isRead = true;
+  await unmount(instance);
+  target.replaceChildren();
+  instance = mount(Harness, { target, props: { controls, onSelectMail, onDomainsChange } });
+  await vi.waitFor(() => expect(rows()).toHaveLength(8));
+  vi.mocked(markMailThreadRead).mockResolvedValue(["m1", "unloaded"]);
+  rows()[0].dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+  await vi.waitFor(() => expect(Array.from(document.querySelectorAll('[role="menuitem"]')).some((item) => item.textContent === "Mark as read")).toBe(true));
+  Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((item) => item.textContent === "Mark as read")!.click();
+  await vi.waitFor(() => expect(markMailThreadRead).toHaveBeenCalledExactlyOnceWith("account-a", "m0"));
+  await vi.waitFor(() => expect(rows()[0].querySelector('[title="Unread"]')).toBeNull());
+  expect(rows()[1].querySelector('[title="Unread"]')).not.toBeNull();
+  expect(onSelectMail).not.toHaveBeenCalled();
+  rows()[0].dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+  await vi.waitFor(() => expect(document.querySelector('[role="menuitem"]')).not.toBeNull());
+  expect(Array.from(document.querySelectorAll('[role="menuitem"]')).some((item) => item.textContent === "Mark as read")).toBe(false);
+});
+
+test("single unread row offers mark as read; sent rows do not", async () => {
+  vi.mocked(markMailThreadRead).mockResolvedValue(["m0"]);
+  rows()[0].dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+  await vi.waitFor(() => expect(document.querySelector('[role="menuitem"]')?.textContent).toBe("Mark as read"));
+  document.querySelector<HTMLElement>('[role="menuitem"]')!.click();
+  await vi.waitFor(() => expect(rows()[0].querySelector('[title="Unread"]')).toBeNull());
+  flushSync(() => { controls.mailbox = "sent"; });
+  await vi.waitFor(() => expect(rows()).toHaveLength(9));
+  rows()[0].dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+  await vi.waitFor(() => expect(document.querySelector('[role="menuitem"]')).not.toBeNull());
+  expect(Array.from(document.querySelectorAll('[role="menuitem"]')).some((item) => item.textContent === "Mark as read")).toBe(false);
 });
 
 test("marking an inbox message read removes only its avatar badge", async () => {

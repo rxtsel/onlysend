@@ -1,11 +1,12 @@
 <script lang="ts">
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
 
-  let { open = $bindable(false), subject = "", count, draft = false, onConfirm }: {
+  let { open = $bindable(false), subject = "", count, draft = false, conversation = false, onConfirm }: {
     open?: boolean;
     subject?: string;
     count?: number;
     draft?: boolean;
+    conversation?: boolean;
     onConfirm: () => void;
   } = $props();
 </script>
@@ -13,10 +14,12 @@
 <AlertDialog.Root bind:open>
   <AlertDialog.Content>
     <AlertDialog.Header>
-      <AlertDialog.Title>{draft ? (count !== undefined ? `Delete ${count} selected drafts?` : "Delete this draft?") : count !== undefined ? `Delete ${count} selected emails from this device?` : "Delete this email from this device?"}</AlertDialog.Title>
+      <AlertDialog.Title>{draft ? (count !== undefined ? `Delete ${count} selected drafts?` : "Delete this draft?") : count !== undefined ? `Delete ${conversation ? `${count} conversation emails` : `${count} selected emails`} from this device?` : "Delete this email from this device?"}</AlertDialog.Title>
       <AlertDialog.Description>
         {#if draft}
           {count !== undefined ? `The ${count} selected drafts` : `“${subject || "(No subject)"}”`} and their attachments will be permanently deleted from this device.
+        {:else if conversation}
+          All {count} messages in this conversation in this mailbox will be hidden on this device, not deleted from Resend.
         {:else if count !== undefined}
           Only the {count} selected row messages will be hidden on this device, not deleted from Resend.
           Other messages in their conversations are not affected.

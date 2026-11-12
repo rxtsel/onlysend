@@ -269,6 +269,44 @@ pub(crate) async fn cached_thread(
         .collect())
 }
 
+pub(crate) async fn thread_mail_ids(
+    database: &Database,
+    account_id: String,
+    mailbox: Mailbox,
+    email_id: String,
+) -> Result<Vec<String>, String> {
+    database.run(move |connection| {
+        let mut statement = connection.prepare(
+            "SELECT e.email_id FROM email_threads t JOIN emails e USING(account_id,mailbox,email_id) \
+             WHERE t.account_id=?1 AND t.mailbox=?2 AND t.thread_id=(SELECT thread_id FROM email_threads WHERE account_id=?1 AND mailbox=?2 AND email_id=?3) \
+             AND NOT EXISTS(SELECT 1 FROM deleted_emails d WHERE d.account_id=e.account_id AND d.mailbox=e.mailbox AND d.email_id=e.email_id)"
+        )?;
+        let ids = statement.query_map(params![account_id, mailbox.as_str(), email_id], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
+        Ok(ids)
+    }).await
+}
+
+pub(crate) async fn mark_thread_read(
+    database: &Database,
+    account_id: String,
+    email_id: String,
+) -> Result<Vec<String>, String> {
+    let mut ids = thread_mail_ids(database, account_id.clone(), Mailbox::Inbox, email_id.clone()).await?;
+    if ids.is_empty() { ids.push(email_id); }
+    database.run(move |connection| {
+        let tx = connection.transaction()?;
+        let mut changed = Vec::new();
+        for id in ids {
+            if tx.execute("INSERT OR IGNORE INTO read_markers SELECT ?1, 'inbox', email_id FROM emails WHERE account_id=?1 AND mailbox='inbox' AND email_id=?2", params![account_id, id])? > 0 {
+                changed.push(id);
+            }
+        }
+        tx.commit()?;
+        Ok(changed)
+    }).await
+}
+
 pub(crate) async fn thread_id_for(
     database: &Database,
     account_id: String,

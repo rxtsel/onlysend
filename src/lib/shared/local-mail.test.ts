@@ -1,6 +1,6 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { loadMailList, getMailArchiveStatus, refreshMailbox, getMailThread, setMailsDeleted } from "./local-mail";
+import { loadMailList, getMailArchiveStatus, refreshMailbox, getMailThread, markMailThreadRead, setMailsDeleted } from "./local-mail";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 beforeEach(() => { vi.mocked(invoke).mockReset().mockResolvedValue(null); });
@@ -15,6 +15,11 @@ test("bulk deletion passes explicit ownership and message IDs to one native call
 test("thread lookup passes explicit account, mailbox and email ownership", async () => {
   await getMailThread("a", "inbox", "message-id");
   expect(invoke).toHaveBeenCalledExactlyOnceWith("get_mail_thread", { accountId: "a", mailbox: "inbox", emailId: "message-id" });
+});
+
+test("marking a conversation read delegates persistence to Rust", async () => {
+  await markMailThreadRead("a", "message-id");
+  expect(invoke).toHaveBeenCalledExactlyOnceWith("mark_mail_thread_read", { accountId: "a", emailId: "message-id" });
 });
 
 test("manual refresh and status are delegated to the native account/mailbox", async () => {

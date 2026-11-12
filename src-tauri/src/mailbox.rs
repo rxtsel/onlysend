@@ -127,6 +127,30 @@ pub async fn set_mail_deleted_many(
 }
 
 #[tauri::command]
+pub async fn get_mail_thread_ids(
+    app: AppHandle<Wry>, account_id: String, mailbox: Mailbox, email_id: String,
+) -> Result<Vec<String>, String> {
+    if uuid::Uuid::parse_str(&email_id).is_err() { return Err("Invalid email ID".into()); }
+    let database = local_state::for_account(&app, &account_id).await?;
+    mail::ensure_visible(&database, account_id.clone(), mailbox, email_id.clone()).await?;
+    mail::thread_mail_ids(&database, account_id, mailbox, email_id).await
+}
+
+#[tauri::command]
+pub async fn mark_mail_thread_read(
+    app: AppHandle<Wry>, account_id: String, email_id: String,
+) -> Result<Vec<String>, String> {
+    if uuid::Uuid::parse_str(&email_id).is_err() { return Err("Invalid email ID".into()); }
+    let database = local_state::for_account(&app, &account_id).await?;
+    mail::ensure_visible(&database, account_id.clone(), Mailbox::Inbox, email_id.clone()).await?;
+    let ids = mail::mark_thread_read(&database, account_id.clone(), email_id).await?;
+    if !ids.is_empty() && app.emit("inbox-read", serde_json::json!({ "accountId": account_id, "emailIds": ids })).is_err() {
+        eprintln!("[WARN] Could not publish inbox read state");
+    }
+    Ok(ids)
+}
+
+#[tauri::command]
 pub async fn get_mail_thread(
     app: AppHandle<Wry>,
     account_id: String,
