@@ -8,15 +8,12 @@
     Italic as ItalicIcon,
     List as ListIcon,
     ListOrdered as ListOrderedIcon,
-    Paperclip,
   } from "@lucide/svelte";
-  import Button, { buttonVariants } from "../ui/button/button.svelte";
+  import Button from "../ui/button/button.svelte";
   import * as Popover from "$lib/components/ui/popover";
 
   import { cn } from "@/lib/utils";
   import Input from "../ui/input/input.svelte";
-  import { validateAttachmentFiles } from "$lib/shared/attachments";
-  import { toast } from "svelte-sonner";
 
   let element = $state<HTMLDivElement | null>(null);
   let editor = $state<Editor | null>(null);
@@ -26,7 +23,6 @@
     placeholder = "Write your email...",
     editable = true,
     disabled = false,
-    files = $bindable<File[]>([]),
     onchange,
     "aria-invalid": ariaInvalid,
   } = $props();
@@ -64,11 +60,8 @@
     isLink = editor.isActive("link");
   }
 
-  function handleOpenLinkPopover() {
-    // If there's already a link, prefill the input
-    const previousUrl = editor?.getAttributes("link").href || "";
-    linkUrl = previousUrl;
-    linkPopoverOpen = true;
+  function handleLinkPopoverChange(open: boolean) {
+    if (open) linkUrl = editor?.getAttributes("link").href || "";
   }
 
   function handleSetLink() {
@@ -144,7 +137,7 @@
 >
   {#if editor && editable}
     <!-- Toolbar -->
-    <div class="flex shrink-0 flex-wrap items-center gap-1 py-2">
+    <div class="flex shrink-0 flex-wrap items-center gap-1 py-2" role="group" aria-label="Text formatting">
       <Button
         type="button"
         variant="ghost"
@@ -191,19 +184,22 @@
       >
         <ListOrderedIcon class="size-4" />
       </Button>
-      <Popover.Root open={linkPopoverOpen}>
+      <Popover.Root bind:open={linkPopoverOpen} onOpenChange={handleLinkPopoverChange}>
         <Popover.Trigger>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            class={cn({
-              "bg-accent": isLink,
-            })}
-            onclick={handleOpenLinkPopover}
-          >
-            <LinkIcon class="size-4" />
-          </Button>
+          {#snippet child({ props })}
+            <Button
+              {...props}
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Insert link"
+              class={cn({
+                "bg-accent": isLink,
+              })}
+            >
+              <LinkIcon class="size-4" />
+            </Button>
+          {/snippet}
         </Popover.Trigger>
         <Popover.Content class="w-80">
           <div class="space-y-4">
@@ -249,38 +245,6 @@
           </div>
         </Popover.Content>
       </Popover.Root>
-      <label
-        class={buttonVariants({
-          variant: "ghost",
-          size: "icon-sm",
-        })}
-      >
-        <input
-          type="file"
-          name="files"
-          class="hidden"
-          multiple
-          accept="image/*,application/pdf,.pdf,
-            application/msword,
-            application/vnd.openxmlformats-officedocument.wordprocessingml.document,
-            application/vnd.ms-excel,
-            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,
-            application/vnd.ms-powerpoint,
-            application/vnd.openxmlformats-officedocument.presentationml.presentation"
-          onchange={(e) => {
-            const input = e.currentTarget as HTMLInputElement;
-            if (!input.files) return;
-
-            try {
-              const next = Array.from(new Set([...files, ...Array.from(input.files)]));
-              validateAttachmentFiles(next);
-              files = next;
-            } catch (error) { toast.error(error instanceof Error ? error.message : "Could not attach files"); }
-            finally { input.value = ""; }
-          }}
-        />
-        <Paperclip class="size-4" />
-      </label>
     </div>
   {/if}
 

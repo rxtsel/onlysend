@@ -47,6 +47,7 @@
   let composerEditor = $state<{ focus: () => boolean; getText: () => string } | null>(null);
   let content = $state<string>("");
   let files = $state<File[]>([]);
+  let fileInput = $state<HTMLInputElement | null>(null);
   let scheduleDialog = $state<{ open: () => void } | null>(null);
   let isScheduleEnabled = $state(false);
   let scheduledLocal = $state("");
@@ -403,6 +404,35 @@
             <ToggleGroup.Item value="bcc" onclick={() => (isBccEnabled = !isBccEnabled)}>Bcc</ToggleGroup.Item>
           </ToggleGroup.Root>
         </Field.Field>
+        <Button type="button" variant="outline" size="lg" class="rounded-md border-input bg-transparent px-3 shadow-xs hover:bg-accent" aria-label="Attach files" disabled={attachmentsDisabled} onclick={() => fileInput?.click()}>
+          <Paperclip class="size-4" aria-hidden="true" />Attach
+        </Button>
+        <input
+          bind:this={fileInput}
+          type="file"
+          name="files"
+          class="hidden"
+          multiple
+          disabled={attachmentsDisabled}
+          accept="image/*,application/pdf,.pdf,
+            application/msword,
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document,
+            application/vnd.ms-excel,
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,
+            application/vnd.ms-powerpoint,
+            application/vnd.openxmlformats-officedocument.presentationml.presentation"
+          onchange={(event) => {
+            const input = event.currentTarget;
+            if (!input.files || attachmentsDisabled) return;
+            try {
+              const next = Array.from(new Set([...files, ...Array.from(input.files)]));
+              validateAttachmentFiles(next);
+              files = next;
+              hasUserInput = true;
+            } catch (error) { toast.error(errorMessage(error, "Could not attach files")); }
+            finally { input.value = ""; }
+          }}
+        />
       </div>
       <div class="flex gap-3">
         <Field.Field data-invalid={!!errors.to} class="flex-1">
@@ -463,7 +493,6 @@
         <Editor
           bind:this={composerEditor}
           bind:content
-          bind:files
           onchange={() => { hasUserInput = true; }}
           disabled={isSending || checkingSend}
           aria-invalid={!!errors.content}
