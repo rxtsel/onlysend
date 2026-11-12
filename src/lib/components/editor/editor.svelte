@@ -8,12 +8,18 @@
     Italic as ItalicIcon,
     List as ListIcon,
     ListOrdered as ListOrderedIcon,
+    Quote,
+    Eraser,
+    ClipboardPaste,
+    Undo2,
+    Redo2,
   } from "@lucide/svelte";
   import Button from "../ui/button/button.svelte";
   import * as Popover from "$lib/components/ui/popover";
 
   import { cn } from "@/lib/utils";
   import Input from "../ui/input/input.svelte";
+  import { toast } from "svelte-sonner";
 
   let element = $state<HTMLDivElement | null>(null);
   let editor = $state<Editor | null>(null);
@@ -46,6 +52,10 @@
   let isBulletList = $state(false);
   let isOrderedList = $state(false);
   let isLink = $state(false);
+  let isBlockquote = $state(false);
+  let canUndo = $state(false);
+  let canRedo = $state(false);
+  let pasting = $state(false);
 
   // Popover link
   let linkPopoverOpen = $state(false);
@@ -58,6 +68,26 @@
     isBulletList = editor.isActive("bulletList");
     isOrderedList = editor.isActive("orderedList");
     isLink = editor.isActive("link");
+    isBlockquote = editor.isActive("blockquote");
+    canUndo = editor.can().undo();
+    canRedo = editor.can().redo();
+  }
+
+  async function pastePlainText() {
+    const current = editor;
+    if (!current || disabled || !editable || pasting) return;
+    pasting = true;
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text || current.isDestroyed || disabled || !editable) return;
+      const paragraphs = text.split(/\r\n|\r|\n/).map((line) => ({
+        type: "paragraph",
+        content: line ? [{ type: "text", text: line }] : [],
+      }));
+      current.chain().focus().insertContent(paragraphs).run();
+    } catch {
+      if (!current.isDestroyed) toast.error("Clipboard access is unavailable. Use Ctrl+Shift+V or ⌘+Shift+V to paste as plain text.");
+    } finally { pasting = false; }
   }
 
   function handleLinkPopoverChange(open: boolean) {
@@ -120,6 +150,7 @@
     });
 
     editor = inst;
+    updateActiveStates();
   });
 
   onDestroy(() => {
@@ -137,7 +168,8 @@
 >
   {#if editor && editable}
     <!-- Toolbar -->
-    <div class="flex shrink-0 flex-wrap items-center gap-1 py-2" role="group" aria-label="Text formatting">
+    <div class="flex shrink-0 items-start justify-between gap-3 py-2">
+      <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1" role="group" aria-label="Text formatting">
       <Button
         type="button"
         variant="ghost"
@@ -145,6 +177,9 @@
         class={cn({
           "bg-accent": isBold,
         })}
+        aria-label="Bold"
+        title="Bold"
+        aria-pressed={isBold}
         onclick={() => {
           editor?.chain().focus().toggleBold().run();
         }}
@@ -158,6 +193,9 @@
         class={cn({
           "bg-accent": isItalic,
         })}
+        aria-label="Italic"
+        title="Italic"
+        aria-pressed={isItalic}
         onclick={() => editor?.chain().focus().toggleItalic().run()}
       >
         <ItalicIcon class="size-4" />
@@ -169,6 +207,9 @@
         class={cn({
           "bg-accent": isBulletList,
         })}
+        aria-label="Bullet list"
+        title="Bullet list"
+        aria-pressed={isBulletList}
         onclick={() => editor?.chain().focus().toggleBulletList().run()}
       >
         <ListIcon class="size-4" />
@@ -180,6 +221,9 @@
         class={cn({
           "bg-accent": isOrderedList,
         })}
+        aria-label="Numbered list"
+        title="Numbered list"
+        aria-pressed={isOrderedList}
         onclick={() => editor?.chain().focus().toggleOrderedList().run()}
       >
         <ListOrderedIcon class="size-4" />
@@ -193,6 +237,8 @@
               variant="ghost"
               size="icon-sm"
               aria-label="Insert link"
+              title="Insert link"
+              aria-pressed={isLink}
               class={cn({
                 "bg-accent": isLink,
               })}
@@ -245,6 +291,24 @@
           </div>
         </Popover.Content>
       </Popover.Root>
+      <Button type="button" variant="ghost" size="icon-sm" aria-label="Quote" title="Quote" aria-pressed={isBlockquote} class={cn(isBlockquote && "bg-accent")} onclick={() => editor?.chain().focus().toggleBlockquote().run()}>
+        <Quote class="size-4" />
+      </Button>
+      <Button type="button" variant="ghost" size="icon-sm" aria-label="Clear formatting" title="Clear formatting" onclick={() => editor?.chain().focus().unsetAllMarks().clearNodes().run()}>
+        <Eraser class="size-4" />
+      </Button>
+      <Button type="button" variant="ghost" size="icon-sm" aria-label="Paste as plain text" title="Paste as plain text" disabled={pasting} onclick={pastePlainText}>
+        <ClipboardPaste class="size-4" />
+      </Button>
+      </div>
+      <div class="flex shrink-0 items-center gap-1" role="group" aria-label="Edit history">
+        <Button type="button" variant="ghost" size="icon-sm" aria-label="Undo" title="Undo" disabled={!canUndo} onclick={() => editor?.chain().focus().undo().run()}>
+          <Undo2 class="size-4" />
+        </Button>
+        <Button type="button" variant="ghost" size="icon-sm" aria-label="Redo" title="Redo" disabled={!canRedo} onclick={() => editor?.chain().focus().redo().run()}>
+          <Redo2 class="size-4" />
+        </Button>
+      </div>
     </div>
   {/if}
 
