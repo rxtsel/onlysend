@@ -5,7 +5,14 @@
   import { protectAppExit } from "$lib/features/auth/app-exit";
   import { toast } from "svelte-sonner";
   import { appearance, isDarkTheme } from "$lib/shared/appearance.svelte";
+  import { isFileDrag } from "$lib/shared/attachments";
   import "./layout.css";
+
+  function preventFileNavigation(event: DragEvent) {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+  }
 
   let { children } = $props();
   let systemDark = $state(false);
@@ -32,6 +39,8 @@
     document.documentElement.style.colorScheme = dark ? "dark" : "light";
   });
 </script>
+
+<svelte:window ondragover={preventFileNavigation} ondrop={preventFileNavigation} />
 
 <div class="contents" inert={exiting} aria-busy={exiting}>
   {@render children()}

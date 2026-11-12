@@ -13,14 +13,14 @@
   import type { Tag } from "@/lib/components/ui/input-tag/input-tag.svelte";
   import * as ToggleGroup from "$lib/components/ui/toggle-group";
   import { Editor } from "@/lib/components/editor";
-  import { LoaderCircle, TriangleAlert } from "@lucide/svelte";
+  import { LoaderCircle, Paperclip, TriangleAlert } from "@lucide/svelte";
   import Button from "@/lib/components/ui/button/button.svelte";
   import { emailComposerSchema } from "@/lib/schemas/email-composer.schema";
   import { toast } from "svelte-sonner";
   import { goto, beforeNavigate } from "$app/navigation";
   import { invoke } from "@tauri-apps/api/core";
   import type { FromEmail } from "@/lib/types";
-  import { encodeAttachments } from "$lib/shared/attachments";
+  import { encodeAttachments, isFileDrag, validateAttachmentFiles } from "$lib/shared/attachments";
   import { errorMessage } from "$lib/shared/utils/errors";
   import { cn } from "$lib/utils";
   import ComposerAttachments from "$lib/components/composer-attachments.svelte";
@@ -68,9 +68,39 @@
   let pendingCc = $state("");
   let pendingBcc = $state("");
 
+  let sent = $state(false);
+  let dragDepth = $state(0);
+  const attachmentsDisabled = $derived(isSending || checkingSend || confirmSend || sent);
+  $effect(() => { if (attachmentsDisabled) dragDepth = 0; });
+
+  function handleFileDrag(event: DragEvent) {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = attachmentsDisabled ? "none" : "copy";
+    if (event.type === "dragenter" && !attachmentsDisabled) dragDepth++;
+  }
+  function handleFileDrop(event: DragEvent) {
+    dragDepth = 0;
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (attachmentsDisabled || !event.dataTransfer) return;
+    try {
+      if (Array.from(event.dataTransfer.items).some((item) => item.kind === "file" && item.webkitGetAsEntry?.()?.isDirectory)) {
+        throw new Error("Drop files, not folders");
+      }
+      const dropped = Array.from(event.dataTransfer.files);
+      if (!dropped.length) throw new Error("No files could be attached");
+      const next = Array.from(new Set([...files, ...dropped]));
+      validateAttachmentFiles(next);
+      files = next;
+      hasUserInput = true;
+    } catch (error) { toast.error(errorMessage(error, "Could not attach files")); }
+  }
+
   let errors: Record<string, string> = $state({});
   let disposed = false;
-  let sent = $state(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let savedFields = "";
   let savedFiles: File[] = [];
@@ -312,6 +342,8 @@
   });
 </script>
 
+<svelte:window ondrop={() => { dragDepth = 0; }} ondragend={() => { dragDepth = 0; }} />
+
 {#if initializing}
   <div class="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground" role="status"><LoaderCircle class="size-4 animate-spin motion-reduce:animate-none" />{isReply ? "Preparing reply…" : "Loading composer…"}</div>
 {:else if initializationError}
@@ -321,12 +353,23 @@
   </div>
 {:else}
 <form
-  class="h-full w-full"
+  class="relative h-full w-full"
+  ondragentercapture={handleFileDrag}
+  ondragovercapture={handleFileDrag}
+  ondragleavecapture={() => { dragDepth = Math.max(0, dragDepth - 1); }}
+  ondropcapture={handleFileDrop}
   onsubmit={handleSubmit}
   oninput={() => { hasUserInput = true; }}
   id="compose-email-form"
   aria-busy={isSending || checkingSend}
 >
+  {#if dragDepth > 0}
+    <div class="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-primary bg-background/95 p-6 text-center" role="status">
+      <Paperclip class="size-7 text-primary" aria-hidden="true" />
+      <p class="text-sm font-medium">Drop files to attach</p>
+      <p class="text-xs text-muted-foreground">Up to 25 MB total</p>
+    </div>
+  {/if}
   <fieldset disabled={isSending || checkingSend} class="contents">
   <Field.Group class="h-full min-h-0 gap-0">
     <div class="flex shrink-0 flex-col gap-3 pb-4">

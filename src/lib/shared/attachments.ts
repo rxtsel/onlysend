@@ -52,6 +52,11 @@ export function formatAttachmentSize(bytes: number | null): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+export function isFileDrag(event: DragEvent): boolean {
+  const transfer = event.dataTransfer;
+  return !!transfer && (Array.from(transfer.types).includes("Files") || transfer.files.length > 0);
+}
+
 export function validateAttachmentFiles(files: readonly File[]): void {
   if (files.reduce((total, file) => total + file.size, 0) > MAX_ATTACHMENT_BYTES) {
     throw new Error("Attachments must total no more than 25 MB");
