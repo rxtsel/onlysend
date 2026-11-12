@@ -10,6 +10,7 @@ const probe = vi.hoisted(() => ({
   destroy: vi.fn(),
   getText: vi.fn(() => "Visible editor text"),
   setEditable: vi.fn(),
+  getAttributes: vi.fn(() => ({ href: "https://example.com" })),
 }));
 vi.mock("@tiptap/core", async (original) => ({
   ...await original<typeof import("@tiptap/core")>(),
@@ -22,6 +23,7 @@ vi.mock("@tiptap/core", async (original) => ({
     };
     destroy = probe.destroy;
     getText = probe.getText;
+    getAttributes = probe.getAttributes;
   },
 }));
 
@@ -42,6 +44,10 @@ test("updates toolbar state once per transaction and configures only StarterKit'
   const writer = frame.lastElementChild!;
   expect(writer.classList.contains("overflow-y-auto")).toBe(true);
   expect(writer.classList.contains("flex-1")).toBe(true);
+  const formatting = target.querySelector('[role="group"][aria-label="Text formatting"]')!;
+  expect(formatting.querySelector('[aria-label="Insert link"]')).not.toBeNull();
+  expect(target.querySelector('[aria-label="Attach files"]')).toBeNull();
+  expect(target.querySelector('input[type="file"]')).toBeNull();
   const options = probe.options!;
   expect(options.extensions?.map((extension) => extension.name)).toEqual(["starterKit", "placeholder"]);
   expect(options.extensions?.[0].options.link.openOnClick).toBe(false);
@@ -55,6 +61,26 @@ test("updates toolbar state once per transaction and configures only StarterKit'
   await unmount(instance);
   expect(probe.destroy).toHaveBeenCalledOnce();
   target.remove();
+});
+
+test.each(["", "https://example.com"])("the link popover opens on the first click, closes and reopens with URL '%s'", async (url) => {
+  probe.getAttributes.mockReturnValue({ href: url });
+  const target = document.createElement("div");
+  document.body.append(target);
+  const instance = mount(Editor, { target, props: { onchange: vi.fn() } });
+  try {
+    flushSync();
+    const trigger = target.querySelector<HTMLButtonElement>('[data-slot="popover-trigger"]')!;
+    expect(trigger.querySelector("button")).toBeNull();
+    flushSync(() => trigger.click());
+    await vi.waitFor(() => expect(document.querySelector<HTMLInputElement>('input[type="url"]')?.value).toBe(url));
+    flushSync(() => document.querySelector('input[type="url"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+    await vi.waitFor(() => expect(document.querySelector('input[type="url"]')).toBeNull());
+    flushSync(() => trigger.click());
+    await vi.waitFor(() => expect(document.querySelector<HTMLInputElement>('input[type="url"]')?.value).toBe(url));
+    flushSync(() => trigger.click());
+    await vi.waitFor(() => expect(document.querySelector('input[type="url"]')).toBeNull());
+  } finally { await unmount(instance); target.remove(); }
 });
 
 test("mounting and toggling editability never emit content changes, but typing does", async () => {
