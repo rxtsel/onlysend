@@ -6,11 +6,12 @@
   import MailAvatar from "$lib/components/mail-avatar.svelte";
   import { Badge } from "$lib/components/ui/badge";
   import { sentFailureLabel } from "$lib/shared/sent-status";
-  import { CircleAlert, EllipsisVertical, Reply, Trash2 } from "@lucide/svelte";
+  import { CalendarClock, CircleAlert, EllipsisVertical, Reply, Trash2 } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
   import * as ContextMenu from "$lib/components/ui/context-menu";
   import ConfirmDeleteMail from "$lib/components/confirm-delete-mail.svelte";
+  import ConfirmCancelScheduled from "$lib/components/confirm-cancel-scheduled.svelte";
 
   let { mail, mode, threadCount = 1, isActive = false, isUnread = false, isSelected = false, disabled = false, onclick, onreply, ondelete }: {
     mail: MailListItem;
@@ -27,14 +28,15 @@
   const address = $derived(mode === "inbox" ? mail.from : mail.to.join(", "));
   const name = $derived(address.split("<")[0].replaceAll('"', "").trim() || address);
   const senderName = $derived(mail.from.split("<")[0].replaceAll('"', "").trim() || mail.from);
-  const failureLabel = $derived(mode === "sent" ? sentFailureLabel(mail.lastEvent) : null);
+  const failureLabel = $derived(mode === "sent" ? (mail.lastEvent === "scheduled" ? "Scheduled" : sentFailureLabel(mail.lastEvent)) : null);
   const deleteLabel = $derived(mode === "drafts" ? "Delete draft" : threadCount > 1 ? "Delete this message from this device" : "Delete from this device");
   let deleting = $state(false);
   let confirmDelete = $state(false);
+  let confirmCancel = $state(false);
   $effect.pre(() => {
     const id = mail.id;
     // A refreshed thread row can represent a different message.
-    untrack(() => { confirmDelete = false; });
+    untrack(() => { confirmDelete = false; confirmCancel = false; });
   });
   async function deleteMessage() {
     if (deleting) return;
@@ -80,9 +82,10 @@
                 "group/failure h-4 gap-0 px-0.5 py-0 text-[10px] leading-4 [&_svg]:size-2.5",
                 mail.lastEvent === "suppressed" && "border-amber-600/20 bg-amber-500/10 text-amber-800 dark:border-amber-400/20 dark:text-amber-300",
                 mail.lastEvent === "canceled" && "border-border bg-muted/60 text-muted-foreground",
+                mail.lastEvent === "scheduled" && "border-blue-600/20 bg-blue-500/10 text-blue-700 dark:border-blue-400/20 dark:text-blue-300",
               )}
             >
-              <CircleAlert />
+              {#if mail.lastEvent === "scheduled"}<CalendarClock />{:else}<CircleAlert />{/if}
               <span class="grid grid-cols-[0fr] transition-[grid-template-columns] duration-200 ease-out delay-0 group-hover/failure:grid-cols-[1fr] group-hover/failure:delay-[125ms] group-focus-visible/mail:grid-cols-[1fr] group-focus-visible/mail:delay-0 motion-reduce:transition-none">
                 <span class="min-w-0 overflow-hidden"><span class="pl-1.5 pr-1">{failureLabel}</span></span>
               </span>
@@ -106,6 +109,9 @@
     {#if mode === "inbox"}
       <DropdownMenu.Item disabled={deleting || disabled} onSelect={() => onreply(mail.id)}><Reply />Reply</DropdownMenu.Item>
     {/if}
+    {#if mode === "sent" && (mail.lastEvent === "scheduled" || mail.lastEvent === "canceled")}
+      <DropdownMenu.Item disabled={deleting || disabled} onSelect={() => { confirmCancel = true; }}><CalendarClock />{mail.lastEvent === "canceled" ? "Restore to Drafts" : "Cancel scheduled send"}</DropdownMenu.Item>
+    {/if}
     <DropdownMenu.Item variant="destructive" disabled={deleting || disabled} onSelect={() => { confirmDelete = true; }}><Trash2 />{deleteLabel}</DropdownMenu.Item>
   </DropdownMenu.Content>
 </DropdownMenu.Root>
@@ -114,7 +120,11 @@
   {#if mode === "inbox"}
     <ContextMenu.Item disabled={deleting || disabled} onSelect={() => onreply(mail.id)}><Reply />Reply</ContextMenu.Item>
   {/if}
+  {#if mode === "sent" && (mail.lastEvent === "scheduled" || mail.lastEvent === "canceled")}
+    <ContextMenu.Item disabled={deleting || disabled} onSelect={() => { confirmCancel = true; }}><CalendarClock />{mail.lastEvent === "canceled" ? "Restore to Drafts" : "Cancel scheduled send"}</ContextMenu.Item>
+  {/if}
   <ContextMenu.Item variant="destructive" disabled={deleting || disabled} onSelect={() => { confirmDelete = true; }}><Trash2 />{deleteLabel}</ContextMenu.Item>
 </ContextMenu.Content>
 </ContextMenu.Root>
+{#if confirmCancel}<ConfirmCancelScheduled bind:open={confirmCancel} emailId={mail.id} subject={mail.subject} alreadyCanceled={mail.lastEvent === "canceled"} />{/if}
 <ConfirmDeleteMail bind:open={confirmDelete} draft={mode === "drafts"} subject={mail.subject} onConfirm={() => { void deleteMessage(); }} />

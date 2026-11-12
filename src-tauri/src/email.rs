@@ -29,6 +29,9 @@ pub struct EmailComposerData {
 
     pub content: String,
 
+    #[serde(rename = "scheduledAt")]
+    pub scheduled_at: Option<String>,
+
     #[serde(rename = "replyEmailId")]
     pub reply_email_id: Option<String>,
 
@@ -229,6 +232,16 @@ fn compose_email(
     let subject = reply.map_or(data.subject.as_str(), |reply| &reply.subject);
     let mut email = CreateEmailBaseOptions::new(data.from.as_str(), data.to.clone(), subject)
         .with_html(data.content.as_str());
+    if let Some(scheduled_at) = &data.scheduled_at {
+        let scheduled = chrono::DateTime::parse_from_rfc3339(scheduled_at)
+            .map_err(|_| "Invalid scheduled time")?;
+        let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+        let delay = scheduled.signed_duration_since(now);
+        if delay <= chrono::Duration::zero() || delay > chrono::Duration::days(30) {
+            return Err("Choose a future time within the next 30 days".into());
+        }
+        email = email.with_scheduled_at(scheduled_at);
+    }
     for cc in &data.cc {
         email = email.with_cc(cc.as_str());
     }
@@ -308,6 +321,23 @@ mod tests {
             "html":null,"text":"Original body", "attachments":[], "messageId":"<parent@example.com>",
             "references":"<root@example.com>\r\n\t<parent@example.com>"
         })).unwrap()
+    }
+
+    #[test]
+    fn scheduled_email_validates_time_and_serializes_for_resend() {
+        let mut data = draft();
+        let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+        for value in ["invalid".to_string(), (now - chrono::Duration::minutes(1)).to_rfc3339(), (now + chrono::Duration::days(31)).to_rfc3339()] {
+            data.scheduled_at = Some(value);
+            assert!(compose_email(&data, None).is_err());
+        }
+        let scheduled = (now + chrono::Duration::hours(1)).to_rfc3339();
+        data.scheduled_at = Some(scheduled.clone());
+        let payload = serde_json::to_value(compose_email(&data, None).unwrap()).unwrap();
+        assert_eq!(payload["scheduled_at"], scheduled);
+        data.scheduled_at = None;
+        let payload = serde_json::to_value(compose_email(&data, None).unwrap()).unwrap();
+        assert!(payload.get("scheduled_at").is_none_or(serde_json::Value::is_null));
     }
 
     fn draft() -> EmailComposerData {

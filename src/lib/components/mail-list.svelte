@@ -23,6 +23,7 @@
   import ConfirmDeleteMail from "$lib/components/confirm-delete-mail.svelte";
   import { emailAvatarSeed } from "$lib/shared/email-avatar";
   import { listDrafts, deleteDraft, draftListItem } from "$lib/shared/drafts";
+  import { getSentEmail } from "$lib/shared/sent";
   type ListMailbox = Mailbox | "drafts";
 
   let { mailbox, domain, active = true, class: className, onDomainsChange, onSelectMail, onArchiveStatusChange }: {
@@ -275,8 +276,25 @@
     finally { manualRefreshing = false; }
   }
 
+  let refreshingScheduled = false;
+  async function refreshScheduled() {
+    if (disposed || !active || mailbox !== "sent" || document.hidden || refreshingScheduled) return;
+    refreshingScheduled = true;
+    try {
+      for (const item of list.items.filter((mail) => mail.lastEvent === "scheduled")) {
+        if (disposed || !active || mailbox !== "sent") break;
+        try {
+          const detail = await getSentEmail(accountId, item.id, true);
+          if (!disposed && active && mailbox === "sent") item.lastEvent = detail.lastEvent;
+        } catch { /* Keep the last confirmed status while offline. */ }
+      }
+    } finally { refreshingScheduled = false; }
+  }
+
   onMount(() => {
     const cleanups: (() => void)[] = [];
+    const scheduledTimer = setInterval(() => { void refreshScheduled(); }, 60_000);
+    cleanups.push(() => clearInterval(scheduledTimer));
     function subscribe<T>(name: string, handler: (payload: T) => void) {
       void listen<T>(name, ({ payload }) => { if (!disposed) handler(payload); })
         .then((cleanup) => { if (disposed) cleanup(); else cleanups.push(cleanup); })
@@ -297,12 +315,18 @@
       list.clearItems();
       void list.refreshCached().catch(report);
     });
+    subscribe<{ accountId: string }>("scheduled-email-canceled", (event) => {
+      if (event.accountId !== accountId || !active || mailbox === "inbox") return;
+      selection.clear();
+      list.clearItems();
+      void list.refreshCached().catch(report);
+    });
     subscribe<{ accountId: string; emailId: string }>("inbox-read", (event) => {
       if (event.accountId !== accountId || mailbox !== "inbox") return;
       const item = list.items.find((mail) => mail.id === event.emailId);
       if (item) item.isRead = true;
     });
-    const visible = () => { if (!document.hidden && active) void refreshStatus(); };
+    const visible = () => { if (!document.hidden && active) { void refreshStatus(); void refreshScheduled(); } };
     const draftDeleted = (event: Event) => {
       if (mailbox !== "drafts" || !active || bulkDeleting || (event as CustomEvent).detail.accountId !== accountId) return;
       selection.clear();

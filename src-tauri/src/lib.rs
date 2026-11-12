@@ -167,6 +167,7 @@ pub fn run() {
             config::create_from_email,
             config::update_from_email,
             config::delete_from_email,
+            sent::cancel_scheduled_email,
             sent::get_sent_email
         ])
         .build(tauri::generate_context!())

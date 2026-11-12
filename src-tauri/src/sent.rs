@@ -8,7 +8,7 @@ use crate::oauth;
 use crate::permissions;
 use resend_rs::{ConfigBuilder, Resend};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Wry};
+use tauri::{AppHandle, Emitter, Wry};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,7 +40,8 @@ pub struct SentEmail {
 
 impl SentEmail {
     fn can_reuse(&self) -> bool {
-        self.body_format_version > 0 && (self.thread_id.is_some() || self.body_format_version >= 2)
+        self.last_event.as_deref() != Some("scheduled")
+            && self.body_format_version > 0 && (self.thread_id.is_some() || self.body_format_version >= 2)
     }
 }
 
@@ -255,6 +256,43 @@ mod tests {
     use crate::infrastructure::pagination_test_server::mock_history;
 
     #[test]
+    fn cancellation_only_stops_pending_mail_and_can_recover_an_already_canceled_send() {
+        assert_eq!(needs_cancellation(Some("scheduled")), Ok(true));
+        assert_eq!(needs_cancellation(Some("canceled")), Ok(false));
+        for event in [None, Some("sent"), Some("delivered"), Some("failed"), Some("future_event")] {
+            assert!(needs_cancellation(event).is_err());
+        }
+    }
+
+    #[test]
+    fn canceled_drafts_preserve_content_recipients_and_files_but_reset_scheduling() {
+        let remote: RemoteSentEmail = serde_json::from_value(serde_json::json!({
+            "id":"email-id", "from":"sender@example.com", "to":["to@example.com"], "subject":"Hello",
+            "created_at":"2026-01-01T00:00:00Z", "html":"<p>Original</p>", "last_event":"scheduled",
+            "cc":["cc@example.com"], "bcc":["bcc@example.com"], "reply_to":["reply@example.com"]
+        })).unwrap();
+        let draft = canceled_draft(remote, vec![crate::drafts::DraftAttachment {
+            filename: "note.txt".into(), content: "aGk=".into(), mime_type: "text/plain".into()
+        }]).unwrap();
+        let value = serde_json::to_value(&draft).unwrap();
+        assert_eq!(value["content"], "<p>Original</p>");
+        assert_eq!(value["to"][0], "to@example.com");
+        assert_eq!(value["cc"][0], "cc@example.com");
+        assert_eq!(value["bcc"][0], "bcc@example.com");
+        assert_eq!(value["replyTo"], "reply@example.com");
+        assert_eq!(value["attachments"][0]["content"], "aGk=");
+        assert_eq!(value["isScheduleEnabled"], false);
+        assert_eq!(value["scheduledLocal"], "");
+        assert!(crate::drafts::encode(draft).is_ok());
+        let remote: RemoteSentEmail = serde_json::from_value(serde_json::json!({
+            "id":"email-id", "from":"sender@example.com", "to":[], "subject":"Plain",
+            "created_at":"2026-01-01T00:00:00Z", "text":"<literal>&\nnext line"
+        })).unwrap();
+        let value = serde_json::to_value(canceled_draft(remote, vec![]).unwrap()).unwrap();
+        assert_eq!(value["content"], "<pre>&lt;literal&gt;&amp;\nnext line</pre>");
+    }
+
+    #[test]
     fn sent_reply_headers_map_to_the_oldest_message_in_the_conversation() {
         let email: RemoteSentEmail = serde_json::from_value(serde_json::json!({
             "id":"email-id", "from":"sender@example.test", "to":["recipient@example.test"],
@@ -270,7 +308,7 @@ mod tests {
 
     #[test]
     fn sent_responses_accept_suppressed_and_future_events_with_nullable_fields() {
-        for event in ["suppressed", "future_event", "delivered"] {
+        for event in ["suppressed", "future_event", "delivered", "scheduled"] {
             let value = serde_json::json!({
                 "id": "01a17f8f-b52b-7b2e-847a-609984c9bd58",
                 "from": "Support <support@example.com>",
@@ -287,6 +325,7 @@ mod tests {
             assert!(detail.html.is_none());
             assert_eq!(detail.text.as_deref(), Some("Plain text body"));
             assert_eq!(detail.last_event.as_deref(), Some(event));
+            assert_eq!(detail.can_reuse(), event != "scheduled");
             assert_eq!(serde_json::to_value(&detail).unwrap()["lastEvent"], event);
             assert!(detail.cc.is_empty());
             assert!(detail.bcc.is_empty());
@@ -379,21 +418,84 @@ mod tests {
     }
 }
 
+async fn fetch_sent_email(resend: &Resend, email_id: &str) -> Result<RemoteSentEmail, String> {
+    let mut url = reqwest::Url::parse(&format!("{}emails", resend.base_url()))
+        .map_err(|_| "Invalid Resend base URL")?;
+    url.path_segments_mut().map_err(|_| "Invalid Resend base URL")?.push(email_id);
+    sent_response(resend, resend.client().get(url), "Failed to fetch email").await
+}
+
+fn canceled_draft(email: RemoteSentEmail, attachments: Vec<crate::drafts::DraftAttachment>) -> Result<crate::drafts::DraftData, String> {
+    let content = email.html.unwrap_or_else(|| format!("<pre>{}</pre>", email.text.unwrap_or_default()
+        .replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")));
+    let cc = email.cc.unwrap_or_default();
+    let bcc = email.bcc.unwrap_or_default();
+    let reply_to = email.reply_to.unwrap_or_default().join(", ");
+    serde_json::from_value(serde_json::json!({
+        "from": email.from, "to": email.to, "subject": email.subject, "content": content,
+        "isCcEnabled": !cc.is_empty(), "cc": cc, "isBccEnabled": !bcc.is_empty(), "bcc": bcc,
+        "isReplyToEnabled": !reply_to.is_empty(), "replyTo": reply_to, "replyEmailId": null,
+        "pendingTo": "", "pendingCc": "", "pendingBcc": "", "attachments": attachments,
+        "isScheduleEnabled": false, "scheduledLocal": ""
+    })).map_err(|_| "Could not restore scheduled email".into())
+}
+
+fn needs_cancellation(event: Option<&str>) -> Result<bool, String> {
+    match event {
+        Some("scheduled") => Ok(true),
+        Some("canceled") => Ok(false), // Recover a cancellation that succeeded before a local save failed.
+        _ => Err("This email is no longer scheduled and cannot be canceled".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn cancel_scheduled_email(
+    app: AppHandle<Wry>,
+    account_id: String,
+    email_id: String,
+) -> Result<String, String> {
+    uuid::Uuid::parse_str(&email_id).map_err(|_| "Invalid email ID")?;
+    let database = local_state::for_account(&app, &account_id).await?;
+    let credential = oauth::get_account_credential(&app, &account_id).await?;
+    let resend = Resend::new(&credential);
+    let remote = tokio::time::timeout(std::time::Duration::from_secs(30), fetch_sent_email(&resend, &email_id))
+        .await.map_err(|_| "Could not check scheduled email: request timed out")??;
+    let needs_cancellation = needs_cancellation(remote.last_event.as_deref())?;
+    // Recover and validate every attachment before stopping the remote send.
+    let attachments = crate::attachments::sent_draft_attachments(app.clone(), account_id.clone(), email_id.clone(), &resend).await?;
+    let encoded = crate::drafts::encode(canceled_draft(remote, attachments)?)?;
+    crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
+    if needs_cancellation {
+        tokio::time::timeout(std::time::Duration::from_secs(30), resend.emails.cancel(&email_id))
+            .await.map_err(|_| "Cancellation timed out. Retry to check its status.")?
+            .map_err(|error| permissions::map_resend_error("Could not cancel scheduled email", error))?;
+    }
+    crate::infrastructure::credentials_store::account_credential(&app, &account_id)?;
+    crate::drafts::restore_canceled(&database, account_id.clone(), email_id.clone(), encoded).await
+        .map_err(|error| format!("Email canceled in Resend, but its draft could not be saved. Retry cancellation to recover it: {error}"))?;
+    if app.emit("scheduled-email-canceled", serde_json::json!({ "accountId": account_id, "emailId": email_id })).is_err() {
+        eprintln!("[WARN] Could not notify scheduled email cancellation");
+    }
+    Ok(email_id)
+}
+
 #[tauri::command]
 pub async fn get_sent_email(
     app: AppHandle<Wry>,
     account_id: String,
     email_id: String,
+    refresh: Option<bool>,
 ) -> Result<SentEmail, String> {
     let database = local_state::for_account(&app, &account_id).await?;
     mail::ensure_visible(&database, account_id.clone(), Mailbox::Sent, email_id.clone()).await?;
-    download_sent_email(app, account_id, email_id).await
+    download_sent_email(app, account_id, email_id, refresh.unwrap_or(false)).await
 }
 
 pub(crate) async fn download_sent_email(
     app: AppHandle<Wry>,
     account_id: String,
     email_id: String,
+    refresh: bool,
 ) -> Result<SentEmail, String> {
     let database = local_state::for_account(&app, &account_id).await?;
     let cached = mail::cached_detail(
@@ -410,7 +512,7 @@ pub(crate) async fn download_sent_email(
     .transpose()?;
     if let Some(detail) = cached
         .as_ref()
-        .filter(|detail| detail.can_reuse())
+        .filter(|detail| !refresh && detail.can_reuse())
     {
         return Ok(detail.clone());
     }
@@ -421,14 +523,7 @@ pub(crate) async fn download_sent_email(
 
         let resend = Resend::new(&credential);
 
-        // Get specific email by ID
-        let mut url = reqwest::Url::parse(&format!("{}emails", resend.base_url()))
-            .map_err(|_| "[ERROR] Invalid Resend base URL".to_string())?;
-        url.path_segments_mut()
-            .map_err(|_| "[ERROR] Invalid Resend base URL".to_string())?
-            .push(&email_id);
-        let email: RemoteSentEmail =
-            sent_response(&resend, resend.client().get(url), "Failed to fetch email").await?;
+        let email = fetch_sent_email(&resend, &email_id).await?;
 
         let search_text = email
             .text

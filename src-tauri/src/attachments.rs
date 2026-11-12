@@ -546,6 +546,32 @@ pub async fn list_email_attachments(
     Ok(items)
 }
 
+pub(crate) async fn sent_draft_attachments(
+    app: AppHandle<Wry>,
+    account_id: String,
+    email_id: String,
+    resend: &Resend,
+) -> Result<Vec<crate::drafts::DraftAttachment>, String> {
+    let items = list_email_attachments(app, account_id, Mailbox::Sent, email_id.clone()).await?;
+    let mut result = Vec::new();
+    let mut remaining = MAX_ATTACHMENT_BYTES;
+    for item in items {
+        let attachment = metadata(resend, Mailbox::Sent, &email_id, &item.id).await?;
+        let target = NamedTempFile::new().map_err(|_| "Could not prepare draft attachment")?;
+        let (cancel, _) = tokio::sync::watch::channel(false);
+        let progress = Channel::new(|_| Ok(()));
+        download(resend, Mailbox::Sent, &email_id, &item.id, attachment, &target, remaining, &cancel, &progress).await?;
+        let bytes = tokio::fs::read(target.path()).await.map_err(|_| "Could not read draft attachment")?;
+        remaining -= bytes.len() as u64;
+        result.push(crate::drafts::DraftAttachment {
+            filename: safe_filename(item.filename.as_deref()),
+            content: STANDARD.encode(bytes),
+            mime_type: item.content_type,
+        });
+    }
+    Ok(result)
+}
+
 #[tauri::command]
 pub fn cancel_attachment_download(
     state: State<'_, AttachmentTransfers>,

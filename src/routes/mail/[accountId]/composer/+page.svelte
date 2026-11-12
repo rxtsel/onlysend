@@ -24,6 +24,7 @@
   import { errorMessage } from "$lib/shared/utils/errors";
   import { cn } from "$lib/utils";
   import ComposerAttachments from "$lib/components/composer-attachments.svelte";
+  import ComposerSchedule from "$lib/components/composer-schedule.svelte";
   import { getContext, onMount, onDestroy, tick, untrack } from "svelte";
   import { listFromEmails, formatFromEmail } from "@/lib/shared/from-emails";
   import { createDraftWriter, getDraft, restoreDraftFiles, type DraftFields } from "$lib/shared/drafts";
@@ -46,6 +47,11 @@
   let composerEditor = $state<{ focus: () => boolean; getText: () => string } | null>(null);
   let content = $state<string>("");
   let files = $state<File[]>([]);
+  let scheduleDialog = $state<{ open: () => void } | null>(null);
+  let isScheduleEnabled = $state(false);
+  let scheduledLocal = $state("");
+  const scheduledLabel = $derived(scheduledLocal && Number.isFinite(new Date(scheduledLocal).getTime())
+    ? new Date(scheduledLocal).toLocaleString("en-US", { dateStyle: "full", timeStyle: "short" }) : "");
   let isSending = $state(false);
   let confirmSend = $state(false);
   let attachmentWarning = $state(false);
@@ -74,7 +80,7 @@
     return {
       from, to: toEmails.map((tag) => tag.text), cc: ccEmails.map((tag) => tag.text), bcc: bccEmails.map((tag) => tag.text),
       pendingTo, pendingCc, pendingBcc, subject, content, replyEmailId, replyTo,
-      isReplyToEnabled, isCcEnabled, isBccEnabled,
+      isReplyToEnabled, isCcEnabled, isBccEnabled, isScheduleEnabled, scheduledLocal,
     };
   }
   function hasChanges(data = snapshot(), selectedFiles = files): boolean {
@@ -121,6 +127,8 @@
   $effect(() => {
     composerStatus.ready = !initializing && !initializationError && !sent && !checkingSend;
     composerStatus.sending = isSending;
+    composerStatus.scheduled = isScheduleEnabled;
+    composerStatus.openSchedule = () => scheduleDialog?.open();
     composerStatus.saveState = saveState;
     composerStatus.discard = discard;
   });
@@ -132,6 +140,7 @@
     composerStatus.ready = false;
     composerStatus.sending = false;
     composerStatus.discard = undefined;
+    composerStatus.openSchedule = undefined;
   });
   beforeNavigate(({ cancel, to, willUnload, type, delta }) => {
     if ((isSending || checkingSend) && !sent) { cancel(); toast.error("Wait for the current operation to finish."); return; }
@@ -158,6 +167,11 @@
 
     errors = {};
     const form = event.currentTarget as HTMLFormElement;
+    const scheduledDate = new Date(scheduledLocal);
+    if (isScheduleEnabled && !Number.isFinite(scheduledDate.getTime())) {
+      errors.scheduledAt = "Choose a date and time";
+      return;
+    }
     const payload = {
       from, // already bound via Select
       to: toEmails.map((t) => t.text), // Tag[] -> string[]
@@ -167,6 +181,7 @@
       ...(isReplyToEnabled && replyTo.trim() ? { replyTo: replyTo.trim() } : {}),
       content,
       replyEmailId,
+      ...(isScheduleEnabled ? { scheduledAt: scheduledDate.toISOString() } : {}),
     };
 
     const parsed = emailComposerSchema.safeParse(payload);
@@ -196,7 +211,7 @@
 
     confirmSend = false;
     isSending = true;
-    const sendingToast = toast.loading("Sending message…");
+    const sendingToast = toast.loading(isScheduleEnabled ? "Scheduling message…" : "Sending message…");
     try {
       await saveNow();
       const attachments = await encodeAttachments(files);
@@ -207,7 +222,7 @@
       sent = true;
       clearTimeout(timer);
       try { await writer.remove(); }
-      catch { toast.error("Message sent, but its draft could not be removed. Delete it from Drafts; do not resend."); }
+      catch { toast.error("Message accepted by Resend, but its draft could not be removed. Delete it from Drafts; do not resend."); }
       // Reset form and states
       toEmails = [];
       from = "";
@@ -222,7 +237,7 @@
       bccEmails = [];
       form.reset();
 
-      toast.success("Email send successfully!");
+      toast.success(isScheduleEnabled ? `Email scheduled for ${scheduledLabel}` : "Email sent successfully!");
       // Bust the list cache so the sidebar shows the new email immediately
       window.dispatchEvent(new CustomEvent("email-sent"));
 
@@ -230,7 +245,7 @@
     } catch (err) {
       if (disposed) return;
       console.error(err);
-      toast.error(errorMessage(err, "Failed to send email. Please try again."));
+      toast.error(errorMessage(err, isScheduleEnabled ? "Failed to schedule email. Please try again." : "Failed to send email. Please try again."));
     } finally {
       toast.dismiss(sendingToast);
       if (!disposed) isSending = false;
@@ -271,6 +286,8 @@
         isReplyToEnabled = draft.isReplyToEnabled;
         isCcEnabled = draft.isCcEnabled;
         isBccEnabled = draft.isBccEnabled;
+        isScheduleEnabled = draft.isScheduleEnabled ?? false;
+        scheduledLocal = draft.scheduledLocal ?? "";
         files = restoreDraftFiles(draft.attachments);
         writer = createDraftWriter(accountId, draftId, [...files]);
       }
@@ -313,8 +330,8 @@
   <fieldset disabled={isSending || checkingSend} class="contents">
   <Field.Group class="h-full min-h-0 gap-0">
     <div class="flex shrink-0 flex-col gap-3 pb-4">
-      <div class="flex items-end gap-3">
-        <Field.Field data-invalid={!!errors.from} class="flex-1">
+      <div class="flex flex-wrap items-end gap-3">
+        <Field.Field data-invalid={!!errors.from} class="min-w-[180px] flex-1">
           <Field.Label for="from">From</Field.Label>
           <Select.Root type="single" name="from" bind:value={from}>
             <Select.Trigger class="w-[180px]" id="from" aria-invalid={!!errors.from}>
@@ -396,6 +413,7 @@
           {#if errors.subject}<Field.Error>{errors.subject}</Field.Error>{/if}
       </Field.Field>
     </div>
+    <ComposerSchedule bind:this={scheduleDialog} bind:enabled={isScheduleEnabled} bind:local={scheduledLocal} error={errors.scheduledAt} onchange={() => { hasUserInput = true; errors.scheduledAt = ""; }} />
     <Field.Field data-invalid={!!errors.content} class="min-h-0 flex-1 gap-0 border-t pt-2">
       <Field.Label for="content" class="sr-only">Content</Field.Label>
       <div class="flex h-full min-h-0 flex-col gap-3">
@@ -424,16 +442,21 @@
     <AlertDialog.Header>
       <AlertDialog.Title class="flex items-center gap-2">
         {#if attachmentWarning}<TriangleAlert class="size-5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />{/if}
-        {attachmentWarning ? "Missing an attachment?" : "Send this message?"}
+        {attachmentWarning ? "Missing an attachment?" : isScheduleEnabled ? "Schedule this message?" : "Send this message?"}
       </AlertDialog.Title>
       <AlertDialog.Description>
-        {attachmentWarning ? "Your message appears to mention an attachment, but no files have been added. Send it without attachments?" : "Once sent, this message cannot be recalled."}
+        {#if isScheduleEnabled}
+          Resend will send this message on {scheduledLabel} ({Intl.DateTimeFormat().resolvedOptions().timeZone}), even if OnlySend is closed. You can cancel or reschedule it in the Resend dashboard.
+          {#if attachmentWarning}Your message appears to mention an attachment, but no files have been added.{/if}
+        {:else}
+          {attachmentWarning ? "Your message appears to mention an attachment, but no files have been added. Send it without attachments?" : "Once sent, this message cannot be recalled."}
+        {/if}
       </AlertDialog.Description>
     </AlertDialog.Header>
     <AlertDialog.Footer>
       <AlertDialog.Cancel>Keep editing</AlertDialog.Cancel>
       <AlertDialog.Action form="compose-email-form" type="submit" name="confirm-send" disabled={isSending}>
-        {attachmentWarning ? "Send anyway" : "Send message"}
+        {isScheduleEnabled ? (attachmentWarning ? "Schedule anyway" : "Schedule message") : attachmentWarning ? "Send anyway" : "Send message"}
       </AlertDialog.Action>
     </AlertDialog.Footer>
   </AlertDialog.Content>

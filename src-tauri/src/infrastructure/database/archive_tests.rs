@@ -15,6 +15,25 @@ fn message(id: &str, subject: &str, date: &str) -> Value {
     json!({"id":id,"subject":subject,"createdAt":date,"from":"Sender <sender@remote.example>","to":["recipient@header.example"],"domains":["a.example","b.example"],"domain":"a.example"})
 }
 #[tokio::test]
+async fn refreshed_sent_delivery_status_replaces_scheduled_only_in_its_own_account_and_mailbox() {
+    let temporary = TemporaryDatabase::new();
+    let database = temporary.database();
+    let mut item = message("email", "Scheduled", "2026-01-01T00:00:00Z");
+    item["lastEvent"] = json!("scheduled");
+    let page = email_page(vec![item], false, None, |item| item["id"].as_str().unwrap()).unwrap();
+    for (account, mailbox) in [("a", Mailbox::Sent), ("b", Mailbox::Sent), ("a", Mailbox::Inbox)] {
+        mail::store_page(&database, account.into(), mailbox, 12, None, &page).await.unwrap();
+    }
+    mail::store_detail(&database, "a".into(), Mailbox::Sent, "email".into(), &json!({"lastEvent":"delivered"}), "body".into()).await.unwrap();
+    let events = database.run(|connection| {
+        let mut query = connection.prepare("SELECT json_extract(metadata_json,'$.lastEvent') FROM emails ORDER BY account_id,mailbox")?;
+        let rows = query.query_map([], |row| row.get::<_, String>(0))?;
+        rows.collect::<Result<Vec<_>, _>>()
+    }).await.unwrap();
+    assert_eq!(events, ["scheduled", "delivered", "scheduled"]);
+}
+
+#[tokio::test]
 async fn attachment_metadata_is_account_scoped_and_does_not_replace_original_bodies() {
     let temporary = TemporaryDatabase::new();
     let database = temporary.database();

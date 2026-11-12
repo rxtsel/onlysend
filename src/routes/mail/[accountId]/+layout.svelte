@@ -6,9 +6,10 @@
   import { deleteLocalMail } from "$lib/shared/services/delete-mail";
   import ConfirmDeleteMail from "$lib/components/confirm-delete-mail.svelte";
   import * as Tooltip from "$lib/components/ui/tooltip";
+  import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
   import { setContext, untrack } from "svelte";
   import { COMPOSER_STATUS, type ComposerStatus } from "$lib/features/sending/composer-context";
-  import { ArrowLeft, Reply, Send, LoaderCircle, Trash2, SquarePen } from "@lucide/svelte";
+  import { ArrowLeft, Reply, Send, ChevronDown, CalendarClock, LoaderCircle, Trash2, SquarePen } from "@lucide/svelte";
   import AppSidebar from "$lib/components/app-sidebar.svelte";
   import MailList from "$lib/components/mail-list.svelte";
   import MailStatusFooter from "$lib/components/mail-status-footer.svelte";
@@ -77,9 +78,11 @@
     untrack(() => { domain = null; domains = []; });
   });
   let confirmDiscard = $state(false);
+  let openingSchedule = false;
+  let sendOptionsTrigger = $state<HTMLButtonElement | null>(null);
   $effect.pre(() => {
     accountId; isComposer; composerKey;
-    untrack(() => { confirmDiscard = false; composerStatus.ready = false; composerStatus.sending = false; composerStatus.saveState = undefined; composerStatus.discard = undefined; });
+    untrack(() => { confirmDiscard = false; composerStatus.ready = false; composerStatus.sending = false; composerStatus.scheduled = false; composerStatus.openSchedule = undefined; composerStatus.saveState = undefined; composerStatus.discard = undefined; });
   });
   let archiveFooter = $state<ArchiveFooterSnapshot | null>(null);
   const footerData = $derived(selectArchiveFooter(archiveFooter, accountId, isDrafts ? "drafts" : mailbox));
@@ -135,7 +138,25 @@
                 </AlertDialog.Footer>
               </AlertDialog.Content>
             </AlertDialog.Root>
-            <Button form="compose-email-form" type="submit" disabled={!composerStatus.ready || composerStatus.sending}><Send /> {composerStatus.sending ? "Sending…" : "Send"}</Button>
+            <div class="inline-flex" role="group" aria-label="Send message">
+              <Button form="compose-email-form" type="submit" class="rounded-r-none" disabled={!composerStatus.ready || composerStatus.sending}>{#if composerStatus.scheduled}<CalendarClock />{:else}<Send />{/if} {composerStatus.sending ? (composerStatus.scheduled ? "Scheduling…" : "Sending…") : composerStatus.scheduled ? "Schedule" : "Send"}</Button>
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger>
+                  {#snippet child({ props })}
+                    <Button {...props} bind:ref={sendOptionsTrigger} type="button" size="icon" class="rounded-l-none border-l-primary-foreground/25" aria-label="Send options" disabled={!composerStatus.ready || composerStatus.sending}><ChevronDown /></Button>
+                  {/snippet}
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Content align="end" onCloseAutoFocus={(event) => {
+                  if (!openingSchedule) return;
+                  openingSchedule = false;
+                  event.preventDefault();
+                  sendOptionsTrigger?.focus();
+                  composerStatus.openSchedule?.();
+                }}>
+                  <DropdownMenu.Item onSelect={() => { openingSchedule = true; }}><CalendarClock />{composerStatus.scheduled ? "Edit schedule" : "Schedule send"}</DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Root>
+            </div>
           {:else}
             <Button href={mailUrl(accountId, isDrafts ? "drafts" : mailbox)} variant="ghost" size="icon" class="lg:hidden" aria-label="Back to messages"><ArrowLeft /></Button>
             <h1 class="min-w-0 flex-1 break-words text-base font-semibold leading-7 tracking-tight" aria-busy={isDetail && !detailSubject}>

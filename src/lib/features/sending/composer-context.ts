@@ -3,6 +3,8 @@ export const COMPOSER_STATUS = Symbol("composer-status");
 export interface ComposerStatus {
   ready: boolean;
   sending: boolean;
+  scheduled?: boolean;
+  openSchedule?: () => void;
   saveState?: string;
   discard?: () => Promise<void>;
 }

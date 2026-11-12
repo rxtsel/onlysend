@@ -22,16 +22,20 @@ pub struct DraftData {
     is_reply_to_enabled: bool,
     is_cc_enabled: bool,
     is_bcc_enabled: bool,
+    #[serde(default)]
+    is_schedule_enabled: bool,
+    #[serde(default)]
+    scheduled_local: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     attachments: Option<Vec<DraftAttachment>>,
 }
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct DraftAttachment {
-    filename: String,
-    content: String,
-    mime_type: String,
+pub(crate) struct DraftAttachment {
+    pub(crate) filename: String,
+    pub(crate) content: String,
+    pub(crate) mime_type: String,
 }
 
 #[derive(Serialize)]
@@ -51,7 +55,7 @@ fn validate_id(id: &str) -> Result<(), String> {
         .map_err(|_| "Invalid draft ID".into())
 }
 
-fn encode(mut data: DraftData) -> Result<(String, Option<String>), String> {
+pub(crate) fn encode(mut data: DraftData) -> Result<(String, Option<String>), String> {
     if let Some(id) = &data.reply_email_id {
         uuid::Uuid::parse_str(id).map_err(|_| "Invalid reply ID")?;
     }
@@ -132,6 +136,27 @@ async fn delete(database: &Database, account: String, id: String) -> Result<(), 
         .await
 }
 
+/// Publishing the recovered draft and hiding the canceled Sent copy is atomic.
+pub(crate) async fn restore_canceled(
+    database: &Database,
+    account: String,
+    email_id: String,
+    encoded: (String, Option<String>),
+) -> Result<(), String> {
+    let (json, attachments) = encoded;
+    database.run(move |connection| {
+        let tx = connection.transaction()?;
+        tx.execute("INSERT OR IGNORE INTO account_state VALUES (?1)", [&account])?;
+        // The remote ID makes retries idempotent without overwriting later user edits.
+        let inserted = tx.execute("INSERT OR IGNORE INTO drafts(account_id,draft_id,data_json,updated_at) VALUES (?1,?2,?3,CAST(unixepoch('subsec')*1000 AS INTEGER))", params![account,email_id,json])?;
+        if inserted > 0 {
+            tx.execute("INSERT INTO draft_attachments VALUES (?1,?2,?3)", params![account,email_id,attachments.unwrap_or_else(|| "[]".into())])?;
+        }
+        tx.execute("INSERT OR IGNORE INTO deleted_emails VALUES (?1,'sent',?2)", params![account,email_id])?;
+        tx.commit()
+    }).await
+}
+
 #[tauri::command]
 pub async fn save_draft(
     app: AppHandle<Wry>,
@@ -192,6 +217,29 @@ pub async fn list_drafts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cancellation_restoration_is_atomic_scoped_and_does_not_overwrite_edited_drafts() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = Database::new(directory.path().join("restore.sqlite3"));
+        let encoded = || (r#"{"content":"original"}"#.to_string(), Some(r#"[{"filename":"note.txt","content":"aGk=","mimeType":"text/plain"}]"#.to_string()));
+        database.run(|connection| connection.execute_batch("INSERT INTO account_state VALUES ('a'),('b'); CREATE TRIGGER reject_restore BEFORE INSERT ON deleted_emails BEGIN SELECT RAISE(ABORT,'disk full'); END;")).await.unwrap();
+        assert!(restore_canceled(&database, "a".into(), "email".into(), encoded()).await.is_err());
+        assert!(get(&database, "a".into(), "email".into()).await.unwrap().is_none());
+        database.run(|connection| connection.execute_batch("DROP TRIGGER reject_restore")).await.unwrap();
+        restore_canceled(&database, "a".into(), "email".into(), encoded()).await.unwrap();
+        let value: serde_json::Value = serde_json::from_str(&get(&database, "a".into(), "email".into()).await.unwrap().unwrap()).unwrap();
+        assert_eq!(value["content"], "original");
+        assert_eq!(value["attachments"][0]["filename"], "note.txt");
+        assert!(get(&database, "b".into(), "email".into()).await.unwrap().is_none());
+        assert!(crate::infrastructure::database::mail::ensure_visible(&database, "a".into(), crate::infrastructure::database::mail::Mailbox::Sent, "email".into()).await.is_err());
+        assert!(crate::infrastructure::database::mail::ensure_visible(&database, "b".into(), crate::infrastructure::database::mail::Mailbox::Sent, "email".into()).await.is_ok());
+        save(&database, "a".into(), "email".into(), r#"{"content":"user edit"}"#.into(), None).await.unwrap();
+        restore_canceled(&database, "a".into(), "email".into(), encoded()).await.unwrap();
+        let value: serde_json::Value = serde_json::from_str(&get(&database, "a".into(), "email".into()).await.unwrap().unwrap()).unwrap();
+        assert_eq!(value["content"], "user edit");
+        assert_eq!(value["attachments"][0]["content"], "aGk=");
+    }
 
     async fn content(database: &Database, account: &str) -> Option<String> {
         get(database, account.into(), "same".into())

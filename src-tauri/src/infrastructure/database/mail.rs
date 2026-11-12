@@ -428,6 +428,9 @@ pub(crate) async fn store_detail<T: Serialize>(
         tx.execute("INSERT OR IGNORE INTO account_state VALUES (?1)", [&account_id])?;
         tx.execute("INSERT INTO email_bodies VALUES (?1,?2,?3,?4,?5,unixepoch()) ON CONFLICT(account_id,mailbox,email_id) DO UPDATE SET detail_json=excluded.detail_json,search_text=excluded.search_text,downloaded_at=excluded.downloaded_at", params![account_id,mailbox.as_str(),email_id,json,search_text])?;
         tx.execute("UPDATE emails SET search_body=?4 WHERE account_id=?1 AND mailbox=?2 AND email_id=?3", params![account_id,mailbox.as_str(),email_id,search_text])?;
+        if mailbox == Mailbox::Sent {
+            tx.execute("UPDATE emails SET metadata_json=json_set(metadata_json,'$.lastEvent',json_extract(?4,'$.lastEvent')) WHERE account_id=?1 AND mailbox=?2 AND email_id=?3 AND json_type(?4,'$.lastEvent') IS NOT NULL", params![account_id,mailbox.as_str(),email_id,json])?;
+        }
         if let Some(thread_id) = detail_thread_id(mailbox.as_str(), &json) {
             write_thread_link(&tx, &account_id, mailbox.as_str(), &email_id, &thread_id, false)?;
         }

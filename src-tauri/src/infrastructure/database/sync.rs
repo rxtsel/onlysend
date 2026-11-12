@@ -220,7 +220,7 @@ async fn scan(
                     crate::inbound::get_inbound_email(app.clone(), account.to_string(), id, false).await?;
                 }
                 Mailbox::Sent => {
-                    crate::sent::download_sent_email(app.clone(), account.to_string(), id).await?;
+                    crate::sent::download_sent_email(app.clone(), account.to_string(), id, false).await?;
                 }
             }
             Ok::<_, String>(())

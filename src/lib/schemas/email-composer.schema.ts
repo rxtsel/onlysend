@@ -7,6 +7,10 @@ export const emailComposerSchema = z.object({
   cc: z.array(z.email()).optional(),
   bcc: z.array(z.email()).optional(),
   replyTo: z.email().optional(),
+  scheduledAt: z.iso.datetime({ offset: true }).refine((value) => {
+    const delay = Date.parse(value) - Date.now();
+    return delay > 0 && delay <= 30 * 24 * 60 * 60 * 1000;
+  }, "Choose a future time within the next 30 days").optional(),
   content: z.string().nonempty("Content is required"),
   files: z.any().optional(), // Only ui
   replyEmailId: z.uuid().optional().nullable(),

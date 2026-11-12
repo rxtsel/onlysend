@@ -18,6 +18,8 @@ export interface DraftFields {
   isReplyToEnabled: boolean;
   isCcEnabled: boolean;
   isBccEnabled: boolean;
+  isScheduleEnabled?: boolean;
+  scheduledLocal?: string;
 }
 export interface DraftData extends DraftFields { attachments: AttachmentPayload[] }
 export interface DraftSummary { id: string; subject: string; from: string; to: string[]; preview: string; updatedAt: number }
