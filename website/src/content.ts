@@ -20,8 +20,8 @@ export const content = {
     features: [
       { icon: 'accounts', title: 'Separate accounts', text: 'Switch between Resend accounts, each with its own mail and settings.' },
       { icon: 'domain', title: 'Your domain and sender addresses', text: 'Use a domain you already own. Manage domains, sender addresses, and DNS configuration from the app.' },
-      { icon: 'compose', title: 'An editor for everyday email', text: 'Write rich-text emails with attachments, CC, BCC, and Reply-To, instead of composing API requests.' },
-      { icon: 'inbox', title: 'An archive on your computer', text: 'Downloaded messages stay in your local archive, even if they disappear from Resend’s lists. Receiving is optional.' },
+      { icon: 'compose', title: 'An editor for everyday email', text: 'Write rich-text emails with attachments, CC, BCC, and Reply-To. Drafts save automatically; schedule or cancel sends, reply, and get a reminder if you mention an attachment but forget to add one.' },
+      { icon: 'inbox', title: 'An archive on your computer', text: 'Downloaded messages stay available offline, even if they disappear from Resend’s lists. Receiving is optional. Select and delete multiple emails locally, with undo.' },
     ],
     comparisonKicker: 'WHY THIS PROJECT EXISTS',
     comparisonHeading: 'Sometimes you just need to send email from your domain.',
@@ -74,8 +74,8 @@ export const content = {
     features: [
       { icon: 'accounts', title: 'Cuentas separadas', text: 'Cambia entre cuentas de Resend, cada una con su correo y sus ajustes.' },
       { icon: 'domain', title: 'Tu dominio y tus remitentes', text: 'Usa un dominio que ya tengas. Gestiona los dominios, remitentes y la configuración DNS desde la aplicación.' },
-      { icon: 'compose', title: 'Un editor para el correo de cada día', text: 'Escribe correos con formato, adjuntos, CC, CCO y Reply-To en lugar de redactar peticiones a una API.' },
-      { icon: 'inbox', title: 'Un archivo en tu equipo', text: 'Los mensajes descargados se quedan en tu archivo local, aunque desaparezcan de las listas de Resend. La recepción es opcional.' },
+      { icon: 'compose', title: 'Un editor para el correo de cada día', text: 'Escribe correos con formato, adjuntos, CC, CCO y Reply-To. Los borradores se guardan automáticamente; programa o cancela envíos, responde y recibe un aviso si mencionas un adjunto pero olvidas añadirlo.' },
+      { icon: 'inbox', title: 'Un archivo en tu equipo', text: 'Los mensajes descargados se pueden leer sin conexión, aunque desaparezcan de las listas de Resend. La recepción es opcional. Selecciona y elimina varios correos localmente, con opción de deshacer.' },
     ],
     comparisonKicker: 'POR QUÉ EXISTE ESTE PROYECTO',
     comparisonHeading: 'A veces solo necesitas enviar desde tu dominio.',

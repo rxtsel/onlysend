@@ -29,11 +29,13 @@ changes and may redirect existing mail; review the instructions before changing 
 ## Features
 
 - [x] Multiple accounts, domains, and sender addresses.
-- [x] Rich-text messages with attachments, CC, and BCC.
+- [x] Rich-text messages with attachments, CC, BCC, and Reply-To.
+- [x] Automatically saved drafts; schedule or cancel sends (delivery works with the app closed).
+- [x] A reminder if you mention an attachment but forget to add one.
 - [x] Sent mail, an optional inbox, and replies.
 - [x] Search saved mail and filter by domain.
 - [x] Read downloaded messages offline.
-- [x] Delete emails locally with undo.
+- [x] Select and delete multiple emails locally, with undo.
 - [x] Preview images, open supported attachments, or save them.
 - [x] Configurable inbox checks and notifications while the app is running.
 - [x] Light, dark, and system themes, with customizable avatars.
