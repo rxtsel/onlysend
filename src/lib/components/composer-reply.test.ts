@@ -59,10 +59,66 @@ function body(value: string) {
   flushSync(() => { editor.value = value; editor.dispatchEvent(new Event("input", { bubbles: true })); });
 }
 
+function clickButton(label: string) {
+  flushSync(() => Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === label)!.click());
+}
+function setScheduleTime(value: string) {
+  flushSync(() => {
+    const time = document.querySelector<HTMLInputElement>("#schedule-time")!;
+    time.value = value;
+    time.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+test("calendar and time picker schedule in local time and persist the selection", async () => {
+  open();
+  await ready();
+  body("<p>Scheduled reply</p>");
+  expect(document.querySelector("#schedule-date")).toBeNull();
+  clickButton("Schedule send");
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+  clickButton("Save schedule");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Choose a date and time");
+  expect(invoke).not.toHaveBeenCalledWith("send_email", expect.anything());
+  flushSync(() => document.querySelector<HTMLButtonElement>("#schedule-date")!.click());
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const date = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
+  await vi.waitFor(() => expect(document.querySelector(`[data-calendar-day][data-value="${date}"]`)).not.toBeNull());
+  flushSync(() => document.querySelector<HTMLElement>(`[data-calendar-day][data-value="${date}"]`)!.click());
+  setScheduleTime("14:30:45");
+  expect(document.querySelector<HTMLInputElement>("#schedule-time")?.value).toBe("14:30:45");
+  clickButton("Save schedule");
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+  await vi.mocked(registerDraftGuard).mock.calls[0][2]!();
+  expect(invoke).toHaveBeenCalledWith("save_draft", expect.objectContaining({ data: expect.objectContaining({ isScheduleEnabled: true, scheduledLocal: `${date}T14:30:45` }) }));
+  submit();
+  await vi.waitFor(() => expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("Schedule this message?"));
+  expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("Resend dashboard");
+  await confirmSend();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", expect.objectContaining({ data: expect.objectContaining({ scheduledAt: new Date(`${date}T14:30:45`).toISOString() }) })));
+});
+
+test("canceling the schedule dialog leaves immediate sending unchanged", async () => {
+  open();
+  await ready();
+  body("<p>Send now</p>");
+  clickButton("Schedule send");
+  await vi.waitFor(() => expect(document.querySelector("#schedule-time")).not.toBeNull());
+  setScheduleTime("17:00:00");
+  clickButton("Cancel");
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+  expect(target.querySelector("#schedule-date")).toBeNull();
+  submit();
+  await confirmSend();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", expect.objectContaining({ data: expect.not.objectContaining({ scheduledAt: expect.anything() }) })));
+});
+
 test("reply reuses the composer, locks its subject and chooses the matching sender", async () => {
   open();
   expect(target.querySelector("[data-composer-ready]")?.textContent).toBe("false");
   await ready();
+  expect(target.querySelector("form")?.textContent).not.toContain("Schedule send");
   expect(prepareReply).toHaveBeenCalledExactlyOnceWith("account-a", emailId);
   expect(input("#subject").value).toBe("Re: Invoice");
   expect(input("#subject").readOnly).toBe(true);
@@ -479,6 +535,38 @@ test("reopens a persisted draft with all fields and attachments without creating
   body("<p>Only text changed</p>");
   await vi.mocked(registerDraftGuard).mock.calls[0][2]!();
   expect(invoke).toHaveBeenLastCalledWith("save_draft", expect.objectContaining({ draftId: emailId, data: expect.not.objectContaining({ attachments: expect.anything() }) }));
+});
+
+test("restores a scheduled draft and rejects a date that expired while it was closed", async () => {
+  pageState.url = new URL(`https://app.test/mail/account-a/composer?draft=${emailId}`);
+  vi.mocked(invoke).mockResolvedValueOnce({
+    from: "Me <me@example.com>", to: ["to@example.com"], cc: [], bcc: [],
+    pendingTo: "", pendingCc: "", pendingBcc: "", subject: "Scheduled draft", content: "<p>Saved body</p>",
+    replyEmailId: null, replyTo: "", isReplyToEnabled: false, isCcEnabled: false, isBccEnabled: false,
+    isScheduleEnabled: true, scheduledLocal: "2020-01-01T14:30", attachments: [],
+  });
+  open();
+  await ready();
+  clickButton("Scheduled");
+  await vi.waitFor(() => expect(document.querySelector("#schedule-date")?.textContent).toContain("Jan 1, 2020"));
+  expect(document.querySelector<HTMLInputElement>("#schedule-time")?.value).toBe("14:30");
+  setScheduleTime("18:00:00");
+  clickButton("Cancel");
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+  clickButton("Scheduled");
+  await vi.waitFor(() => expect(document.querySelector<HTMLInputElement>("#schedule-time")?.value).toBe("14:30"));
+  clickButton("Cancel");
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+  submit();
+  expect(target.textContent).toContain("Choose a future time within the next 30 days");
+  expect(invoke).not.toHaveBeenCalledWith("send_email", expect.anything());
+  clickButton("Scheduled");
+  await vi.waitFor(() => expect(document.querySelector("#schedule-time")).not.toBeNull());
+  clickButton("Send now instead");
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+  submit();
+  await confirmSend();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("send_email", expect.objectContaining({ data: expect.not.objectContaining({ scheduledAt: expect.anything() }) })));
 });
 
 test("discard removes the draft and never saves it again on unmount", async () => {

@@ -127,6 +127,26 @@ test("the header Send button shows a single English attachment warning before se
   expect(document.querySelector('[role="alertdialog"]')).toBeNull();
 });
 
+test("the split Send button opens scheduling from its dropdown and restores focus on cancel", async () => {
+  pageState.url = new URL(`https://app.test/mail/account-a/composer?reply=${emailId}`);
+  pageState.params.id = undefined;
+  vi.mocked(prepareReply).mockResolvedValueOnce({ to: ["recipient@example.com"], subject: "Re: Invoice", fromCandidates: [] });
+  instance = mount(Layout, { target, props: { composer: true } });
+  await vi.waitFor(() => expect(target.querySelector<HTMLTextAreaElement>("textarea")).not.toBeNull());
+  const options = target.querySelector<HTMLButtonElement>('[aria-label="Send options"]')!;
+  expect(options.closest('[role="group"]')?.getAttribute("aria-label")).toBe("Send message");
+  expect(target.querySelector("form")?.textContent).not.toContain("Schedule send");
+  flushSync(() => options.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+  await vi.waitFor(() => expect(document.querySelector('[role="menuitem"]')?.textContent).toContain("Schedule send"));
+  flushSync(() => document.querySelector<HTMLElement>('[role="menuitem"]')!.click());
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+  expect(document.querySelector<HTMLInputElement>("#schedule-time")?.type).toBe("time");
+  expect(document.querySelector("#schedule-time")?.getAttribute("step")).toBe("1");
+  expect(invoke).not.toHaveBeenCalledWith("send_email", expect.anything());
+  flushSync(() => Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Cancel")!.click());
+  await vi.waitFor(() => expect(document.activeElement).toBe(options));
+});
+
 test("Send is disabled until reply preparation finishes, with a back link to the original", async () => {
   let resolve!: (context: ReplyContext) => void;
   vi.mocked(prepareReply).mockReturnValueOnce(new Promise((done) => { resolve = done; }));
@@ -137,6 +157,7 @@ test("Send is disabled until reply preparation finishes, with a back link to the
   const send = Array.from(target.querySelectorAll<HTMLButtonElement>("main > header button"))
     .find((button) => button.textContent?.trim() === "Send")!;
   expect(send.disabled).toBe(true);
+  expect(target.querySelector<HTMLButtonElement>('[aria-label="Send options"]')?.disabled).toBe(true);
   expect(target.querySelector('[aria-label="Back to original message"]')?.getAttribute("href")).toBe(`/mail/account-a/inbox/${emailId}`);
   resolve({ to: ["sender@example.com"], subject: "Re: Invoice", fromCandidates: [] });
   await vi.waitFor(() => expect(send.disabled).toBe(false));

@@ -15,6 +15,30 @@ afterEach(async () => {
 });
 
 test.each([
+  ["sent", "scheduled", true], ["sent", "sent", false], ["sent", "delivered", false],
+  ["inbox", "scheduled", false], ["drafts", "scheduled", false],
+] as const)("%s event %s shows a blue Scheduled badge only while pending", async (mode, event, scheduled) => {
+  const target = document.createElement("div");
+  document.body.append(target);
+  instances.push(mount(EmailListItem, { target, props: {
+    mode, onclick: () => {}, onreply: () => {}, ondelete: async () => {},
+    mail: { id: "message", from: "sender@example.com", to: ["to@example.com"], subject: "Scheduled", createdAt: "2026-01-01T00:00:00Z", preview: "", isRead: true, lastEvent: event },
+  } }));
+  flushSync();
+  const badge = target.querySelector('[data-slot="badge"]');
+  if (scheduled) {
+    expect(badge?.textContent).toContain("Scheduled");
+    expect(badge?.classList.contains("bg-blue-500/10")).toBe(true);
+    expect(badge?.querySelector("svg")?.classList.contains("lucide-calendar-clock")).toBe(true);
+    expect(badge?.querySelector(".grid")?.className).toContain("group-hover/failure:grid-cols-[1fr]");
+  } else expect(badge).toBeNull();
+  target.querySelector<HTMLButtonElement>('[aria-label="Actions for Scheduled"]')!.click();
+  await vi.waitFor(() => expect(document.querySelector('[role="menuitem"]')).not.toBeNull());
+  const labels = Array.from(document.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent);
+  expect(labels.includes("Cancel scheduled send")).toBe(scheduled);
+});
+
+test.each([
   ["blobavatars", "inbox", true], ["minimal", "inbox", true],
   ["blobavatars", "inbox", false], ["minimal", "inbox", false],
   ["blobavatars", "sent", true], ["minimal", "sent", true],

@@ -61,6 +61,29 @@ beforeEach(async () => {
 });
 afterEach(async () => { await unmount(instance); document.body.replaceChildren(); });
 
+test("refreshing pending sends removes Scheduled as soon as Resend confirms delivery", async () => {
+  const visibility = vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+  try {
+    items[0].lastEvent = "scheduled";
+    flushSync(() => { controls.mailbox = "sent"; });
+    await vi.waitFor(() => expect(rows()[0].querySelector('[data-slot="badge"]')?.textContent).toContain("Scheduled"));
+    vi.mocked(invoke).mockImplementation(async (command) => command === "get_sent_email" ? { ...items[0], lastEvent: "delivered" } : undefined);
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("get_sent_email", { accountId: "account-a", emailId: "m0", refresh: true }));
+    await vi.waitFor(() => expect(rows()[0].querySelector('[data-slot="badge"]')).toBeNull());
+    expect(invoke).not.toHaveBeenCalledWith("get_sent_email", expect.objectContaining({ emailId: "m1" }));
+  } finally { visibility.mockRestore(); }
+});
+
+test("cancellation updates Sent from local storage without retaining the canceled row", async () => {
+  flushSync(() => { controls.mailbox = "sent"; });
+  await vi.waitFor(() => expect(target.querySelector("h1")?.textContent).toBe("Sent"));
+  items = items.slice(1);
+  handlers.get("scheduled-email-canceled")!({ payload: { accountId: "account-a", emailId: "m0" } });
+  await vi.waitFor(() => expect(rows()).toHaveLength(8));
+  expect(rows().some((row) => row.dataset.mailId === "m0")).toBe(false);
+});
+
 test("drafts reuse mail rows with avatars, preview navigation, search and permanent-delete confirmation", async () => {
   const drafts = [{ id: "draft-1", from: "Me <me@example.com>", to: ["recipient@example.com"], subject: "Unsent subject", preview: "Draft body", updatedAt: Date.parse("2026-01-01T00:00:00Z") }];
   vi.mocked(invoke).mockImplementation(async (command) => {

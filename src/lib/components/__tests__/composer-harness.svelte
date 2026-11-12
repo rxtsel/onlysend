@@ -11,4 +11,5 @@
 <output data-composer-ready>{String(status.ready)}</output>
 <output data-composer-sending>{String(status.sending)}</output>
 <output data-draft-status>{status.saveState}</output>
+<button data-open-schedule onclick={() => status.openSchedule?.()}>{status.scheduled ? "Scheduled" : "Schedule send"}</button>
 <button data-discard-draft onclick={() => status.discard?.()}>Discard draft probe</button>
